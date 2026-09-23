@@ -138,5 +138,24 @@ Jacobians of hyperelliptic curves
 
    sage/schemes/hyperelliptic_curves/jacobian_morphism
 
+Coleman integration on plane curves
+===================================
+
+.. toctree::
+   :maxdepth: 1
+
+   sage/schemes/curves/coleman/data
+   sage/schemes/curves/coleman/points
+   sage/schemes/curves/coleman/integration
+   sage/schemes/curves/coleman/general_integration
+   sage/schemes/curves/coleman/local
+   sage/schemes/curves/coleman/ramified
+   sage/schemes/curves/coleman/applications
+   sage/schemes/curves/coleman/chabauty
+   sage/schemes/curves/coleman/auxiliary
+   sage/schemes/curves/coleman/cohomology
+   sage/schemes/curves/coleman/frobenius
+   sage/schemes/curves/coleman/reductions
+
 
 .. include:: ../footer.txt

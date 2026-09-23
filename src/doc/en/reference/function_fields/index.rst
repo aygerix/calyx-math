@@ -35,6 +35,7 @@ algebraic closure of `\QQ`.
    sage/rings/function_field/maps
    sage/rings/function_field/extensions
    sage/rings/function_field/constructor
+   sage/rings/function_field/maximal_order_round_two
 
 A basic reference for the theory of algebraic function fields is [Stich2009]_.
 

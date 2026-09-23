@@ -20,13 +20,34 @@ Plane curves
 #                  https://www.gnu.org/licenses/
 # *****************************************************************************
 
+from sage.misc.lazy_import import lazy_import
+
 from sage.schemes.curves.constructor import Curve
 from sage.schemes.curves.projective_curve import Hasse_bounds
-
-from sage.misc.lazy_import import lazy_import
 
 lazy_import('sage.schemes.curves.plane_curve_arrangement', 'PlaneCurveArrangements')
 
 lazy_import('sage.schemes.curves.plane_curve_arrangement', 'AffinePlaneCurveArrangements')
 
 lazy_import('sage.schemes.curves.plane_curve_arrangement', 'ProjectivePlaneCurveArrangements')
+
+lazy_import(
+    'sage.schemes.curves.coleman.data',
+    ['ColemanIntegrationData', 'coleman_data', 'de_rham_cohomology_basis'],
+)
+lazy_import(
+    'sage.schemes.curves.coleman.points',
+    ['ColemanIntegrationPoint', 'ColemanTangentialPoint', 'tangential_point'],
+)
+lazy_import(
+    'sage.schemes.curves.coleman.general_integration',
+    'coleman_integrals_on_basis',
+)
+lazy_import(
+    'sage.schemes.curves.coleman.integration',
+    ['coleman_integral', 'coleman_integrals_on_basis_divisors'],
+)
+lazy_import(
+    'sage.schemes.curves.coleman.chabauty',
+    ['effective_chabauty', 'torsion_packet'],
+)

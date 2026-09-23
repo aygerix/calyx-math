@@ -30,6 +30,7 @@ py.install_sources(
   'jacobian_unique_hess.py',
   'khuri_makdisi.pyx',
   'maps.py',
+  'maximal_order_round_two.py',
   'order.py',
   'order_basis.py',
   'order_polymod.py',
