@@ -2,7 +2,9 @@
 
 **An LLM-accelerated, free and open-source computer algebra system aiming for feature parity with Magma and beyond.**
 
-<!-- magma-parity-badge:start -->[![Magma parity](https://img.shields.io/badge/Magma%20parity-87%20of%20159%20chapters-yellow)](parity/README.md)<!-- magma-parity-badge:end -->
+<!-- magma-parity-badge:start -->
+[![Magma parity](https://img.shields.io/badge/Magma%20parity-87%20of%20159%20chapters-yellow)](parity/README.md)
+<!-- magma-parity-badge:end -->
 
 Calyx began as a fork of [SageMath](https://www.sagemath.org/) and currently uses
 its ecosystem as a foundation. The long-term goal is broader: to become an

@@ -343,9 +343,9 @@ def replace_block(text, name, content):
     pattern = re.compile(re.escape(start) + r'.*?' + re.escape(end), re.S)
     if not pattern.search(text):
         raise SystemExit(f'README.md has no {start} ... {end} block')
-    inline = '\n' not in content
-    body = f'{start}{content}{end}' if inline else f'{start}\n{content}\n{end}'
-    return pattern.sub(lambda _: body, text, count=1)
+    # The markers go on lines of their own: GitHub treats a line that starts
+    # with an HTML comment as raw HTML and would not render markdown after it.
+    return pattern.sub(lambda _: f'{start}\n{content}\n{end}', text, count=1)
 
 
 # Charts
