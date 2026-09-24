@@ -1473,25 +1473,32 @@ def descend_to_base_field(values):
 
 
 def _descent_output_precision(theoretical_precision, rounding_precision):
-    r"""Return the integral number of certified base-field digits.
+    r"""Return the integral precision certified by base-field descent.
 
-    A rational theoretical bound can be rounded up after descent because a
-    nonzero base-field valuation is integral.  By contrast, discarded
-    nonconstant extension coordinates must vanish through a whole number of
-    base-field digits, so their bound is rounded down.
+    The nonconstant extension coordinates must vanish at least to the
+    theoretical error bound.  Once this check passes, the difference from
+    the exact base-field value lies in `\QQ_p`, whose valuation is integral,
+    so a rational theoretical bound rounds up.
 
     TESTS::
 
         sage: from sage.schemes.curves.coleman.general_integration import _descent_output_precision
         sage: _descent_output_precision(15/2, 657/100)
-        6
+        Traceback (most recent call last):
+        ...
+        PrecisionError: boundary computation does not certify descent to the base field
+        sage: _descent_output_precision(15/2, 399/50)
+        8
         sage: _descent_output_precision(13/2, Infinity)
         7
     """
-    theoretical_digits = ZZ(QQ(theoretical_precision).ceil())
-    descent_digits = (theoretical_digits if rounding_precision == infinity
-                      else ZZ(QQ(rounding_precision).floor()))
-    return min(theoretical_digits, descent_digits)
+    theoretical_precision = QQ(theoretical_precision)
+    if (rounding_precision != infinity
+            and QQ(rounding_precision) < theoretical_precision):
+        raise PrecisionError(
+            'boundary computation does not certify descent to the base field'
+        )
+    return ZZ(theoretical_precision.ceil())
 
 
 def _general_integrals(P1, P2, data, *, e=None, indices=None):
@@ -1752,7 +1759,7 @@ def coleman_integrals_on_basis(P1, P2, data, *, e=None):
         sage: I2, n2 = coleman_integrals_on_basis(rational, good3, data3)
         sage: n1, n2, all((a - b).valuation() >= min(n1, n2)
         ....:                for a, b in zip(I1, I2))
-        (3, 3, True)
+        (4, 4, True)
     """
     from .integration import coleman_integrals_on_basis as good_integrals
 

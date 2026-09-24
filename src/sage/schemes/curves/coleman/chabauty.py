@@ -415,7 +415,7 @@ def effective_chabauty(data, *, rational_points=None, bound=0, rank=None,
         sage: open_points, open_forms = effective_chabauty(
         ....:     open_data, rational_points=[open_P], rank=0)
         sage: len(open_points), len(open_forms)
-        (4, 1)
+        (6, 1)
     """
     genus = ZZ(data.genus)
     certified_rank = None if rank is None else ZZ(rank)
