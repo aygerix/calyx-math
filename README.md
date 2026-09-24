@@ -145,8 +145,8 @@ This README intentionally focuses on what Calyx adds or changes.
 Calyx currently builds using SageMath's build system:
 
 ```bash
-git clone --branch develop https://github.com/aygerix/sage-on-steroids.git
-cd sage-on-steroids
+git clone --branch develop https://github.com/aygerix/calyx-math.git
+cd calyx-math
 
 make configure
 ./configure
