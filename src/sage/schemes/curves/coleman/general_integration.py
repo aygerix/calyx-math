@@ -1336,6 +1336,8 @@ def _boundary_extension(data, endpoints, centers, e=None):
         ....:     data, (P, P), (P, P), e=11)
         sage: field.ramification_index(), degree
         (11, 11)
+        sage: field.base_ring().precision_cap() >= 2 * data.N
+        True
     """
     from .ramified import local_data
 
@@ -1347,14 +1349,27 @@ def _boundary_extension(data, endpoints, centers, e=None):
         raise NotImplementedError(
             'automatic boundary construction currently starts over Qp'
         )
-    minimum = max(ZZ(data.p) * ZZ(local_data(center, data)[0]) + 1
-                  for center in centers if center is not None)
+    local_ramification = [
+        ZZ(local_data(center, data)[0])
+        for center in centers if center is not None
+    ]
+    minimum = max(ZZ(data.p) * local_degree + 1
+                  for local_degree in local_ramification)
     e = max(ZZ(100), minimum) if e is None else ZZ(e)
     if e < minimum:
         raise ValueError(
             f'boundary ramification degree must be at least {minimum}'
         )
-    base = Qp(data.p, prec=max(ZZ(data.Nmax) + 6, ZZ(data.N) + 6))
+    # Reconstructing a center above a point of local ramification ``d`` can
+    # divide the available root precision by ``d``.  Allocate enough source
+    # digits that every resulting coordinate still has the requested ``N``
+    # digits before it is evaluated in the boundary extension.
+    base_precision = max(
+        ZZ(data.Nmax) + 6,
+        ZZ(data.N) + 6,
+        max(local_ramification) * ZZ(data.N),
+    )
+    base = Qp(data.p, prec=base_precision)
     ring = PolynomialRing(base, 'u')
     E = base.extension(ring.gen()**e - data.p, names='pi')
     return E, ZZ(e)

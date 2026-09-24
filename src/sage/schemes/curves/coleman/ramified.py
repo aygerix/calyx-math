@@ -72,6 +72,7 @@ from sage.matrix.constructor import matrix
 from sage.modules.free_module_element import vector
 
 from sage.rings.finite_rings.finite_field_constructor import GF
+from sage.rings.finite_rings.integer_mod_ring import IntegerModRing
 from sage.rings.function_field.constructor import FunctionField
 from sage.rings.infinity import infinity
 from sage.rings.integer_ring import ZZ
@@ -689,6 +690,23 @@ def hensel_lift(coefficients, root, prec=None):
         sage: z = hensel_lift([-9 - t, T.one(), T.one()], T(c0), 12)
         sage: z[0].precision_absolute(), (z^2 + z - 9 - t).add_bigoh(12).is_zero()
         (10, True)
+
+    An input root may have less precision than its ambient field after a
+    multiple-root lift.  Newton arithmetic respects that actual precision
+    instead of reviving arbitrary digits from its rational representative::
+
+        sage: K = Qp(7, 12); T.<t> = PowerSeriesRing(K, default_prec=8)
+        sage: root = T(K(2).sqrt().add_bigoh(6))
+        sage: z = hensel_lift([-2 - t, T.zero(), T.one()], root, 8)
+        sage: z[0].precision_absolute(), (z^2 - 2 - t).add_bigoh(8).is_zero()
+        (6, True)
+
+    Nonintegral coefficients use the rational-series fallback::
+
+        sage: K = Qp(5, 8); T.<t> = PowerSeriesRing(K, default_prec=8)
+        sage: z = hensel_lift([-t/5, T.one()], t/5, 8)
+        sage: (z - t/5).add_bigoh(8).is_zero()
+        True
     """
     ring = root.parent()
     prec = ZZ(ring.default_prec() if prec is None else prec)
@@ -697,18 +715,6 @@ def hensel_lift(coefficients, root, prec=None):
                   for i in range(len(coefficients) - 1)]
     if not derivative:
         raise ValueError("relation has no simple root")
-
-    # Perform Newton arithmetic over QQ[[t]], with a round trip through the
-    # p-adic series ring between steps to reduce every coefficient to the
-    # available precision.  Keeping Newton in generic Qp[[t]] is substantially
-    # slower for the 1,000+ term expansions used at a ramified boundary.
-    rational_ring = PowerSeriesRing(
-        QQ, names=ring.variable_name(), default_prec=prec
-    )
-    rational_coefficients = [rational_ring(c).add_bigoh(prec)
-                             for c in coefficients]
-    rational_derivative = [(i + 1) * rational_coefficients[i + 1]
-                           for i in range(len(rational_coefficients) - 1)]
 
     def change_precision(series, target, parent):
         """Truncate or zero-extend a series to exactly ``target`` terms."""
@@ -719,7 +725,126 @@ def hensel_lift(coefficients, root, prec=None):
     # residual that vanishes to the available precision then becomes zero in
     # QQ[[t]].  This matters when the root has an irrational constant term.
     field = ring.base_ring()
-    absolute_precision = field.precision_cap()
+    finite_precisions = [
+        ZZ(coefficient.precision_absolute())
+        for series in coefficients + [root]
+        for coefficient in series.list()
+        if coefficient.precision_absolute() != infinity
+    ]
+    absolute_precision = min(
+        [ZZ(field.precision_cap())] + finite_precisions
+    )
+
+    # Integral Qp coefficients can be represented by one dense series over
+    # ZZ/p^N ZZ.  Its compiled polynomial arithmetic avoids constructing a
+    # separate p-adic object for every coefficient at every Newton step.
+    # The rational path below remains necessary for negative valuations and
+    # coefficient fields other than Qp.
+    try:
+        use_modular = (
+            absolute_precision > 0
+            and field.degree() == 1
+            and field(field.prime()).valuation() == 1
+            and all(
+                not coefficient or coefficient.valuation() >= 0
+                for series in coefficients + [root]
+                for coefficient in series.list()
+            )
+        )
+    except (AttributeError, TypeError, ValueError):
+        use_modular = False
+
+    if use_modular:
+        prime = ZZ(field.prime())
+        coefficient_ring = IntegerModRing(prime**absolute_precision)
+        modular_ring = PowerSeriesRing(
+            coefficient_ring, names=ring.variable_name(), default_prec=prec
+        )
+
+        def to_modular(series, target):
+            return modular_ring([
+                coefficient_ring(ZZ(field(coefficient).lift()))
+                for coefficient in list(series)[:target]
+            ]).add_bigoh(target)
+
+        modular_coefficients = [
+            to_modular(series, prec) for series in coefficients
+        ]
+        modular_derivative = [
+            (i + 1) * modular_coefficients[i + 1]
+            for i in range(len(modular_coefficients) - 1)
+        ]
+        current = to_modular(root, prec)
+        residual = _horner(modular_coefficients, current)
+        derivative_value = _horner(modular_derivative, current)
+        if not derivative_value:
+            raise ArithmeticError(
+                "derivative vanished during local Hensel lift"
+            )
+        derivative_order = ZZ(derivative_value.valuation())
+        if not derivative_value[derivative_order].is_unit():
+            raise ValueError(
+                "leading derivative coefficient is divisible by p"
+            )
+        residual_order = ZZ(residual.valuation())
+        if residual_order <= 2 * derivative_order:
+            raise ValueError(
+                "power-series Hensel condition is not satisfied"
+            )
+
+        schedule = []
+        target = prec
+        while target > residual_order:
+            schedule.append(target)
+            target = (target + 1) // 2 + derivative_order
+        schedule.reverse()
+
+        for target in schedule:
+            current = change_precision(current, target, modular_ring)
+            numerator = _horner(
+                [coefficient.add_bigoh(target)
+                 for coefficient in modular_coefficients],
+                current,
+            )
+            denominator = _horner(
+                [coefficient.add_bigoh(target)
+                 for coefficient in modular_derivative],
+                current,
+            )
+            if not denominator:
+                raise ArithmeticError(
+                    "derivative vanished during local Hensel lift"
+                )
+            order = ZZ(denominator.valuation())
+            unit = denominator.shift(-order)
+            if not unit[0].is_unit():
+                raise ValueError(
+                    "leading derivative coefficient is divisible by p"
+                )
+            correction = (
+                numerator.shift(-order) * unit.inverse_of_unit()
+            )
+            current = change_precision(
+                current - correction, target, modular_ring
+            )
+
+        if _horner(modular_coefficients, current).valuation() < prec:
+            raise ArithmeticError("local Hensel lift did not converge")
+        return ring([
+            field(ZZ(coefficient.lift())).add_bigoh(absolute_precision)
+            for coefficient in list(current)[:prec]
+        ]).add_bigoh(prec)
+
+    # Perform Newton arithmetic over QQ[[t]], with a round trip through the
+    # p-adic series ring between steps to reduce every coefficient to the
+    # available precision.  This path also supports nonintegral coefficients.
+    rational_ring = PowerSeriesRing(
+        QQ, names=ring.variable_name(), default_prec=prec
+    )
+    rational_coefficients = [rational_ring(c).add_bigoh(prec)
+                             for c in coefficients]
+    rational_derivative = [(i + 1) * rational_coefficients[i + 1]
+                           for i in range(len(rational_coefficients) - 1)]
 
     def reduce_coefficients(series, target):
         """Apply p-adic coefficient reduction, then lift back to QQ[[t]]."""
