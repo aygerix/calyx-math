@@ -55,7 +55,15 @@ def _reduce_rational_sequence_mod_prime_power(values, p, N):
 
 
 def _coefficient_valuation(value, p):
-    """Return the least ``p``-adic valuation among scalar coefficients."""
+    r"""Return the least ``p``-adic valuation among scalar coefficients.
+
+    EXAMPLES::
+
+        sage: from sage.schemes.curves.coleman.reductions import _coefficient_valuation
+        sage: R.<x> = QQ[]
+        sage: _coefficient_valuation((x^2 + 5*x)/25, 5)
+        -2
+    """
     try:
         return ZZ(QQ(value).valuation(p))
     except (TypeError, ValueError):
@@ -285,10 +293,10 @@ def reduction_matrices(Q, p, N, r, W0, Winf, e0, einf,
 
         sage: from sage.schemes.curves.coleman.data import coleman_data
         sage: R.<x> = QQ[]; S.<y> = R[]
-        sage: data = coleman_data(
-        ....:     y^2 - (x^3 - 10*x + 9), 5, 3, genus=1)  # indirect doctest
+        sage: data = coleman_data(  # indirect doctest
+        ....:     y^2 - (x^3 - 10*x + 9), 5, 3, genus=1)
         sage: len(data.finite_reduction_matrices), len(data.infinite_reduction_matrices)
-        (20, 7)
+        (25, 7)
     """
     p = _validate_prime(p)
     N = ZZ(N)

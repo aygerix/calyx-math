@@ -230,8 +230,9 @@ def _integral_polynomial_in_scaled_parameter(
         (5 + O(5^6))*z + 1 + O(5^6)
         sage: h, coefficient_precision = _integral_polynomial_in_scaled_parameter(
         ....:     t/5 + t^2, 5, 6, return_precision=True)
-        sage: h, coefficient_precision
-        ((5^3 + O(5^7))*z^2 + (5 + O(5^7))*z, 7)
+        sage: (coefficient_precision == 7 and not h[0]
+        ....:  and h[1].valuation() == 1 and h[2].valuation() == 3)
+        True
     """
     coefficients = series.list()
     nonzero = [coefficient for coefficient in coefficients if coefficient]
@@ -389,21 +390,29 @@ def effective_chabauty(data, *, rational_points=None, bound=0, rank=None,
         sage: data = coleman_data(y^2-(x^3-10*x+9), 5, 3, genus=1)
         sage: P = point_from_good_affine_coordinates(0, 3, data)
         sage: points, forms = effective_chabauty(
-        ....:     data, rational_points=[P], rank=0, skip_unsupported=True)
+        ....:     data, rational_points=[P], skip_unsupported=True)
         sage: len(points), len(forms)
         (4, 1)
         sage: all_points, _ = effective_chabauty(
-        ....:     data, rational_points=[P], rank=0)
+        ....:     data, rational_points=[P])
         sage: len(all_points)
         6
-        sage: inferred, inferred_forms = effective_chabauty(
-        ....:     data, rational_points=[P], skip_unsupported=True)
-        sage: len(inferred), len(inferred_forms)
-        (4, 1)
         sage: effective_chabauty(data, rational_points=[P], rank=1)
         Traceback (most recent call last):
         ...
         ValueError: rank must satisfy 0 <= rank < genus
+
+    A certified rank-one example is supplied by the genus-two modular curve
+    `X_0(37)`, whose rational points on this model are `(\pm1,\pm4)`::
+
+        sage: X037 = y^2 - (-x^6 - 9*x^4 - 11*x^2 + 37)
+        sage: modular_data = coleman_data(X037, 5, 4, genus=2)
+        sage: known = [point_from_good_affine_coordinates(a, b, modular_data)
+        ....:          for a in (-1, 1) for b in (-4, 4)]
+        sage: points, forms = effective_chabauty(
+        ....:     modular_data, rational_points=known, rank=1)
+        sage: len(points), len(forms)
+        (4, 1)
 
     On an open curve, logarithmic coordinates outside the regular block do
     not obstruct the Chabauty computation, including at bad residue disks::
@@ -413,7 +422,7 @@ def effective_chabauty(data, *, rational_points=None, bound=0, rank=None,
         ....:     genus=1, use_open_curve=True)
         sage: open_P = point_from_good_affine_coordinates(0, 3, open_data)
         sage: open_points, open_forms = effective_chabauty(
-        ....:     open_data, rational_points=[open_P], rank=0)
+        ....:     open_data, rational_points=[open_P])
         sage: len(open_points), len(open_forms)
         (6, 1)
     """

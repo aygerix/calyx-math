@@ -258,6 +258,17 @@ def coleman_data(Q, p, N, *, use_open_curve=False, basis0=None, basis1=None,
         sage: coleman_data(
         ....:     y^2 - (x^3 - 10*x + 9), 3, 2, genus=1).p
         3
+
+    An additional internal digit keeps the public Frobenius matrix accurate
+    when its entries have negative valuation.  For this genus-three model,
+    the characteristic polynomial satisfies the expected functional equation
+    through all four requested digits::
+
+        sage: Q = y^3 + (-x^2 - 1)*y^2 - x^3*y + x^3 + 2*x^2 + x
+        sage: quartic = coleman_data(Q, 13, 4, genus=3)
+        sage: ring = Integers(13^4)
+        sage: list(quartic.frobenius_matrix.charpoly().change_ring(ring))
+        [2197, 338, 117, 61, 9, 2, 1]
     """
     p = _validate_prime(p)
     N = ZZ(N)
@@ -311,7 +322,13 @@ def coleman_data(Q, p, N, *, use_open_curve=False, basis0=None, basis1=None,
     )
     if len(basis) < 2 * genus:
         raise ArithmeticError("the de Rham cohomology dimension is below 2*genus")
-    Nmax = maximum_precision(Q, p, N, genus, W0, Winf, e0, einf)
+    # One additional matrix digit protects characteristic-polynomial
+    # coefficients when Frobenius entries have negative valuation.  Integral
+    # results are still truncated to the user-requested precision ``N``.
+    frobenius_precision = N + 1
+    Nmax = maximum_precision(
+        Q, p, frobenius_precision, genus, W0, Winf, e0, einf
+    )
     frobenius_ring_matrix = frobenius_lift(
         Q, p, Nmax - 1, r, Delta, s, W0
     )
@@ -320,7 +337,7 @@ def coleman_data(Q, p, N, *, use_open_curve=False, basis0=None, basis1=None,
         T0, Tinf, T0_inverse, Tinf_inverse
     )
     F, f0_list, finf_list, fend_list = cohomological_frobenius(
-        Q, p, N, Nmax, r, W0, Winf, G0, Ginf,
+        Q, p, frobenius_precision, Nmax, r, W0, Winf, G0, Ginf,
         frobenius_ring_matrix, finite_matrices, infinite_matrices,
         basis, integrals, quotient_map
     )

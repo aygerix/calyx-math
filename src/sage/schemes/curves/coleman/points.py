@@ -73,6 +73,15 @@ class ColemanTangentialPoint(ColemanIntegrationPoint):
     tangent_scale: object = 1
 
     def __post_init__(self):
+        r"""Coerce and validate the tangent scale.
+
+        TESTS::
+
+            sage: from sage.schemes.curves.coleman.points import ColemanTangentialPoint
+            sage: K = Qp(5, 3)
+            sage: ColemanTangentialPoint(K(0), (K(1),), tangent_scale=2).tangent_scale
+            2 + O(5^3)
+        """
         self.tangent_scale = self.x.parent()(self.tangent_scale)
         if not self.tangent_scale:
             raise ValueError("a tangent vector must have nonzero scale")
@@ -92,6 +101,16 @@ def tangential_point(point, scale=1):
 
     The point's local-coordinate cache is retained, so constructing a tangent
     does not repeat residue-disk normalization.
+
+    EXAMPLES::
+
+        sage: from sage.schemes.curves.coleman.points import (
+        ....:     ColemanIntegrationPoint, tangential_point)
+        sage: K = Qp(5, 4)
+        sage: P = ColemanIntegrationPoint(K(1), (K(1), K(2)))
+        sage: T = tangential_point(P, 1 + 5)
+        sage: T.x == P.x, T.b == P.b, T.tangent_scale
+        (True, True, 1 + 5 + O(5^4))
     """
     if not isinstance(point, ColemanIntegrationPoint):
         raise TypeError("the tangent must be based at a Coleman integration point")

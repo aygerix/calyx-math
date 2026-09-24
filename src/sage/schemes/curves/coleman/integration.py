@@ -488,6 +488,27 @@ def coleman_integrals_on_basis(P1, P2, data, *, e=None):
         sage: all((K(values[i]) - 2*reference[i]).valuation() >= precision
         ....:     for i in range(4))
         True
+
+    A point close to an irrational branch point retains enough starting
+    precision for the ramified endpoint lift::
+
+        sage: R.<x> = QQ[]; S.<y> = R[]
+        sage: bolza = coleman_data(y^2 - (x^5 - x), 13, 5, genus=2)
+        sage: K = Qp(13, 8); T.<z> = K[]
+        sage: i = next(root for root, _ in (z^2 + 1).roots()
+        ....:          if root.residue() == 5)
+        sage: x0 = i + 13^2
+        sage: y0 = next(root for root, _ in (z^2 - (x0^5 - x0)).roots()
+        ....:           if (root/13).residue() == 2)
+        sage: near_branch = point_from_good_affine_coordinates(
+        ....:     x0, y0, bolza)
+        sage: y1 = next(root for root, _ in (z^2 - 30).roots()
+        ....:           if root.residue() == 2)
+        sage: ordinary = point_from_good_affine_coordinates(2, y1, bolza)
+        sage: values, precision = coleman_integrals_on_basis(
+        ....:     near_branch, ordinary, bolza)
+        sage: precision >= 4, [ZZ(value.lift()) % 13^4 for value in values]
+        (True, [5278, 26741, 9361, 7798])
     """
     P1, P2 = _common_point_field(P1, P2, data.p)
     if (is_in_bad_residue_disk(P1, data)

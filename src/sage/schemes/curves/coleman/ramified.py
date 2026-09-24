@@ -390,7 +390,10 @@ def minimal_polynomial(f1, f2, *, max_bound=30):
     max_bound = ZZ(max_bound)
     if max_bound < 5:
         raise ValueError("max_bound must be at least 5")
-    for bound in range(5, max_bound + 1, 3):
+    bounds = list(range(5, max_bound + 1, 3))
+    if bounds[-1] != max_bound:
+        bounds.append(max_bound)
+    for bound in bounds:
         f1_powers = [L.one()]
         f2_powers = [L.one()]
         for _ in range(bound):
@@ -410,7 +413,14 @@ def minimal_polynomial(f1, f2, *, max_bound=30):
         columns = [[QQ(h[k]) for h in row for k in range(degree + 1)]
                    for row in polynomials]
         relation_matrix = matrix(QQ, columns)
-        integral_matrix, _ = relation_matrix._clear_denom()
+        matrix_denominator = ZZ.one()
+        for entry in relation_matrix.list():
+            matrix_denominator = matrix_denominator.lcm(entry.denominator())
+        integral_matrix = matrix(
+            ZZ, relation_matrix.nrows(), relation_matrix.ncols(),
+            [ZZ(matrix_denominator * entry)
+             for entry in relation_matrix.list()],
+        )
         relation = _one_left_kernel_relation(integral_matrix)
         if relation is None:
             continue
@@ -717,7 +727,19 @@ def hensel_lift(coefficients, root, prec=None):
         raise ValueError("relation has no simple root")
 
     def change_precision(series, target, parent):
-        """Truncate or zero-extend a series to exactly ``target`` terms."""
+        r"""Truncate or zero-extend a series to exactly ``target`` terms.
+
+        TESTS:
+
+        This helper is exercised by an integral-coefficient lift::
+
+            sage: from sage.schemes.curves.coleman.ramified import hensel_lift
+            sage: K = Qp(5, 6); T.<t> = PowerSeriesRing(K, default_prec=6)
+            sage: lifted = hensel_lift(  # indirect doctest
+            ....:     [-t, T.one()], t, 6)
+            sage: (lifted - t).add_bigoh(6).is_zero()
+            True
+        """
         return parent(list(series)[:target]).add_bigoh(target)
 
     # Sage's p-adic elements cap relative precision only, so the reduction
@@ -847,7 +869,19 @@ def hensel_lift(coefficients, root, prec=None):
                            for i in range(len(rational_coefficients) - 1)]
 
     def reduce_coefficients(series, target):
-        """Apply p-adic coefficient reduction, then lift back to QQ[[t]]."""
+        r"""Apply p-adic coefficient reduction, then lift back to `\QQ[[t]]`.
+
+        TESTS:
+
+        This helper is exercised by a nonintegral lift::
+
+            sage: from sage.schemes.curves.coleman.ramified import hensel_lift
+            sage: K = Qp(5, 6); T.<t> = PowerSeriesRing(K, default_prec=6)
+            sage: lifted = hensel_lift(  # indirect doctest
+            ....:     [-t/5, T.one()], t/5, 6)
+            sage: (lifted - t/5).add_bigoh(6).is_zero()
+            True
+        """
         padic = ring([field(coefficient).add_bigoh(absolute_precision)
                       for coefficient in list(series)[:target]]).add_bigoh(target)
         return change_precision(padic, target, rational_ring)
@@ -1039,13 +1073,14 @@ def _relation_series(f1, f2, parameter, root_constant, place, residue_target,
                 initial = approximate_root(
                     coefficients, root_constant, expansion, seed_precision
                 )
-                return hensel_lift(coefficients, initial, prec)
             except ValueError as error:
                 if seed_precision >= prec:
                     raise ArithmeticError(
                         "t-adic precision does not separate the selected root"
                     ) from error
                 seed_precision = min(ZZ(prec), 2 * seed_precision)
+                continue
+            return hensel_lift(coefficients, initial, prec)
     return hensel_lift(coefficients, initial, prec)
 
 
@@ -1230,6 +1265,8 @@ def _multiple_root_center(poly, approximate, target):
         sage: lifted = _multiple_root_center((z-root)^2, K(1), 8)
         sage: lifted.precision_absolute(), ((lifted-root)^2).valuation() >= 8
         (4, True)
+        sage: _multiple_root_center(z^2 + K(0, 8), K(10, 2), 8)
+        O(5^4)
         sage: _multiple_root_center((z-5)*(z+5), K(0), 8) is None
         True
     """
@@ -1267,7 +1304,7 @@ def _multiple_root_center(poly, approximate, target):
     for _ in range(multiplicity - 1):
         deflated = deflated.derivative()
     derivative = deflated.derivative()
-    root = field(approximate)
+    root = field(approximate).lift_to_precision()
     for _ in range(max(8, 2 * ZZ(target).nbits() + 4)):
         value = deflated(root)
         if value.valuation() >= target:
@@ -1280,15 +1317,15 @@ def _multiple_root_center(poly, approximate, target):
     if (deflated(root).valuation() < target
             or poly(root).valuation() < target):
         return None
-    precision = min(
-        ZZ(root.precision_absolute()),
-        (ZZ(target) + multiplicity - 1) // multiplicity,
-    )
+    root_precision = root.precision_absolute()
+    relation_precision = (ZZ(target) + multiplicity - 1) // multiplicity
+    precision = (relation_precision if root_precision == infinity
+                 else min(ZZ(root_precision), relation_precision))
     return root.add_bigoh(precision)
 
 
 def _selected_padic_root(poly, approximate):
-    """Choose the rational p-adic root in the same residue class.
+    """Choose the unique rational p-adic root in the same residue class.
 
     TESTS::
 
@@ -1305,22 +1342,20 @@ def _selected_padic_root(poly, approximate):
         sage: lifted.precision_absolute(), (lifted + uncertain).valuation() >= 5
         (5, True)
 
-    An approximation that already satisfies a multiple-root relation to the
-    available precision needs no further factorization::
+    An exact multiple root can be represented by its common center::
 
         sage: exact_enough = _selected_padic_root((z - K(1))^2, K(1))
         sage: exact_enough, ((exact_enough - 1)^2).valuation() >= 8
-        (1 + O(5^8), True)
+        (1 + O(5^4), True)
 
-    The generalized Hensel criterion also permits a nonunit derivative::
+    Distinct roots in one residue class are ambiguous and are refused::
 
-        sage: lifted = _selected_padic_root(z^2 - 25, K(5 + 5^4))
-        sage: lifted.precision_absolute(), (lifted^2 - 25).valuation() >= 8
-        (7, True)
+        sage: _selected_padic_root(z^2 - 25, K(5 + 5^4))
+        Traceback (most recent call last):
+        ...
+        ValueError: the selected disk has no unique Qp-rational lift
     """
     field = approximate.parent()
-    if poly[0].precision_absolute() == infinity and approximate.valuation() > 0:
-        return field.zero()
     coefficient_precisions = [
         ZZ(coefficient.precision_absolute())
         for coefficient in poly
@@ -1338,18 +1373,10 @@ def _selected_padic_root(poly, approximate):
                    target - max(ZZ.zero(), ZZ(derivative_value.valuation())))
 
     value = poly(root)
-    if value.valuation() >= target:
-        return root.add_bigoh(root_precision(root))
     derivative_value = derivative(root)
-    if (target > 0 and derivative_value
-            and value.valuation() > 2 * derivative_value.valuation()):
-        for _ in range(max(8, 2 * target.nbits() + 4)):
-            value = poly(root)
-            if value.valuation() >= target:
-                return root.add_bigoh(root_precision(root))
-            root -= value / derivative(root)
-        if poly(root).valuation() >= target:
-            return root.add_bigoh(root_precision(root))
+    if (value.valuation() >= target and derivative_value
+            and derivative_value.valuation() == 0):
+        return root.add_bigoh(root_precision(root))
     multiple_root = _multiple_root_center(poly, approximate, target)
     if multiple_root is not None:
         return multiple_root
@@ -1368,6 +1395,7 @@ def _selected_padic_root(poly, approximate):
     except PrecisionError as error:
         factorization_error = error
         factors = ()
+    candidates = []
     for factor, _ in factors:
         if factor.degree() != 1:
             continue
@@ -1378,13 +1406,19 @@ def _selected_padic_root(poly, approximate):
                 ZZ(candidate.precision_absolute()),
                 root_precision(candidate),
             )
-            return candidate.add_bigoh(precision)
+            candidates.append(candidate.add_bigoh(precision))
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        raise ValueError(
+            "the selected disk has no unique Qp-rational lift"
+        )
     lifted = _digit_lifted_padic_root(poly, approximate, target)
     if lifted is not None:
         return lifted
     if factorization_error is not None:
         raise factorization_error
-    raise ValueError("the selected disk has no Qp-rational lift")
+    raise ValueError("the selected disk has no unique Qp-rational lift")
 
 
 def _at_padic_value(poly, value, field):
@@ -1428,7 +1462,7 @@ def find_bad_point_in_disk(P, data):
         sage: P = find_bad_point_in_disk(
         ....:     point_from_affine_coordinates((1, 0), data), data)
         sage: P.x, P.b
-        (1 + O(5^8), (1 + O(5^8), 0))
+        (1 + O(5^8), (1 + O(5^8), O(5^4)))
     """
     if not is_in_bad_residue_disk(P, data):
         raise ValueError("residue disk does not contain a bad point")

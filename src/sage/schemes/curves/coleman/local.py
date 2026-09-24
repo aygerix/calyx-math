@@ -53,6 +53,7 @@ from sage.modules.free_module_element import vector
 
 from sage.rings.infinity import infinity
 from sage.rings.integer_ring import ZZ
+from sage.rings.padics.precision_error import PrecisionError
 from sage.rings.power_series_ring import PowerSeriesRing
 from sage.rings.rational_field import QQ
 
@@ -560,6 +561,17 @@ def tiny_integrals_on_basis(P1, P2, data, *, prec=None):
         sage: values, precision = tiny_integrals_on_basis(P, Q, data, prec=8)
         sage: len(values), precision >= 4
         (2, True)
+
+    Equal coordinates supplied below the requested precision produce a
+    precision error rather than a claim that their basis values disagree::
+
+        sage: from sage.schemes.curves.coleman.points import ColemanIntegrationPoint
+        sage: low = Qp(5, 2)
+        sage: low_P = ColemanIntegrationPoint(low(0), (low(1), low(3)))
+        sage: tiny_integrals_on_basis(low_P, low_P, data)
+        Traceback (most recent call last):
+        ...
+        PrecisionError: basis values are not known to the requested precision
     """
     local_data(P1, data)
     local_data(P2, data)
@@ -571,9 +583,14 @@ def tiny_integrals_on_basis(P1, P2, data, *, prec=None):
     if field(data.p).valuation() != 1:
         raise NotImplementedError("ramified coefficient fields need a base-point lift")
     if P1.x == P2.x:
-        if all((a - b).valuation() >= data.N
-               for a, b in zip(P1.b, P2.b)):
+        differences = [a - b for a, b in zip(P1.b, P2.b)]
+        if all(difference.valuation() >= data.N
+               for difference in differences):
             return vector(field, len(data.basis)), ZZ(data.N)
+        if not any(differences):
+            raise PrecisionError(
+                "basis values are not known to the requested precision"
+            )
         raise ValueError("points with the same x have inconsistent basis values")
 
     delta = P2.x - P1.x

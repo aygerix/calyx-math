@@ -481,7 +481,18 @@ def evaluate_finite_primitive(f0, P, data):
 
 
 def _evaluate_finite_primitives(f0_list, P, data):
-    """Evaluate several finite primitives with shared endpoint arithmetic."""
+    r"""Evaluate several finite primitives with shared endpoint arithmetic.
+
+    TESTS::
+
+        sage: from types import SimpleNamespace
+        sage: from sage.schemes.curves.coleman.general_integration import _evaluate_finite_primitives
+        sage: from sage.schemes.curves.coleman.points import ColemanIntegrationPoint
+        sage: R.<x> = QQ[]; K = Qp(5, 3)
+        sage: P = ColemanIntegrationPoint(K(1), (K(1), K(1)))
+        sage: _evaluate_finite_primitives([], P, SimpleNamespace(r=R.one()))
+        []
+    """
     f0_list = tuple(f0_list)
     if (not is_in_bad_residue_disk(P, data)
             or (P.infinity and not P.x)):
@@ -824,7 +835,21 @@ def _evaluate_rational_functions_at_series(functions, value):
 
 def _local_differentials_in_ring(center, data, basis, ring, coordinate,
                                  stored_basis):
-    """Expand ``basis`` in a supplied Laurent-series coefficient ring."""
+    r"""Expand ``basis`` in a supplied Laurent-series coefficient ring.
+
+    TESTS::
+
+        sage: from types import SimpleNamespace
+        sage: from sage.schemes.curves.coleman.general_integration import _local_differentials_in_ring
+        sage: R.<x> = QQ[]; S.<y> = R[]; L.<t> = LaurentSeriesRing(QQ)
+        sage: center = SimpleNamespace(infinity=False)
+        sage: data = SimpleNamespace(Q=y^2-x, r=x+1)
+        sage: forms = _local_differentials_in_ring(
+        ....:     center, data, [vector(R, [1, 0])], L, 1+t,
+        ....:     vector(L, [1, 1+t]))
+        sage: len(forms), forms[0][0]
+        (1, 1/2)
+    """
     change_entries = []
     if center.infinity:
         x_series = coordinate**(-1)
@@ -866,6 +891,20 @@ def _modular_local_differentials(center, data, prec, basis, xt, bt):
     absolute coefficient precision, so arithmetic over ``ZZ/p^N ZZ`` gives
     the same result while using compiled dense polynomial kernels.  ``None``
     signals that the inputs require the general p-adic path.
+
+    TESTS::
+
+        sage: from types import SimpleNamespace
+        sage: from sage.schemes.curves.coleman.general_integration import _modular_local_differentials
+        sage: from sage.schemes.curves.coleman.points import ColemanIntegrationPoint
+        sage: R.<x> = QQ[]; S.<y> = R[]; K = Qp(5, 4)
+        sage: T.<t> = PowerSeriesRing(K, default_prec=5)
+        sage: P = ColemanIntegrationPoint(K(1), (K(1), K(1)))
+        sage: data = SimpleNamespace(Q=y^2-x, r=x+1)
+        sage: forms = _modular_local_differentials(
+        ....:     P, data, 5, [vector(R, [1, 0])], 1+t, (T(1), 1+t))
+        sage: len(forms), forms[0][0]
+        (1, 3 + 2*5 + 2*5^2 + 2*5^3 + O(5^4))
     """
     field = center.x.parent()
     try:
@@ -1036,7 +1075,19 @@ def _laurent_at(primitive, parameter, field):
 
 
 def _endpoint_log_argument(parameter, endpoint, field):
-    """Return the local parameter or tangent scale used by the logarithm."""
+    r"""Return the local parameter or tangent scale used by the logarithm.
+
+    EXAMPLES::
+
+        sage: from sage.schemes.curves.coleman.general_integration import _endpoint_log_argument
+        sage: from sage.schemes.curves.coleman.points import (ColemanIntegrationPoint,
+        ....:     tangential_point)
+        sage: K = Qp(5, 4); P = ColemanIntegrationPoint(K(0), (K(1), K(0)))
+        sage: _endpoint_log_argument(K(5), P, K)
+        5 + O(5^5)
+        sage: _endpoint_log_argument(K(0), tangential_point(P, 1+5), K)
+        1 + 5 + O(5^4)
+    """
     if parameter:
         return field(parameter)
     if isinstance(endpoint, ColemanTangentialPoint):
@@ -1047,7 +1098,16 @@ def _endpoint_log_argument(parameter, endpoint, field):
 
 
 def _endpoint_logarithm(parameter, endpoint, field):
-    """Return the standard-branch logarithm at a local endpoint."""
+    r"""Return the standard-branch logarithm at a local endpoint.
+
+    EXAMPLES::
+
+        sage: from sage.schemes.curves.coleman.general_integration import _endpoint_logarithm
+        sage: from sage.schemes.curves.coleman.points import ColemanIntegrationPoint
+        sage: K = Qp(5, 5); P = ColemanIntegrationPoint(K(0), (K(1), K(0)))
+        sage: _endpoint_logarithm(K(1+5), P, K) == K(1+5).log()
+        True
+    """
     return _endpoint_log_argument(parameter, endpoint, field).log(
         p_branch=field.zero()
     )
@@ -1374,6 +1434,7 @@ def _boundary_extension(data, endpoints, centers, e=None):
     E = base.extension(ring.gen()**e - data.p, names='pi')
     return E, ZZ(e)
 
+
 def _lift_center(center, data, field):
     """Reconstruct a bad center at the boundary field's precision.
 
@@ -1516,8 +1577,8 @@ def _general_integrals(P1, P2, data, *, e=None, indices=None):
         sage: branch = point_from_basis_coordinates(0, [1, 0, 0], False, data)
         sage: good = point_from_good_affine_coordinates(
         ....:     5, -32582624253112412, data)
-        sage: values, precision = _general_integrals(
-        ....:     good, branch, data, e=15)  # indirect doctest
+        sage: values, precision = _general_integrals(  # indirect doctest
+        ....:     good, branch, data, e=15)
         sage: len(values), precision
         (6, 1)
     """

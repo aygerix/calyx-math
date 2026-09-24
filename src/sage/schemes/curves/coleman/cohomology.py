@@ -50,7 +50,13 @@ def _exact_left_kernel(A):
         f"computing exact left kernel of {A.nrows()} by {A.ncols()} matrix",
         level=1,
     )
-    integral, _ = A._clear_denom()
+    denominator = ZZ.one()
+    for entry in A.list():
+        denominator = denominator.lcm(QQ(entry).denominator())
+    integral = matrix(
+        ZZ, A.nrows(), A.ncols(),
+        [ZZ(denominator * entry) for entry in A.list()],
+    )
     basis = integral.transpose().__pari__().matker().mattranspose().sage()
     # PARI returns an independent exact kernel basis.  Preserve that certified
     # user basis instead of immediately repeating the row reduction over QQ.
@@ -551,8 +557,8 @@ def residue_at_finite_places(w, Q, r, J0, T0inv):
 
         sage: from sage.schemes.curves.coleman.data import de_rham_cohomology_basis
         sage: R.<x> = QQ[]; S.<y> = R[]
-        sage: len(de_rham_cohomology_basis(
-        ....:     y^2 - (x^3 - 10*x + 9), 5, 2, genus=1)[0])  # indirect doctest
+        sage: len(de_rham_cohomology_basis(  # indirect doctest
+        ....:     y^2 - (x^3 - 10*x + 9), 5, 2, genus=1)[0])
         2
     """
     residues = []
@@ -615,7 +621,18 @@ def vector_valuation_at_zero(v):
 
 
 def _infinity_residue_context(Q, r, W0, Winf, Ginf, Jinf):
-    """Precompute the invariant data used by infinity-residue reductions."""
+    r"""Precompute the invariant data used by infinity-residue reductions.
+
+    TESTS::
+
+        sage: from sage.schemes.curves.coleman.cohomology import _infinity_residue_context
+        sage: R.<x> = QQ[]; S.<y> = R[]; K = R.fraction_field()
+        sage: W = identity_matrix(K, 2)
+        sage: context = _infinity_residue_context(
+        ....:     y^2 - x, x, W, W, zero_matrix(K, 2), zero_matrix(QQ, 2))
+        sage: context[0], context[1], len(context[-1])
+        (2, 1, 2)
+    """
     d = Q.degree()
     degree_r = r.degree()
     Kt = FunctionField(QQ, names="t")
@@ -648,8 +665,8 @@ def residue_at_infinity(w, Q, r, W0, Winf, Ginf, Jinf, Tinfinv,
 
         sage: from sage.schemes.curves.coleman.data import de_rham_cohomology_basis
         sage: R.<x> = QQ[]; S.<y> = R[]
-        sage: len(de_rham_cohomology_basis(
-        ....:     y^2 - (x^3 - 10*x + 9), 5, 2, genus=1)[0])  # indirect doctest
+        sage: len(de_rham_cohomology_basis(  # indirect doctest
+        ....:     y^2 - (x^3 - 10*x + 9), 5, 2, genus=1)[0])
         2
     """
     if _context is None:
@@ -689,7 +706,15 @@ def residue_at_infinity(w, Q, r, W0, Winf, Ginf, Jinf, Tinfinv,
 
 
 def _relative_complement_from_basis(space, fixed):
-    """Return a complement to the independent vectors in ``fixed``."""
+    r"""Return a complement to the independent vectors in ``fixed``.
+
+    TESTS::
+
+        sage: from sage.schemes.curves.coleman.cohomology import _relative_complement_from_basis
+        sage: V = VectorSpace(QQ, 3)
+        sage: _relative_complement_from_basis(V, [V([1, 0, 0])]).basis()
+        [(0, 1, 0), (0, 0, 1)]
+    """
     ambient = space.ambient_vector_space()
     candidates = list(reversed(space.echelonized_basis()))
     pivots = matrix(QQ, list(fixed) + candidates).transpose().pivots()
@@ -756,8 +781,8 @@ def basis_cohomology(Q, p, r, W0, Winf, G0, Ginf, J0, Jinf,
 
         sage: from sage.schemes.curves.coleman.data import de_rham_cohomology_basis
         sage: R.<x> = QQ[]; S.<y> = R[]
-        sage: len(de_rham_cohomology_basis(
-        ....:     y^2 - (x^3 - 10*x + 9), 5, 2, genus=1)[0])  # indirect doctest
+        sage: len(de_rham_cohomology_basis(  # indirect doctest
+        ....:     y^2 - (x^3 - 10*x + 9), 5, 2, genus=1)[0])
         2
     """
     p = _validate_prime(p)

@@ -407,6 +407,19 @@ def padic_points(data, points=(), *, skip_unsupported=False):
         sage: points, _ = padic_points(data)
         sage: len(points)
         6
+
+    A normalized coordinate that has two distinct lifts in one residue
+    class is refused instead of being combined with coordinates from a
+    different point::
+
+        sage: from sage.schemes.curves.coleman.data import coleman_data
+        sage: Q = (y^3 + (3*x^2 + x - 2)*y^2
+        ....:      + (-3*x^3 - 3*x^2 + 2*x + 2)*y + x^4 + x^3)
+        sage: ambiguous = coleman_data(Q, 7, 2, genus=3)
+        sage: padic_points(ambiguous)
+        Traceback (most recent call last):
+        ...
+        ValueError: the selected disk has no unique Qp-rational lift
     """
     p = _validate_prime(data.p)
     k = GF(p)
