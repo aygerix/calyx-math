@@ -1475,30 +1475,28 @@ def descend_to_base_field(values):
 def _descent_output_precision(theoretical_precision, rounding_precision):
     r"""Return the integral precision certified by base-field descent.
 
-    The nonconstant extension coordinates must vanish at least to the
-    theoretical error bound.  Once this check passes, the difference from
-    the exact base-field value lies in `\QQ_p`, whose valuation is integral,
-    so a rational theoretical bound rounds up.
+    Let ``y`` be the computed extension-field value, ``a`` its constant
+    projection, and ``x`` the exact integral in `\QQ_p`.  The theoretical
+    bound controls ``y-x``, while ``rounding_precision`` controls ``y-a``.
+    Hence ``x-a`` is known to their minimum.  Both ``x`` and ``a`` lie in
+    `\QQ_p`, so this lower bound rounds up to an integral valuation.
 
     TESTS::
 
         sage: from sage.schemes.curves.coleman.general_integration import _descent_output_precision
         sage: _descent_output_precision(15/2, 657/100)
-        Traceback (most recent call last):
-        ...
-        PrecisionError: boundary computation does not certify descent to the base field
+        7
         sage: _descent_output_precision(15/2, 399/50)
         8
         sage: _descent_output_precision(13/2, Infinity)
         7
     """
-    theoretical_precision = QQ(theoretical_precision)
-    if (rounding_precision != infinity
-            and QQ(rounding_precision) < theoretical_precision):
-        raise PrecisionError(
-            'boundary computation does not certify descent to the base field'
+    effective_precision = QQ(theoretical_precision)
+    if rounding_precision != infinity:
+        effective_precision = min(
+            effective_precision, QQ(rounding_precision)
         )
-    return ZZ(theoretical_precision.ceil())
+    return ZZ(effective_precision.ceil())
 
 
 def _general_integrals(P1, P2, data, *, e=None, indices=None):
