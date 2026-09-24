@@ -60,13 +60,6 @@ Code is expected to stand on normal mathematical and software evidence:
 - reproducible benchmarks;
 - explicit failure when a result cannot be justified.
 
-## Independent implementation and reverse-engineering policy
-
-When proprietary mathematical software is analyzed, the purpose is to understand its **functional and mathematical behavior**: algorithms, mathematical methods, control-flow strategies, interfaces, numerical techniques, performance characteristics, and other implementation ideas that can be independently expressed.
-
-Calyx implementations derived from such analysis are written independently.
-
-
 ### U.S. legal background
 
 Under 17 U.S.C. § 102(b), copyright protection does not extend to an idea, procedure, process, system, method of operation, concept, principle, or discovery. The U.S. Copyright Office likewise states that the functional aspects of computer programs — including algorithms, functions, logic, and system design — are not protected by copyright. Copyright may nevertheless protect the particular code, documentation, and other original expression used to implement or describe those ideas.
