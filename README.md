@@ -29,13 +29,11 @@ software.
 
 ## LLM-accelerated development
 
-Calyx uses large language models aggressively as engineering force multipliers.
+Calyx uses large language models aggressively as engineering force multipliers and welcomes AI generated contributions.
 
 LLMs are used to:
 
-- explore unfamiliar parts of large mathematical codebases;
 - translate algorithms from papers into implementation plans;
-- reverse engineer the control flows of proprietary mathematical software;
 - generate and refactor routine code;
 - construct adversarial tests and regression cases;
 - compare APIs and implementations across computer algebra systems;
@@ -45,10 +43,6 @@ LLMs are used to:
   issues.
 
 The objective is to **massively compress implementation and shipping timelines**.
-Work that would traditionally require long cycles of boilerplate coding, API
-discovery, test construction, documentation, and iterative refactoring can often
-be brought to a testable state much sooner, leaving more human time for the
-mathematics, algorithm design, validation, and difficult edge cases.
 
 Code is expected to stand on normal mathematical and software evidence:
 
