@@ -417,13 +417,19 @@ def integral_basis_matrices(Q):
     """
     _, function_field = _function_field_model(Q)
     from sage.rings.function_field.maximal_order_round_two import (
-        round_two_maximal_order_infinite_basis,
+        _canonical_module_basis,
     )
     W0 = _basis_matrix(
         function_field, function_field._maximal_order_basis()
     )
+    # The infinite basis spans the maximal order of the inverted field over
+    # `\QQ[1/x]`.  Singular's normalization computes that order much faster
+    # than Round--2; the canonical Hermite basis is the one Round--2 returns.
+    inverted, from_inverted, _ = function_field._inversion_isomorphism()
+    infinite_basis = _canonical_module_basis(
+        inverted, inverted._maximal_order_basis()
+    )
     Winf = _basis_matrix(
-        function_field,
-        round_two_maximal_order_infinite_basis(function_field),
+        function_field, [from_inverted(b) for b in infinite_basis]
     )
     return W0, Winf
