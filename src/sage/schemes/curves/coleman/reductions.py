@@ -21,6 +21,49 @@ from .auxiliary import _model_rings, _validate_prime, positive_log
 from .cohomology import order_matrix_at_infinity, order_matrix_at_zero
 
 
+def _reduce_rational_sequence_mod_prime_power(values, p, N):
+    r"""Reduce rational values using one common denominator.
+
+    The common denominator makes reduction of polynomial and matrix
+    coefficients a single modular inversion rather than a sequence of
+    independent rational normalizations.
+
+    TESTS::
+
+        sage: from sage.schemes.curves.coleman.reductions import _reduce_rational_sequence_mod_prime_power
+        sage: _reduce_rational_sequence_mod_prime_power(
+        ....:     [QQ(13)/6, QQ(14)/15, 0], 5, 2)
+        [-2, -37/5, 0]
+    """
+    values = [QQ(value) for value in values]
+    if not values:
+        return []
+    denominator = ZZ.one()
+    for value in values:
+        denominator = denominator.lcm(value.denominator())
+    denominator_valuation = ZZ(denominator.valuation(p))
+    p_power = p**denominator_valuation
+    modulus = p**(N + denominator_valuation)
+    unit_inverse = (denominator // p_power).inverse_mod(modulus)
+    reduced = []
+    for value in values:
+        residue = (ZZ(value * denominator) * unit_inverse) % modulus
+        if 2 * residue >= modulus:
+            residue -= modulus
+        reduced.append(QQ(residue) / p_power)
+    return reduced
+
+
+def _coefficient_valuation(value, p):
+    """Return the least ``p``-adic valuation among scalar coefficients."""
+    try:
+        return ZZ(QQ(value).valuation(p))
+    except (TypeError, ValueError):
+        valuations = [_coefficient_valuation(coefficient, p)
+                      for coefficient in value.list() if coefficient]
+        return min(valuations, default=ZZ.zero())
+
+
 def reduce_rational_mod_prime_power(value, p, N):
     r"""Return a balanced rational representative modulo ``p^N``.
 
@@ -32,20 +75,7 @@ def reduce_rational_mod_prime_power(value, p, N):
     """
     p = _validate_prime(p)
     N = ZZ(N)
-    value = QQ(value)
-    if not value:
-        return QQ.zero()
-    valuation = ZZ(value.valuation(p))
-    if valuation >= N:
-        return QQ.zero()
-    modulus = p**(N - valuation)
-    unit = value / p**valuation
-    residue_ring = ZZ.quotient(modulus)
-    residue = ZZ(residue_ring(unit.numerator())
-                 / residue_ring(unit.denominator()))
-    if 2 * residue >= modulus:
-        residue -= modulus
-    return QQ(residue) * p**valuation
+    return _reduce_rational_sequence_mod_prime_power([value], p, N)[0]
 
 
 def reduce_polynomial_mod_prime_power(polynomial, p, N):
@@ -58,9 +88,12 @@ def reduce_polynomial_mod_prime_power(polynomial, p, N):
         sage: reduce_polynomial_mod_prime_power(13*x + 14, 5, 2)
         -12*x - 11
     """
+    p = _validate_prime(p)
+    N = ZZ(N)
     parent = polynomial.parent()
-    return parent([reduce_rational_mod_prime_power(coefficient, p, N)
-                   for coefficient in polynomial.list()])
+    return parent(_reduce_rational_sequence_mod_prime_power(
+        polynomial.list(), p, N
+    ))
 
 
 def reduce_matrix_mod_prime_power(A, p, N):
@@ -73,9 +106,10 @@ def reduce_matrix_mod_prime_power(A, p, N):
         [-12 -11]
         [-12   0]
     """
+    p = _validate_prime(p)
+    N = ZZ(N)
     return matrix(QQ, A.nrows(), A.ncols(),
-                  [reduce_rational_mod_prime_power(entry, p, N)
-                   for entry in A.list()])
+                  _reduce_rational_sequence_mod_prime_power(A.list(), p, N))
 
 
 def _number_field_coefficients(value):
@@ -103,11 +137,14 @@ def reduce_number_field_mod_prime_power(value, p, N):
         sage: reduce_number_field_mod_prime_power(13*a + 14, 5, 2)
         -12*a - 11
     """
+    p = _validate_prime(p)
+    N = ZZ(N)
     parent = value.parent()
     if parent is QQ:
-        return reduce_rational_mod_prime_power(value, p, N)
-    return parent([reduce_rational_mod_prime_power(coefficient, p, N)
-                   for coefficient in _number_field_coefficients(value)])
+        return _reduce_rational_sequence_mod_prime_power([value], p, N)[0]
+    return parent(_reduce_rational_sequence_mod_prime_power(
+        _number_field_coefficients(value), p, N
+    ))
 
 
 def reduce_number_field_matrix_mod_prime_power(A, p, N):
@@ -121,10 +158,28 @@ def reduce_number_field_matrix_mod_prime_power(A, p, N):
         ....:     matrix(K, [[13*a + 14]]), 5, 2)
         [-12*a - 11]
     """
+    p = _validate_prime(p)
+    N = ZZ(N)
     base_ring = A.base_ring()
-    return matrix(base_ring, A.nrows(), A.ncols(),
-                  [reduce_number_field_mod_prime_power(entry, p, N)
-                   for entry in A.list()])
+    if base_ring is QQ:
+        entries = _reduce_rational_sequence_mod_prime_power(A.list(), p, N)
+    else:
+        coefficient_lists = [
+            _number_field_coefficients(entry) for entry in A.list()
+        ]
+        lengths = [len(coefficients) for coefficients in coefficient_lists]
+        reduced = _reduce_rational_sequence_mod_prime_power(
+            [coefficient
+             for coefficients in coefficient_lists
+             for coefficient in coefficients],
+            p, N
+        )
+        entries = []
+        offset = 0
+        for length in lengths:
+            entries.append(base_ring(reduced[offset:offset + length]))
+            offset += length
+    return matrix(base_ring, A.nrows(), A.ncols(), entries)
 
 
 def reduce_laurent_mod_prime_power(f, p, N):
@@ -137,14 +192,17 @@ def reduce_laurent_mod_prime_power(f, p, N):
         sage: reduce_laurent_mod_prime_power(13*z^-1 + 14*z, 5, 2)
         -12*z^-1 - 11*z
     """
+    p = _validate_prime(p)
+    N = ZZ(N)
     parent = f.parent()
     if not f:
         return parent.zero()
     variable = parent.gen()
     valuation = ZZ(f.valuation())
-    return sum((reduce_rational_mod_prime_power(coefficient, p, N)
+    coefficients = _reduce_rational_sequence_mod_prime_power(f.list(), p, N)
+    return sum((coefficient
                 * variable**(valuation + offset)
-                for offset, coefficient in enumerate(f.list())
+                for offset, coefficient in enumerate(coefficients)
                 if coefficient), parent.zero())
 
 
@@ -467,23 +525,50 @@ def evaluate_polynomial_mod_prime_power(f, g, p, N):
         sage: evaluate_polynomial_mod_prime_power(z^2 + 2*z + 3, x + 1, 5, 2)
         x^2 + 4*x + 6
     """
+    p = _validate_prime(p)
+    N = ZZ(N)
     polynomial_ring = g.parent()
     if not f:
         return polynomial_ring.zero()
     valuation = ZZ(f.valuation())
     if valuation < 0:
         raise ValueError("f must have no negative powers")
-    coefficients = f.list()
-    result = polynomial_ring.zero()
-    for coefficient in reversed(coefficients):
-        result = reduce_polynomial_mod_prime_power(result * g, p, N)
-        result += polynomial_ring(coefficient)
-    if valuation:
-        power = polynomial_ring.one()
-        for _ in range(valuation):
-            power = reduce_polynomial_mod_prime_power(power * g, p, N)
-        result = reduce_polynomial_mod_prime_power(result * power, p, N)
-    return reduce_polynomial_mod_prime_power(result, p, N)
+    degree = ZZ(f.degree())
+    f_valuations = [_coefficient_valuation(coefficient, p)
+                    for coefficient in f if coefficient]
+    f_valuation = min(f_valuations, default=ZZ.zero())
+    g_valuations = [_coefficient_valuation(coefficient, p)
+                    for coefficient in g if coefficient]
+    g_valuation = min(g_valuations, default=ZZ.zero())
+    working_precision = (
+        N - min(f_valuation, ZZ.zero())
+        - degree * min(g_valuation, ZZ.zero())
+    )
+    block_count = (degree + 4) // 4
+    blocks = []
+    for block in range(block_count):
+        top = 4 * block + 3
+        value = polynomial_ring(f[top])
+        for exponent in range(top - 1, top - 4, -1):
+            value = value * g + polynomial_ring(f[exponent])
+        blocks.append(value)
+
+    g_power = reduce_polynomial_mod_prime_power(g**4, p, working_precision)
+    while len(blocks) > 1:
+        if len(blocks) % 2:
+            blocks.append(polynomial_ring.zero())
+        blocks = [
+            reduce_polynomial_mod_prime_power(
+                blocks[index] + blocks[index + 1] * g_power,
+                p, working_precision
+            )
+            for index in range(0, len(blocks), 2)
+        ]
+        if len(blocks) > 1:
+            g_power = reduce_polynomial_mod_prime_power(
+                g_power**2, p, working_precision
+            )
+    return reduce_polynomial_mod_prime_power(blocks[0], p, N)
 
 
 def _inverse_polynomial_to_laurent(polynomial, laurent_ring):

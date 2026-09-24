@@ -673,18 +673,17 @@ def _relative_complement(space, subspace):
         sage: _relative_complement(V, U).basis()
         [(0, 1, 0), (0, 0, 1)]
     """
-    if not subspace.is_subspace(space):
-        raise ValueError("the second space must be a subspace of the first")
     ambient = space.ambient_vector_space()
-    current = ambient.subspace(subspace.basis())
-    chosen = []
     # Give priority to the trailing pivots of ``space``.  This choice is
     # mathematically immaterial, but it fixes reproducible coordinates for
     # Coleman integrals.
-    for basis_vector in reversed(space.basis()):
-        if basis_vector not in current:
-            chosen.append(basis_vector)
-            current = ambient.subspace(list(current.basis()) + [basis_vector])
+    fixed = list(subspace.basis())
+    candidates = list(reversed(space.basis()))
+    pivots = matrix(QQ, fixed + candidates).transpose().pivots()
+    if len(pivots) != space.dimension():
+        raise ValueError("the second space must be a subspace of the first")
+    chosen = [candidates[index - len(fixed)] for index in pivots
+              if index >= len(fixed)]
     return ambient.subspace(chosen)
 
 

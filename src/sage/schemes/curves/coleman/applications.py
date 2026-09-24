@@ -64,6 +64,7 @@ from typing import NamedTuple
 from sage.rings.finite_rings.finite_field_constructor import GF
 from sage.rings.integer_ring import ZZ
 from sage.rings.padics.factory import Qp
+from sage.rings.padics.precision_error import PrecisionError
 from sage.rings.polynomial.polynomial_ring_constructor import PolynomialRing
 from sage.rings.rational_field import QQ
 from sage.schemes.affine.affine_space import AffineSpace
@@ -345,18 +346,39 @@ def _lift_normalized_residue(residue_point, data, k):
     """
     from .ramified import find_bad_point_in_disk
 
-    point = point_from_basis_coordinates(
-        ZZ(residue_point.x),
-        [ZZ(value) for value in residue_point.b],
-        residue_point.infinity,
-        data,
+    requested_precision = ZZ(data.N)
+    precision_error = None
+    for multiplier in (2, 3, 4, 6, 8):
+        work_precision = max(requested_precision + 2,
+                             multiplier * requested_precision)
+        work_field = Qp(data.p, prec=work_precision)
+        point = point_from_basis_coordinates(
+            work_field(ZZ(residue_point.x)),
+            [work_field(ZZ(value)) for value in residue_point.b],
+            residue_point.infinity,
+            data,
+        )
+        if not is_in_bad_residue_disk(point, data):
+            raise ArithmeticError(
+                "normalized residue place was not detected as bad"
+            )
+        try:
+            point = find_bad_point_in_disk(point, data)
+        except PrecisionError as error:
+            precision_error = error
+            continue
+        if not _same_reduction(point, residue_point, k):
+            raise ArithmeticError(
+                "normalized lift changed the selected residue disk"
+            )
+        break
+    else:
+        raise precision_error
+    field = Qp(data.p, prec=data.N)
+    return ColemanIntegrationPoint(
+        field(point.x), tuple(field(value) for value in point.b),
+        point.infinity,
     )
-    if not is_in_bad_residue_disk(point, data):
-        raise ArithmeticError("normalized residue place was not detected as bad")
-    point = find_bad_point_in_disk(point, data)
-    if not _same_reduction(point, residue_point, k):
-        raise ArithmeticError("normalized lift changed the selected residue disk")
-    return point
 
 
 def padic_points(data, points=(), *, skip_unsupported=False):

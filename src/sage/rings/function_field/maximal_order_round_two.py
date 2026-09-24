@@ -327,9 +327,8 @@ def round_two_maximal_order_basis(field, *, return_iterations=False):
     )
     iterations = {}
 
-    for factor, exponent in discriminant.factor():
-        if exponent < 2:
-            continue
+    repeated_part = discriminant.gcd(discriminant.derivative())
+    for factor, _ in repeated_part.factor():
         prime = factor.monic()
         count = 0
         while True:

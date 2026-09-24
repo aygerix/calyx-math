@@ -364,11 +364,8 @@ def finite_integral_basis_matrix(Q):
         [  0 1/x]
     """
     _, function_field = _function_field_model(Q)
-    from sage.rings.function_field.maximal_order_round_two import (
-        round_two_maximal_order_basis,
-    )
     return _basis_matrix(
-        function_field, round_two_maximal_order_basis(function_field)
+        function_field, function_field._maximal_order_basis()
     )
 
 
@@ -420,11 +417,10 @@ def integral_basis_matrices(Q):
     """
     _, function_field = _function_field_model(Q)
     from sage.rings.function_field.maximal_order_round_two import (
-        round_two_maximal_order_basis,
         round_two_maximal_order_infinite_basis,
     )
     W0 = _basis_matrix(
-        function_field, round_two_maximal_order_basis(function_field)
+        function_field, function_field._maximal_order_basis()
     )
     Winf = _basis_matrix(
         function_field,

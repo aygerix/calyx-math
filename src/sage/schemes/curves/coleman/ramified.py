@@ -74,6 +74,11 @@ from sage.rings.finite_rings.finite_field_constructor import GF
 from sage.rings.function_field.constructor import FunctionField
 from sage.rings.infinity import infinity
 from sage.rings.integer_ring import ZZ
+from sage.rings.padics.factory import Qp
+from sage.rings.padics.precision_error import PrecisionError
+from sage.rings.polynomial.polynomial_ring import (
+    PolynomialRing_dense_padic_field_capped_relative,
+)
 from sage.rings.polynomial.polynomial_ring_constructor import PolynomialRing
 from sage.rings.power_series_ring import PowerSeriesRing
 from sage.rings.rational_field import QQ
@@ -270,6 +275,8 @@ def minimal_polynomial(f1, f2, *, max_bound=30):
         sage: _, L = _function_field_model(y^2 - x)
         sage: minimal_polynomial(L(L.base_field().gen()), L.gen())
         z^2 - u
+        sage: minimal_polynomial(L(1/L.base_field().gen()), L.gen())
+        u*z^2 - 1
     """
     if f1.parent() is not f2.parent():
         raise TypeError("f1 and f2 must belong to the same function field")
@@ -277,8 +284,59 @@ def minimal_polynomial(f1, f2, *, max_bound=30):
     _, _, to_vector = L.vector_space()
     Rx = PolynomialRing(QQ, names='u')
     Rz = PolynomialRing(Rx, names='z')
-    for bound in range(2, ZZ(max_bound) + 1):
-        terms = [f1**j * f2**i for i in range(bound + 1)
+    try:
+        constant = QQ(f2)
+    except (TypeError, ValueError):
+        pass
+    else:
+        return Rz.gen() - constant
+    if f2 == f1:
+        return Rz.gen() - Rx.gen()
+
+    base_generator = L(L.base_field().gen())
+    if f1 == base_generator or f1 * base_generator == 1:
+        fraction_field = Rx.fraction_field()
+        u = fraction_field(Rx.gen())
+        argument = u if f1 == base_generator else 1 / u
+        coefficients = []
+        for coefficient in f2.minimal_polynomial().list():
+            numerator = coefficient.numerator()
+            denominator = coefficient.denominator()
+            numerator_value = sum(
+                (QQ(value) * argument**i
+                 for i, value in enumerate(numerator.list())),
+                fraction_field.zero()
+            )
+            denominator_value = sum(
+                (QQ(value) * argument**i
+                 for i, value in enumerate(denominator.list())),
+                fraction_field.zero()
+            )
+            coefficients.append(numerator_value / denominator_value)
+        denominator = Rx.one()
+        for coefficient in coefficients:
+            denominator = denominator.lcm(coefficient.denominator())
+        integral = [Rx(denominator * coefficient)
+                    for coefficient in coefficients]
+        content = next((coefficient for coefficient in integral
+                        if coefficient), Rx.one())
+        for coefficient in integral:
+            if coefficient:
+                content = content.gcd(coefficient)
+        if content.degree() > 0:
+            integral = [coefficient // content for coefficient in integral]
+        return Rz(integral)
+
+    max_bound = ZZ(max_bound)
+    if max_bound < 5:
+        raise ValueError("max_bound must be at least 5")
+    for bound in range(5, max_bound + 1, 3):
+        f1_powers = [L.one()]
+        f2_powers = [L.one()]
+        for _ in range(bound):
+            f1_powers.append(f1_powers[-1] * f1)
+            f2_powers.append(f2_powers[-1] * f2)
+        terms = [f1_powers[j] * f2_powers[i] for i in range(bound + 1)
                  for j in range(bound + 1)]
         coords = [to_vector(term) for term in terms]
         denominator = coords[0][0].denominator().parent().one()
@@ -291,10 +349,15 @@ def minimal_polynomial(f1, f2, *, max_bound=30):
                      default=0)
         columns = [[QQ(h[k]) for h in row for k in range(degree + 1)]
                    for row in polynomials]
-        kernel = matrix(QQ, columns).left_kernel()
-        if not kernel.dimension():
+        relation_matrix = matrix(QQ, columns)
+        integral_matrix, _ = relation_matrix._clear_denom()
+        kernel_basis = (
+            integral_matrix.transpose().__pari__().matker()
+            .mattranspose().sage().rows()
+        )
+        if not kernel_basis:
             continue
-        for relation in kernel.basis():
+        for relation in kernel_basis:
             candidate = Rz([sum((Rx(relation[i * (bound + 1) + j]) * Rx.gen()**j
                                  for j in range(bound + 1)), Rx.zero())
                             for i in range(bound + 1)])
@@ -916,6 +979,134 @@ def _local_coord_at_precision(P, prec, data):
     return xt, bt, index
 
 
+def _digit_lifted_padic_root(poly, approximate, target):
+    """Lift one integral residue class by enumerating successive digits.
+
+    Return ``None`` if the available precision does not isolate one branch.
+
+    TESTS::
+
+        sage: from sage.schemes.curves.coleman.ramified import _digit_lifted_padic_root
+        sage: K = Qp(5, 8); R.<z> = K[]
+        sage: _digit_lifted_padic_root(z^2 - 1, K(1), 8)
+        1 + O(5^8)
+        sage: _digit_lifted_padic_root((z - 5)*(z + 5), K(0), 8) is None
+        True
+    """
+    if approximate.valuation() < 0:
+        return None
+    field = approximate.parent()
+    p = ZZ(field.prime())
+    target = ZZ(target)
+    candidates = [ZZ(approximate.residue())]
+    modulus = p
+    for precision in range(1, target):
+        next_modulus = modulus * p
+        candidates = [
+            candidate + digit * modulus
+            for candidate in candidates
+            for digit in range(p)
+            if poly(field(candidate + digit * modulus)).valuation()
+            >= precision + 1
+        ]
+        if not candidates or len(candidates) > 10000:
+            return None
+        modulus = next_modulus
+
+    derivative = poly.derivative()
+    branches = {}
+    for candidate in candidates:
+        value = field(candidate)
+        derivative_value = derivative(value)
+        if not derivative_value:
+            return None
+        precision = max(
+            ZZ.one(),
+            target - max(ZZ.zero(), ZZ(derivative_value.valuation()))
+        )
+        representative = candidate % p**precision
+        branches[(precision, representative)] = value
+    if len(branches) != 1:
+        return None
+    (precision, representative), _ = branches.popitem()
+    root = field(representative).add_bigoh(precision)
+    if poly(root).valuation() < target:
+        return None
+    return root
+
+
+def _multiple_root_center(poly, approximate, target):
+    r"""Lift the common center of a residue-multiple root cluster.
+
+    The derivative of order one less than the residual multiplicity has a
+    simple root at the common center.  A center is returned only when it also
+    satisfies the original relation to ``target`` digits.
+
+    TESTS::
+
+        sage: from sage.schemes.curves.coleman.ramified import _multiple_root_center
+        sage: K = Qp(5, 8); R.<z> = K[]
+        sage: root = K(1 + 5 + 2*5^2)
+        sage: lifted = _multiple_root_center((z-root)^2, K(1), 8)
+        sage: lifted.precision_absolute(), ((lifted-root)^2).valuation() >= 8
+        (4, True)
+        sage: _multiple_root_center((z-5)*(z+5), K(0), 8) is None
+        True
+    """
+    if approximate.valuation() < 0:
+        return None
+    field = approximate.parent()
+    p = ZZ(field.prime())
+    nonzero_valuations = [coefficient.valuation()
+                          for coefficient in poly if coefficient]
+    if not nonzero_valuations:
+        return None
+    scale_valuation = min(nonzero_valuations)
+    scale = field(p)**scale_valuation
+    residue_field = GF(p)
+    residue_ring = PolynomialRing(
+        residue_field, names=poly.parent().variable_name()
+    )
+    residue_poly = residue_ring([
+        residue_field((coefficient / scale).residue())
+        if coefficient else residue_field.zero()
+        for coefficient in poly
+    ])
+    residue_root = residue_field(approximate.residue())
+    divisor = residue_ring.gen() - residue_root
+    multiplicity = ZZ.zero()
+    while residue_poly and residue_poly(residue_root) == 0:
+        residue_poly, remainder = residue_poly.quo_rem(divisor)
+        if remainder:
+            break
+        multiplicity += 1
+    if multiplicity < 2:
+        return None
+
+    deflated = poly
+    for _ in range(multiplicity - 1):
+        deflated = deflated.derivative()
+    derivative = deflated.derivative()
+    root = field(approximate)
+    for _ in range(max(8, 2 * ZZ(target).nbits() + 4)):
+        value = deflated(root)
+        if value.valuation() >= target:
+            break
+        derivative_value = derivative(root)
+        if (not derivative_value
+                or value.valuation() <= 2 * derivative_value.valuation()):
+            return None
+        root -= value / derivative_value
+    if (deflated(root).valuation() < target
+            or poly(root).valuation() < target):
+        return None
+    precision = min(
+        ZZ(root.precision_absolute()),
+        (ZZ(target) + multiplicity - 1) // multiplicity,
+    )
+    return root.add_bigoh(precision)
+
+
 def _selected_padic_root(poly, approximate):
     """Choose the rational p-adic root in the same residue class.
 
@@ -933,6 +1124,19 @@ def _selected_padic_root(poly, approximate):
         sage: lifted = _selected_padic_root(z + uncertain, K(0))
         sage: lifted.precision_absolute(), (lifted + uncertain).valuation() >= 5
         (5, True)
+
+    An approximation that already satisfies a multiple-root relation to the
+    available precision needs no further factorization::
+
+        sage: exact_enough = _selected_padic_root((z - K(1))^2, K(1))
+        sage: exact_enough, ((exact_enough - 1)^2).valuation() >= 8
+        (1 + O(5^8), True)
+
+    The generalized Hensel criterion also permits a nonunit derivative::
+
+        sage: lifted = _selected_padic_root(z^2 - 25, K(5 + 5^4))
+        sage: lifted.precision_absolute(), (lifted^2 - 25).valuation() >= 8
+        (7, True)
     """
     field = approximate.parent()
     if poly[0].precision_absolute() == infinity and approximate.valuation() > 0:
@@ -945,22 +1149,62 @@ def _selected_padic_root(poly, approximate):
     target = min([ZZ(field.precision_cap())] + coefficient_precisions)
     root = field(approximate)
     derivative = poly.derivative()
+
+    def root_precision(candidate):
+        derivative_value = derivative(candidate)
+        if not derivative_value:
+            return target
+        return max(ZZ.zero(),
+                   target - max(ZZ.zero(), ZZ(derivative_value.valuation())))
+
     value = poly(root)
+    if value.valuation() >= target:
+        return root.add_bigoh(root_precision(root))
     derivative_value = derivative(root)
-    if (target > 0 and value.valuation() > 0
-            and derivative_value.valuation() == 0):
+    if (target > 0 and derivative_value
+            and value.valuation() > 2 * derivative_value.valuation()):
         for _ in range(max(8, 2 * target.nbits() + 4)):
             value = poly(root)
             if value.valuation() >= target:
-                return root.add_bigoh(target)
+                return root.add_bigoh(root_precision(root))
             root -= value / derivative(root)
         if poly(root).valuation() >= target:
-            return root.add_bigoh(target)
-    roots = [(root, multiplicity) for root, multiplicity in poly.roots(field)
-             if (root - approximate).valuation() > 0]
-    if len(roots) != 1:
-        raise ValueError("the selected disk has no unique Qp-rational lift")
-    return roots[0][0]
+            return root.add_bigoh(root_precision(root))
+    multiple_root = _multiple_root_center(poly, approximate, target)
+    if multiple_root is not None:
+        return multiple_root
+    factorization_error = None
+    try:
+        factor_field = Qp(field.prime(), prec=target)
+        factor_ring = PolynomialRing_dense_padic_field_capped_relative(
+            factor_field, name=poly.parent().variable_name()
+        )
+        factor_poly = factor_ring(
+            [factor_field(coefficient) for coefficient in poly]
+        )
+        factors = factor_poly.factor()
+    except NotImplementedError:
+        factors = ()
+    except PrecisionError as error:
+        factorization_error = error
+        factors = ()
+    for factor, _ in factors:
+        if factor.degree() != 1:
+            continue
+        candidate = field(-factor[0] / factor[1])
+        if ((candidate - approximate).valuation() > 0
+                and poly(candidate).valuation() >= target):
+            precision = min(
+                ZZ(candidate.precision_absolute()),
+                root_precision(candidate),
+            )
+            return candidate.add_bigoh(precision)
+    lifted = _digit_lifted_padic_root(poly, approximate, target)
+    if lifted is not None:
+        return lifted
+    if factorization_error is not None:
+        raise factorization_error
+    raise ValueError("the selected disk has no Qp-rational lift")
 
 
 def _at_padic_value(poly, value, field):

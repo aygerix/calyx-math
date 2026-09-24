@@ -1411,7 +1411,8 @@ def coleman_integrals_on_basis(P1, P2, data, *, e=None):
     automorphism `y \mapsto \zeta y` fixes every branch point and scales
     both basis differentials by nontrivial cube roots of unity.  Hence the
     integral between two branch points vanishes, and the integrals from the
-    branch points over `\sqrt{2}` and over `1` agree::
+    branch points over `\sqrt{2}` and over `1` agree.  The positive valuation
+    of the ramified root derivative consumes one digit of root precision::
 
         sage: f = (x^2 - 2)*(x - 1)
         sage: data3 = coleman_data(y^3 - f, 7, 5)
@@ -1428,7 +1429,7 @@ def coleman_integrals_on_basis(P1, P2, data, *, e=None):
         sage: I2, n2 = coleman_integrals_on_basis(rational, good3, data3)
         sage: n1, n2, all((a - b).valuation() >= min(n1, n2)
         ....:                for a, b in zip(I1, I2))
-        (4, 3, True)
+        (3, 3, True)
     """
     from .integration import coleman_integrals_on_basis as good_integrals
 
