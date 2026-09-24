@@ -1,0 +1,30 @@
+name: Magma parity
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - 'parity/**'
+      - 'README.md'
+      - 'src/**'
+      - '.github/workflows/magma-parity.yml'
+  pull_request:
+    paths:
+      - 'parity/**'
+      - 'README.md'
+      - 'src/**'
+      - '.github/workflows/magma-parity.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Parity pages are valid and up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 parity/generate.py --check

@@ -1,0 +1,1769 @@
+# Magma parity matrix: which parts of Magma Calyx covers, chapter by chapter.
+#
+# This file is the source of truth. After editing it, run
+#
+#     python3 parity/generate.py
+#
+# to regenerate parity/README.md, the charts and the summary in README.md.
+# CI runs `python3 parity/generate.py --check`, which fails if they are stale
+# or if a path listed under `calyx` does not exist under src/.
+#
+# Fields of a chapter:
+#   part, title, slug  the Handbook part, the chapter, and its page
+#                      (https://magma.maths.usyd.edu.au/magma/handbook/<slug>)
+#   intrinsics         number of distinct intrinsics the chapter documents
+#   status             available | partial | missing | n/a | unassessed
+#   summary            what the chapter covers, in our own words
+#   calyx              where the functionality lives in Calyx (dotted paths under src/)
+#   origin             sage | calyx | both: where that functionality comes from
+#   crosschecked       true if Calyx results are compared against Magma in a test harness
+#   notes              what is missing or different
+#   issues             related issue numbers on aygerix/calyx-math
+
+[handbook]
+version = "V2.29"
+date = "2026-08-03"
+
+[[chapter]]
+part = "The Magma Language"
+title = "Statements and Expressions"
+slug = "statements_and_expressions"
+intrinsics = 43
+status = "n/a"
+summary = "Assignment, control flow, types and error handling in the Magma language."
+notes = "Python provides these."
+
+[[chapter]]
+part = "The Magma Language"
+title = "Functions, Procedures and Packages"
+slug = "functions_procedures_and_packages"
+intrinsics = 12
+status = "n/a"
+summary = "Defining functions, procedures, packages and attributes in Magma."
+notes = "Python functions, modules and classes play this role."
+
+[[chapter]]
+part = "The Magma Language"
+title = "Input and Output"
+slug = "input_and_output"
+intrinsics = 105
+status = "n/a"
+summary = "Strings, printing, files, pipes and sockets."
+notes = "Python provides these; Calyx objects also save and load with save() and load()."
+
+[[chapter]]
+part = "The Magma Language"
+title = "Environment and Options"
+slug = "environment_and_options"
+intrinsics = 55
+status = "n/a"
+summary = "Session settings, verbosity and the Magma line editor."
+notes = "Calyx uses IPython and Python settings."
+
+[[chapter]]
+part = "The Magma Language"
+title = "Parallelism"
+slug = "parallelism"
+intrinsics = 30
+status = "partial"
+summary = "Multithreading, GPUs and distributed computation inside algorithms and for user code."
+calyx = ["sage.parallel.decorate"]
+origin = "sage"
+notes = "User code can run in parallel with @parallel, and some underlying libraries are multithreaded. Distributed computation inside algorithms (class groups, lattice enumeration) and GPU support are missing."
+
+[[chapter]]
+part = "The Magma Language"
+title = "Magma Semantics"
+slug = "semantics"
+intrinsics = 0
+status = "n/a"
+summary = "Evaluation, scope and typing rules of the Magma language."
+
+[[chapter]]
+part = "The Magma Language"
+title = "The Magma Profiler"
+slug = "profiler"
+intrinsics = 9
+status = "n/a"
+summary = "Magma's call-graph profiler."
+notes = "Python's profilers (cProfile, %prun) serve the same purpose."
+
+[[chapter]]
+part = "The Magma Language"
+title = "Debugging Magma Code"
+slug = "debugging_magma_code"
+intrinsics = 1
+status = "n/a"
+summary = "Debugging Magma code."
+notes = "Python's debugger (pdb, %debug) serves the same purpose."
+
+[[chapter]]
+part = "Sets, Sequences, and Mappings"
+title = "Introduction to Aggregates"
+slug = "introduction_to_aggregates"
+intrinsics = 0
+status = "n/a"
+summary = "Overview of the aggregate types."
+notes = "Overview only."
+
+[[chapter]]
+part = "Sets, Sequences, and Mappings"
+title = "Sets"
+slug = "sets"
+intrinsics = 68
+status = "available"
+summary = "Enumerated, indexed and multisets with set operations."
+calyx = ["sage.sets.set", "sage.combinat.subset"]
+origin = "sage"
+notes = "Python sets, together with Set and Subsets."
+
+[[chapter]]
+part = "Sets, Sequences, and Mappings"
+title = "Sequences"
+slug = "sequences"
+intrinsics = 59
+status = "available"
+summary = "Sequences with a common universe."
+calyx = ["sage.structure.sequence"]
+origin = "sage"
+notes = "Python lists, together with Sequence."
+
+[[chapter]]
+part = "Sets, Sequences, and Mappings"
+title = "Tuples and Cartesian Products"
+slug = "tuples_and_cartesian_products"
+intrinsics = 23
+status = "available"
+summary = "Tuples and Cartesian products."
+calyx = ["sage.sets.cartesian_product"]
+origin = "sage"
+
+[[chapter]]
+part = "Sets, Sequences, and Mappings"
+title = "Lists"
+slug = "lists"
+intrinsics = 15
+status = "n/a"
+summary = "Lists with arbitrary entries."
+notes = "Python lists."
+
+[[chapter]]
+part = "Sets, Sequences, and Mappings"
+title = "Associative Arrays"
+slug = "associative_arrays"
+intrinsics = 9
+status = "n/a"
+summary = "Key-value tables."
+notes = "Python dictionaries."
+
+[[chapter]]
+part = "Sets, Sequences, and Mappings"
+title = "Coproducts"
+slug = "coproducts"
+intrinsics = 10
+status = "available"
+summary = "Disjoint unions of sets."
+calyx = ["sage.sets.disjoint_union_enumerated_sets"]
+origin = "sage"
+
+[[chapter]]
+part = "Sets, Sequences, and Mappings"
+title = "Records"
+slug = "records"
+intrinsics = 8
+status = "n/a"
+summary = "Records with named fields."
+notes = "Python classes, dataclasses and named tuples."
+
+[[chapter]]
+part = "Sets, Sequences, and Mappings"
+title = "Mappings"
+slug = "mappings"
+intrinsics = 26
+status = "available"
+summary = "Maps, homomorphisms, composition and preimages."
+calyx = ["sage.categories.map", "sage.categories.homset"]
+origin = "sage"
+
+[[chapter]]
+part = "Basic Rings"
+title = "Introduction to Rings"
+slug = "introduction_to_rings"
+intrinsics = 79
+status = "available"
+summary = "Generic ring and element functions, ideals and quotient rings."
+calyx = ["sage.rings.ring", "sage.rings.ideal", "sage.rings.quotient_ring"]
+origin = "sage"
+
+[[chapter]]
+part = "Basic Rings"
+title = "Ring of Integers"
+slug = "ring_of_integers"
+intrinsics = 151
+status = "available"
+summary = "Integer arithmetic, primality, factorization and arithmetic functions."
+calyx = ["sage.rings.integer", "sage.rings.integer_ring", "sage.arith.misc"]
+origin = "sage"
+notes = "No number field sieve for factoring very large integers."
+
+[[chapter]]
+part = "Basic Rings"
+title = "Integer Residue Class Rings"
+slug = "integer_residue_class_rings"
+intrinsics = 66
+status = "available"
+summary = "Z/nZ, its unit group and Dirichlet characters."
+calyx = ["sage.rings.finite_rings.integer_mod_ring", "sage.modular.dirichlet"]
+origin = "sage"
+
+[[chapter]]
+part = "Basic Rings"
+title = "Rational Field"
+slug = "rational_field"
+intrinsics = 48
+status = "available"
+summary = "The rational numbers and their elements."
+calyx = ["sage.rings.rational_field", "sage.rings.rational"]
+origin = "sage"
+
+[[chapter]]
+part = "Basic Rings"
+title = "Finite Fields"
+slug = "finite_fields"
+intrinsics = 80
+status = "available"
+summary = "Finite fields, embeddings, normal bases and irreducible polynomials."
+calyx = ["sage.rings.finite_rings"]
+origin = "sage"
+
+[[chapter]]
+part = "Basic Rings"
+title = "Nearfields"
+slug = "nearfields"
+intrinsics = 23
+status = "missing"
+summary = "Dickson and Zassenhaus nearfields and their planes."
+
+[[chapter]]
+part = "Basic Rings"
+title = "Univariate Polynomial Rings"
+slug = "univariate_polynomial_rings"
+intrinsics = 102
+status = "available"
+summary = "Univariate polynomials: arithmetic, gcds, roots and factorization."
+calyx = ["sage.rings.polynomial.polynomial_ring", "sage.rings.polynomial.polynomial_element"]
+origin = "sage"
+
+[[chapter]]
+part = "Basic Rings"
+title = "Multivariate Polynomial Rings"
+slug = "multivariate_polynomial_rings"
+intrinsics = 63
+status = "available"
+summary = "Multivariate polynomials: arithmetic, gcds, factorization and resultants."
+calyx = ["sage.rings.polynomial.multi_polynomial_ring", "sage.rings.polynomial.multi_polynomial_libsingular"]
+origin = "sage"
+
+[[chapter]]
+part = "Basic Rings"
+title = "Real and Complex Fields"
+slug = "real_and_complex_fields"
+intrinsics = 124
+status = "available"
+summary = "Multiprecision reals and complexes, special functions and numerical integration."
+calyx = ["sage.rings.real_mpfr", "sage.rings.complex_mpfr", "sage.rings.real_arb", "sage.calculus.integration"]
+origin = "sage"
+
+[[chapter]]
+part = "Matrices and Linear Algebra"
+title = "Matrices"
+slug = "matrices"
+intrinsics = 132
+status = "available"
+summary = "Dense matrices: construction, arithmetic, solving and canonical forms."
+calyx = ["sage.matrix.matrix_space", "sage.matrix.matrix2"]
+origin = "sage"
+
+[[chapter]]
+part = "Matrices and Linear Algebra"
+title = "Sparse Matrices"
+slug = "sparse_matrices"
+intrinsics = 80
+status = "available"
+summary = "Sparse matrices and their linear algebra."
+calyx = ["sage.matrix.matrix_modn_sparse", "sage.matrix.matrix_sparse"]
+origin = "sage"
+notes = "Very large sparse systems (structured Gaussian elimination, Lanczos) are much slower than in Magma."
+
+[[chapter]]
+part = "Matrices and Linear Algebra"
+title = "Vector Spaces"
+slug = "vector_spaces"
+intrinsics = 72
+status = "available"
+summary = "Vector spaces, subspaces, quotients and linear maps."
+calyx = ["sage.modules.free_module", "sage.modules.vector_space_morphism"]
+origin = "sage"
+
+[[chapter]]
+part = "Matrices and Linear Algebra"
+title = "Polar Spaces"
+slug = "polar_spaces"
+intrinsics = 98
+status = "partial"
+summary = "Reflexive forms, isometries and polar spaces over finite fields."
+calyx = ["sage.groups.matrix_gps.orthogonal", "sage.groups.matrix_gps.symplectic", "sage.groups.matrix_gps.unitary"]
+origin = "sage"
+notes = "Classical groups and their invariant forms are available. Polar space objects, Witt decompositions, isotropic subspace enumeration and spinor norms over finite fields are missing."
+
+[[chapter]]
+part = "Lattices and Quadratic Forms"
+title = "Lattices"
+slug = "lattices"
+intrinsics = 206
+status = "available"
+summary = "Integral lattices: reduction, short vectors, automorphisms and genera."
+calyx = ["sage.modules.free_quadratic_module_integer_symmetric", "sage.quadratic_forms.genera.genus", "sage.matrix.matrix_integer_dense"]
+origin = "sage"
+notes = "No database of lattices."
+
+[[chapter]]
+part = "Lattices and Quadratic Forms"
+title = "Lattices over Number Fields"
+slug = "lattices_over_number_fields"
+intrinsics = 115
+status = "missing"
+summary = "Quadratic and hermitian lattices over number fields: genera, neighbours and masses."
+
+[[chapter]]
+part = "Lattices and Quadratic Forms"
+title = "Lattices with Group Action"
+slug = "lattices_with_group_action"
+intrinsics = 45
+status = "missing"
+summary = "Lattices invariant under a finite matrix group: invariant forms and sublattices."
+
+[[chapter]]
+part = "Lattices and Quadratic Forms"
+title = "Quadratic Forms"
+slug = "quadratic_forms"
+intrinsics = 14
+status = "available"
+summary = "Quadratic forms over the rationals: local invariants and rational equivalence."
+calyx = ["sage.quadratic_forms.quadratic_form"]
+origin = "sage"
+
+[[chapter]]
+part = "Lattices and Quadratic Forms"
+title = "Binary Quadratic Forms"
+slug = "binary_quadratic_forms"
+intrinsics = 44
+status = "available"
+summary = "Binary quadratic forms: composition, reduction and class groups."
+calyx = ["sage.quadratic_forms.binary_qf"]
+origin = "sage"
+
+[[chapter]]
+part = "Global Fields"
+title = "Number Fields"
+slug = "number_fields"
+intrinsics = 123
+status = "available"
+summary = "Number fields: construction, embeddings, subfields and elements."
+calyx = ["sage.rings.number_field.number_field"]
+origin = "sage"
+
+[[chapter]]
+part = "Global Fields"
+title = "Quadratic Fields"
+slug = "quadratic_fields"
+intrinsics = 31
+status = "available"
+summary = "Quadratic fields: units, class groups and norm equations."
+calyx = ["sage.rings.number_field.number_field"]
+origin = "sage"
+
+[[chapter]]
+part = "Global Fields"
+title = "Cyclotomic Fields"
+slug = "cyclotomic_fields"
+intrinsics = 12
+status = "available"
+summary = "Cyclotomic fields and roots of unity."
+calyx = ["sage.rings.number_field.number_field", "sage.rings.universal_cyclotomic_field"]
+origin = "sage"
+
+[[chapter]]
+part = "Global Fields"
+title = "Number Fields and Orders"
+slug = "number_fields_and_orders"
+intrinsics = 298
+status = "available"
+summary = "Orders, ideals, class and unit groups, and Diophantine equations over number fields."
+calyx = ["sage.rings.number_field.order", "sage.rings.number_field.number_field_ideal", "sage.rings.number_field.unit_group", "sage.rings.number_field.S_unit_solver"]
+origin = "sage"
+
+[[chapter]]
+part = "Global Fields"
+title = "Galois Groups and Automorphisms"
+slug = "galois_groups_and_automorphisms"
+intrinsics = 84
+status = "partial"
+summary = "Automorphisms, Galois groups, subfields and solving by radicals."
+calyx = ["sage.rings.number_field.galois_group"]
+origin = "sage"
+notes = "Galois groups of small degree, automorphisms and subfields are available. Galois groups of large degree (Stauduhar), invariants and solving by radicals are missing."
+
+[[chapter]]
+part = "Global Fields"
+title = "Class Field Theory"
+slug = "class_field_theory"
+intrinsics = 60
+status = "partial"
+summary = "Ray class groups, ray class fields and abelian extensions."
+calyx = ["sage.rings.number_field.class_group", "sage.rings.number_field.selmer_group"]
+origin = "sage"
+notes = "Class groups, ray class groups (through PARI) and p-Selmer groups are available. There is no high-level interface for ray class fields, abelian extensions or norm groups."
+
+[[chapter]]
+part = "Global Fields"
+title = "Étale Algebras"
+slug = "_eacute_tale_algebras"
+intrinsics = 164
+status = "missing"
+summary = "Étale algebras, their orders and ideals."
+
+[[chapter]]
+part = "Global Fields"
+title = "Dirichlet and Hecke Characters"
+slug = "dirichlet_and_hecke_characters"
+intrinsics = 37
+status = "partial"
+summary = "Dirichlet characters, Hecke characters and Grössencharacters."
+calyx = ["sage.modular.dirichlet"]
+origin = "sage"
+notes = "Dirichlet characters are available; Hecke characters and Grössencharacters are missing."
+
+[[chapter]]
+part = "Global Fields"
+title = "Algebraically Closed Fields"
+slug = "algebraically_closed_fields"
+intrinsics = 28
+status = "available"
+summary = "Algebraic closures with exact arithmetic."
+calyx = ["sage.rings.qqbar", "sage.rings.algebraic_closure_finite_field"]
+origin = "sage"
+notes = "Algebraic closures of the rationals and of finite fields; Magma builds the closure of any field."
+
+[[chapter]]
+part = "Global Fields"
+title = "Rational Function Fields"
+slug = "rational_function_fields"
+intrinsics = 26
+status = "available"
+summary = "Rational function fields and partial fractions."
+calyx = ["sage.rings.fraction_field", "sage.rings.function_field.function_field_rational"]
+origin = "sage"
+notes = "Padé–Hermite approximants are missing."
+
+[[chapter]]
+part = "Global Fields"
+title = "Algebraic Function Fields"
+slug = "algebraic_function_fields"
+intrinsics = 319
+status = "partial"
+summary = "Algebraic function fields: orders, places, divisors, differentials and Riemann–Roch spaces."
+calyx = ["sage.rings.function_field.function_field", "sage.rings.function_field.place", "sage.rings.function_field.divisor", "sage.rings.function_field.differential", "sage.rings.function_field.maximal_order_round_two"]
+origin = "both"
+notes = "Calyx adds round-two maximal orders. Divisor class groups, zeta functions, and automorphism and Galois groups of function fields are missing."
+
+[[chapter]]
+part = "Global Fields"
+title = "Class Field Theory for Global Function Fields"
+slug = "class_field_theory_for_global_function_fields"
+intrinsics = 69
+status = "partial"
+summary = "Ray class groups and abelian extensions of function fields, Witt vectors and Drinfeld modules."
+calyx = ["sage.rings.function_field.drinfeld_modules", "sage.rings.padics.witt_vector", "sage.rings.polynomial.ore_polynomial_ring"]
+origin = "sage"
+notes = "Drinfeld modules, Witt vectors and twisted (Ore) polynomials are available. Ray class groups, abelian extensions and Hilbert class fields of function fields are missing."
+
+[[chapter]]
+part = "Global Fields"
+title = "Artin Representations"
+slug = "artin_representations"
+intrinsics = 31
+status = "missing"
+summary = "Artin representations: conductors, Euler factors and root numbers."
+notes = "General L-series can be evaluated from their data (lfunctions), but there are no Artin representation objects."
+
+[[chapter]]
+part = "Local Fields"
+title = "p-Adic Rings and Their Extensions"
+slug = "p_adic_rings_and_their_extensions"
+intrinsics = 167
+status = "available"
+summary = "p-adic rings and fields, unramified and totally ramified extensions, and their polynomials."
+calyx = ["sage.rings.padics.factory", "sage.rings.padics.padic_extension_generic"]
+origin = "sage"
+notes = "Local class field theory is missing."
+
+[[chapter]]
+part = "Local Fields"
+title = "General p-Adic Extensions"
+slug = "general_p_adic_extensions"
+intrinsics = 42
+status = "partial"
+summary = "Arbitrary finite extensions of p-adic fields."
+calyx = ["sage.rings.padics.padic_extension_generic"]
+origin = "sage"
+notes = "Towers of one unramified and one Eisenstein step are available; general extensions and their automorphism groups are limited."
+
+[[chapter]]
+part = "Local Fields"
+title = "Power, Laurent and Puiseux Series"
+slug = "power_laurent_and_puiseux_series"
+intrinsics = 67
+status = "available"
+summary = "Power, Laurent and Puiseux series."
+calyx = ["sage.rings.power_series_ring", "sage.rings.laurent_series_ring", "sage.rings.puiseux_series_ring"]
+origin = "sage"
+
+[[chapter]]
+part = "Local Fields"
+title = "Lazy Power Series Rings"
+slug = "lazy_power_series_rings"
+intrinsics = 42
+status = "available"
+summary = "Power series computed on demand."
+calyx = ["sage.rings.lazy_series_ring"]
+origin = "sage"
+
+[[chapter]]
+part = "Local Fields"
+title = "Algebraic Power Series Rings"
+slug = "algebraic_power_series_rings"
+intrinsics = 18
+status = "missing"
+summary = "Algebraic power series given implicitly by polynomials."
+
+[[chapter]]
+part = "Local Fields"
+title = "Valuation Rings"
+slug = "valuation_rings"
+intrinsics = 8
+status = "available"
+summary = "Valuation rings of the rationals and of rational function fields."
+calyx = ["sage.rings.valuation", "sage.rings.localization"]
+origin = "sage"
+
+[[chapter]]
+part = "Local Fields"
+title = "Galois Rings"
+slug = "galois_rings"
+intrinsics = 11
+status = "partial"
+summary = "Galois rings GR(p^n, d)."
+calyx = ["sage.rings.padics.factory"]
+origin = "sage"
+notes = "No Galois ring type; unramified extensions of Z_p at fixed precision give the same rings."
+
+[[chapter]]
+part = "Local Fields"
+title = "Newton Polygons"
+slug = "newton_polygons"
+intrinsics = 45
+status = "partial"
+summary = "Newton polygons and Puiseux expansions."
+calyx = ["sage.geometry.newton_polygon"]
+origin = "sage"
+notes = "Newton polygons are available; Puiseux expansions of algebraic functions are missing."
+
+[[chapter]]
+part = "Local Fields"
+title = "Series Rings over p-Adic Rings"
+slug = "series_rings_over_p_adic_rings"
+intrinsics = 38
+status = "partial"
+summary = "Power series over p-adic rings with growth conditions, and Weierstrass preparation."
+calyx = ["sage.rings.tate_algebra"]
+origin = "sage"
+notes = "Tate algebras are available; Weierstrass preparation and the matrix normal forms are missing."
+
+[[chapter]]
+part = "Local Fields"
+title = "Local Galois Representations"
+slug = "local_galois_representations"
+intrinsics = 50
+status = "missing"
+summary = "Galois representations of local fields: conductors and epsilon factors."
+
+[[chapter]]
+part = "Modules"
+title = "Introduction to Modules"
+slug = "introduction_to_modules"
+intrinsics = 0
+status = "n/a"
+summary = "Overview of modules."
+notes = "Overview only."
+
+[[chapter]]
+part = "Modules"
+title = "Free Modules"
+slug = "free_modules"
+intrinsics = 64
+status = "available"
+summary = "Free modules over rings, submodules, quotients and homomorphisms."
+calyx = ["sage.modules.free_module"]
+origin = "sage"
+
+[[chapter]]
+part = "Modules"
+title = "Modules over Dedekind Domains"
+slug = "modules_over_dedekind_domains"
+intrinsics = 54
+status = "missing"
+summary = "Modules over Dedekind domains through pseudo-matrices."
+
+[[chapter]]
+part = "Modules"
+title = "Chain Complexes"
+slug = "chain_complexes"
+intrinsics = 54
+status = "available"
+summary = "Chain complexes, chain maps and homology."
+calyx = ["sage.homology.chain_complex", "sage.homology.chain_complex_morphism"]
+origin = "sage"
+
+[[chapter]]
+part = "Modules"
+title = "Multilinear Algebra"
+slug = "multilinear_algebra"
+intrinsics = 122
+status = "partial"
+summary = "Tensors, tensor spaces and tensor invariants."
+calyx = ["sage.tensor.modules"]
+origin = "sage"
+notes = "Tensors on free modules are available; tensor categories and invariants such as centroids and adjoint algebras are missing."
+
+[[chapter]]
+part = "Finite Groups"
+title = "Groups"
+slug = "groups"
+intrinsics = 169
+status = "available"
+summary = "Operations common to all finite groups."
+calyx = ["sage.groups.perm_gps.permgroup", "sage.groups.libgap_group"]
+origin = "sage"
+notes = "Mostly through GAP."
+
+[[chapter]]
+part = "Finite Groups"
+title = "Permutation Groups"
+slug = "permutation_groups"
+intrinsics = 329
+status = "available"
+summary = "Permutation groups: structure, subgroups, actions and presentations."
+calyx = ["sage.groups.perm_gps.permgroup"]
+origin = "sage"
+notes = "Through GAP."
+
+[[chapter]]
+part = "Finite Groups"
+title = "Matrix Groups over General Rings"
+slug = "matrix_groups_over_general_rings"
+intrinsics = 230
+status = "available"
+summary = "Matrix groups: structure, subgroups and actions."
+calyx = ["sage.groups.matrix_gps.matrix_group", "sage.groups.matrix_gps.linear"]
+origin = "sage"
+notes = "Through GAP."
+
+[[chapter]]
+part = "Finite Groups"
+title = "Matrix Groups over Finite Fields"
+slug = "matrix_groups_over_finite_fields"
+intrinsics = 113
+status = "missing"
+summary = "Aschbacher reduction, constructive recognition and composition trees."
+notes = "GAP's optional recog package covers part of this."
+
+[[chapter]]
+part = "Finite Groups"
+title = "Matrix Groups over Infinite Fields"
+slug = "matrix_groups_over_infinite_fields"
+intrinsics = 24
+status = "missing"
+summary = "Deciding finiteness, solubility and nilpotency of matrix groups over infinite fields."
+
+[[chapter]]
+part = "Finite Groups"
+title = "Matrix Groups over Q and Z"
+slug = "matrix_groups_over_q_and_z"
+intrinsics = 20
+status = "missing"
+summary = "Invariant forms, Bravais groups and Z-classes of integral matrix groups."
+
+[[chapter]]
+part = "Finite Groups"
+title = "Finite Soluble Groups"
+slug = "finite_soluble_groups"
+intrinsics = 208
+status = "partial"
+summary = "Soluble groups given by polycyclic presentations."
+calyx = ["sage.groups.libgap_group", "sage.libs.gap.libgap"]
+origin = "sage"
+notes = "GAP's polycyclic groups are reachable through libgap, but there is no dedicated interface."
+
+[[chapter]]
+part = "Finite Groups"
+title = "Black-Box Groups"
+slug = "black_box_groups"
+intrinsics = 18
+status = "missing"
+summary = "Groups given by straight-line programs."
+
+[[chapter]]
+part = "Finite Groups"
+title = "Almost Simple Groups"
+slug = "almost_simple_groups"
+intrinsics = 122
+status = "partial"
+summary = "Finite groups of Lie type and the recognition of almost simple groups."
+calyx = ["sage.groups.matrix_gps.linear", "sage.groups.matrix_gps.symplectic", "sage.groups.matrix_gps.orthogonal", "sage.groups.matrix_gps.unitary"]
+origin = "sage"
+notes = "The classical groups can be constructed; recognition of almost simple groups is missing."
+
+[[chapter]]
+part = "Finite Groups"
+title = "Databases of Groups"
+slug = "databases_of_groups"
+intrinsics = 121
+status = "available"
+summary = "Small, perfect, transitive, primitive and irreducible groups."
+calyx = ["sage.groups.perm_gps.permgroup_named"]
+origin = "sage"
+notes = "Through GAP. The almost-simple and 3-manifold group databases are missing."
+
+[[chapter]]
+part = "Finite Groups"
+title = "Automorphism Groups"
+slug = "automorphism_groups"
+intrinsics = 30
+status = "partial"
+summary = "Automorphism groups of finite groups."
+calyx = ["sage.libs.gap.libgap"]
+origin = "sage"
+notes = "Reachable through GAP's AutomorphismGroup; there is no dedicated interface."
+
+[[chapter]]
+part = "Finite Groups"
+title = "Cohomology and Extensions"
+slug = "cohomology_and_extensions"
+intrinsics = 50
+status = "missing"
+summary = "Group cohomology, cocycles and group extensions."
+notes = "Group cohomology is available with the optional GAP package HAP."
+
+[[chapter]]
+part = "Finite Groups"
+title = "Reductive Groups"
+slug = "reductive_groups"
+intrinsics = 26
+status = "partial"
+summary = "Classical reductive groups over fields."
+calyx = ["sage.groups.matrix_gps.linear", "sage.combinat.root_system"]
+origin = "sage"
+notes = "Classical matrix groups and root systems are available; reductive groups as objects over general fields are missing."
+
+[[chapter]]
+part = "Finitely-Presented Groups"
+title = "Abelian Groups"
+slug = "abelian_groups"
+intrinsics = 118
+status = "available"
+summary = "Finitely generated and generic abelian groups."
+calyx = ["sage.groups.abelian_gps.abelian_group", "sage.groups.additive_abelian.additive_abelian_group", "sage.groups.generic"]
+origin = "sage"
+
+[[chapter]]
+part = "Finitely-Presented Groups"
+title = "Free Groups"
+slug = "free_groups"
+intrinsics = 39
+status = "available"
+summary = "Free groups and their words."
+calyx = ["sage.groups.free_group"]
+origin = "sage"
+notes = "Automorphisms of free groups and Whitehead reduction are missing."
+
+[[chapter]]
+part = "Finitely-Presented Groups"
+title = "Introduction to FP-Groups"
+slug = "introduction_to_fp_groups"
+intrinsics = 0
+status = "n/a"
+summary = "Overview of finitely presented groups."
+notes = "Overview only."
+
+[[chapter]]
+part = "Finitely-Presented Groups"
+title = "Finitely Presented Groups"
+slug = "finitely_presented_groups"
+intrinsics = 203
+status = "available"
+summary = "Finitely presented groups: simplification, coset enumeration and quotients."
+calyx = ["sage.groups.finitely_presented"]
+origin = "sage"
+notes = "Through GAP."
+
+[[chapter]]
+part = "Finitely-Presented Groups"
+title = "Polycyclic Groups"
+slug = "polycyclic_groups"
+intrinsics = 114
+status = "partial"
+summary = "Infinite polycyclic groups."
+calyx = ["sage.libs.gap.libgap"]
+origin = "sage"
+notes = "GAP's polycyclic package is reachable through libgap, but there is no dedicated interface."
+
+[[chapter]]
+part = "Finitely-Presented Groups"
+title = "Braid Groups"
+slug = "braid_groups"
+intrinsics = 96
+status = "available"
+summary = "Braid groups: normal forms and the conjugacy problem."
+calyx = ["sage.groups.braid"]
+origin = "sage"
+
+[[chapter]]
+part = "Finitely-Presented Groups"
+title = "Groups Defined by Rewrite Systems"
+slug = "groups_defined_by_rewrite_systems"
+intrinsics = 31
+status = "available"
+summary = "Groups given by confluent rewriting systems."
+calyx = ["sage.groups.finitely_presented.RewritingSystem"]
+origin = "sage"
+
+[[chapter]]
+part = "Finitely-Presented Groups"
+title = "Automatic and Hyperbolic Groups"
+slug = "automatic_and_hyperbolic_groups"
+intrinsics = 38
+status = "missing"
+summary = "Automatic and hyperbolic groups."
+
+[[chapter]]
+part = "Finitely-Presented Groups"
+title = "Groups of Straight-Line Programs"
+slug = "groups_of_straight_line_programs"
+intrinsics = 23
+status = "partial"
+summary = "Groups whose elements are straight-line programs."
+calyx = ["sage.libs.gap.libgap"]
+origin = "sage"
+notes = "GAP's straight-line programs are reachable through libgap, but there is no dedicated interface."
+
+[[chapter]]
+part = "Finitely-Presented Groups"
+title = "Finitely Presented Semigroups"
+slug = "finitely_presented_semigroups"
+intrinsics = 44
+status = "partial"
+summary = "Free and finitely presented semigroups and monoids."
+calyx = ["sage.monoids.free_monoid", "sage.libs.gap.libgap"]
+origin = "sage"
+notes = "Free monoids are available; finitely presented semigroups and monoids are reachable only through GAP (libgap)."
+
+[[chapter]]
+part = "Finitely-Presented Groups"
+title = "Monoids Given by Rewrite Systems"
+slug = "monoids_given_by_rewrite_systems"
+intrinsics = 26
+status = "partial"
+summary = "Monoids given by confluent rewriting systems."
+calyx = ["sage.libs.gap.libgap"]
+origin = "sage"
+notes = "GAP's Knuth–Bendix completion for monoids is reachable through libgap, but there is no dedicated interface."
+
+[[chapter]]
+part = "Algebras"
+title = "Algebras"
+slug = "algebras"
+intrinsics = 60
+status = "available"
+summary = "General finite-dimensional algebras: subalgebras, ideals, radicals."
+calyx = ["sage.algebras.finite_dimensional_algebras"]
+origin = "sage"
+
+[[chapter]]
+part = "Algebras"
+title = "Structure Constant Algebras"
+slug = "structure_constant_algebras"
+intrinsics = 19
+status = "available"
+summary = "Algebras given by structure constants."
+calyx = ["sage.algebras.finite_dimensional_algebras"]
+origin = "sage"
+
+[[chapter]]
+part = "Algebras"
+title = "Associative Algebras"
+slug = "associative_algebras"
+intrinsics = 88
+status = "partial"
+summary = "Associative algebras and their orders, ideals and maximal orders."
+calyx = ["sage.algebras.finite_dimensional_algebras"]
+origin = "sage"
+notes = "Finite-dimensional associative algebras are available; orders and maximal orders in general algebras are missing."
+
+[[chapter]]
+part = "Algebras"
+title = "Finitely Presented Algebras"
+slug = "finitely_presented_algebras"
+intrinsics = 63
+status = "partial"
+summary = "Free and finitely presented algebras, noncommutative Gröbner bases."
+calyx = ["sage.algebras.free_algebra", "sage.algebras.letterplace", "sage.algebras.free_algebra_quotient"]
+origin = "sage"
+notes = "Free algebras and quotients are available, with two-sided Gröbner bases for graded homogeneous ideals only; vector enumeration is missing."
+
+[[chapter]]
+part = "Algebras"
+title = "Matrix Algebras"
+slug = "matrix_algebras"
+intrinsics = 131
+status = "available"
+summary = "Algebras of matrices: subalgebras, ideals and canonical forms."
+calyx = ["sage.matrix.matrix_space", "sage.algebras.finite_dimensional_algebras"]
+origin = "sage"
+notes = "Presentations of matrix algebras are missing."
+
+[[chapter]]
+part = "Algebras"
+title = "Group Algebras"
+slug = "group_algebras"
+intrinsics = 46
+status = "available"
+summary = "Group algebras and their ideals."
+calyx = ["sage.algebras.group_algebra"]
+origin = "sage"
+
+[[chapter]]
+part = "Algebras"
+title = "Basic Algebras"
+slug = "basic_algebras"
+intrinsics = 159
+status = "partial"
+summary = "Basic algebras given by quivers and relations, and their modules."
+calyx = ["sage.quivers.algebra", "sage.quivers.representation"]
+origin = "sage"
+notes = "Path algebras of quivers and their representations are available; basic algebras of group algebras, Ext-algebras and projective resolutions are missing."
+
+[[chapter]]
+part = "Algebras"
+title = "Quaternion Algebras"
+slug = "quaternion_algebras"
+intrinsics = 87
+status = "partial"
+summary = "Quaternion algebras and their orders, ideals and ideal classes."
+calyx = ["sage.algebras.quatalg.quaternion_algebra"]
+origin = "sage"
+notes = "Quaternion algebras over Q with orders, ideals and ideal classes are available; orders and ideal classes over number fields and function fields are missing."
+
+[[chapter]]
+part = "Algebras"
+title = "Algebras with Involution"
+slug = "algebras_with_involution"
+intrinsics = 18
+status = "missing"
+summary = "Algebras with involution and the recognition of *-algebras."
+
+[[chapter]]
+part = "Algebras"
+title = "Clifford Algebras"
+slug = "clifford_algebras"
+intrinsics = 17
+status = "available"
+summary = "Clifford algebras of quadratic forms."
+calyx = ["sage.algebras.clifford_algebra"]
+origin = "sage"
+
+[[chapter]]
+part = "Algebras"
+title = "Non-Associative Algebras"
+slug = "non_associative_algebras"
+intrinsics = 16
+status = "partial"
+summary = "Octonions, Jordan algebras and composition algebras."
+calyx = ["sage.algebras.octonion_algebra", "sage.algebras.jordan_algebra"]
+origin = "sage"
+notes = "Octonion and Jordan algebras are available; centroids, nuclei and derivation algebras are missing."
+
+[[chapter]]
+part = "Representation Theory"
+title = "Modules over an Algebra and Group Representations"
+slug = "modules_over_an_algebra_and_group_representations"
+intrinsics = 181
+status = "partial"
+summary = "K[G]-modules: constructions, submodule lattices, irreducibles and cohomology."
+calyx = ["sage.modules.with_basis.representation", "sage.libs.gap.libgap"]
+origin = "sage"
+notes = "Group representations are available, and GAP's MeatAxe is reachable through libgap; submodule lattices, irreducible modules over arbitrary fields and module cohomology have no dedicated interface."
+
+[[chapter]]
+part = "Representation Theory"
+title = "Characters of Finite Groups"
+slug = "characters_of_finite_groups"
+intrinsics = 79
+status = "available"
+summary = "Character tables, class functions, induction and restriction."
+calyx = ["sage.groups.class_function"]
+origin = "sage"
+notes = "Through GAP."
+
+[[chapter]]
+part = "Representation Theory"
+title = "Representations of Symmetric Groups"
+slug = "representations_of_symmetric_groups"
+intrinsics = 9
+status = "available"
+summary = "Representations and characters of symmetric and alternating groups."
+calyx = ["sage.combinat.symmetric_group_representations", "sage.combinat.specht_module"]
+origin = "sage"
+notes = "Explicit representations of alternating groups are missing."
+
+[[chapter]]
+part = "Representation Theory"
+title = "Mod p Galois Representations"
+slug = "mod_p_galois_representations"
+intrinsics = 17
+status = "missing"
+summary = "φ-modules and the mod p Galois representations they describe."
+
+[[chapter]]
+part = "Representation Theory"
+title = "Group Representations"
+slug = "group_representations"
+intrinsics = 53
+status = "partial"
+summary = "Representations of classical groups: spin, highest weight and tensor constructions."
+calyx = ["sage.modules.with_basis.representation"]
+origin = "sage"
+notes = "Generic representations are available; spin and highest-weight representations of classical groups are missing."
+
+[[chapter]]
+part = "Lie Theory"
+title = "Introduction to Lie Theory"
+slug = "introduction_to_lie_theory"
+intrinsics = 0
+status = "n/a"
+summary = "Overview of Lie theory."
+notes = "Overview only."
+
+[[chapter]]
+part = "Lie Theory"
+title = "Coxeter Systems"
+slug = "coxeter_systems"
+intrinsics = 35
+status = "available"
+summary = "Coxeter matrices, Cartan matrices and Dynkin diagrams."
+calyx = ["sage.combinat.root_system.coxeter_matrix", "sage.combinat.root_system.cartan_type", "sage.combinat.root_system.dynkin_diagram"]
+origin = "sage"
+
+[[chapter]]
+part = "Lie Theory"
+title = "Root Systems"
+slug = "root_systems"
+intrinsics = 72
+status = "available"
+summary = "Root systems, roots, reflections and weights."
+calyx = ["sage.combinat.root_system.root_system"]
+origin = "sage"
+
+[[chapter]]
+part = "Lie Theory"
+title = "Root Data"
+slug = "root_data"
+intrinsics = 146
+status = "partial"
+summary = "Root data, isogenies and twisted forms."
+calyx = ["sage.combinat.root_system.root_system"]
+origin = "sage"
+notes = "Root systems with root and weight lattices are available; general root data with isogenies and twisted forms are missing."
+
+[[chapter]]
+part = "Lie Theory"
+title = "Coxeter Groups"
+slug = "coxeter_groups"
+intrinsics = 117
+status = "available"
+summary = "Coxeter groups: reduced words, Bruhat order and Kazhdan–Lusztig polynomials."
+calyx = ["sage.combinat.root_system.coxeter_group", "sage.categories.coxeter_groups", "sage.combinat.kazhdan_lusztig"]
+origin = "sage"
+
+[[chapter]]
+part = "Lie Theory"
+title = "Reflection Groups"
+slug = "reflection_groups"
+intrinsics = 78
+status = "partial"
+summary = "Real and complex reflection groups."
+calyx = ["sage.combinat.root_system.coxeter_group"]
+origin = "sage"
+notes = "Real reflection groups are available; complex reflection groups need the optional GAP3 package."
+
+[[chapter]]
+part = "Lie Theory"
+title = "Lie Algebras"
+slug = "lie_algebras"
+intrinsics = 158
+status = "available"
+summary = "Lie algebras: structure constants, free Lie algebras, classical families and enveloping algebras."
+calyx = ["sage.algebras.lie_algebras"]
+origin = "sage"
+notes = "Extremal Lie algebras and the classification databases of solvable and nilpotent Lie algebras are missing."
+
+[[chapter]]
+part = "Lie Theory"
+title = "Kac–Moody Lie Algebras"
+slug = "kac_moody_lie_algebras"
+intrinsics = 19
+status = "available"
+summary = "Affine Kac–Moody Lie algebras and generalized Cartan matrices."
+calyx = ["sage.algebras.lie_algebras.affine_lie_algebra", "sage.combinat.root_system.cartan_type"]
+origin = "sage"
+
+[[chapter]]
+part = "Lie Theory"
+title = "Quantum Groups"
+slug = "quantum_groups"
+intrinsics = 48
+status = "partial"
+summary = "Quantized enveloping algebras, canonical bases and crystals."
+calyx = ["sage.combinat.crystals", "sage.combinat.q_analogues", "sage.algebras.quantum_groups"]
+origin = "sage"
+notes = "Crystals and q-analogues are available; quantized enveloping algebras and canonical bases need the optional GAP package QuaGroup."
+
+[[chapter]]
+part = "Lie Theory"
+title = "Groups of Lie Type"
+slug = "groups_of_lie_type"
+intrinsics = 147
+status = "missing"
+summary = "Groups of Lie type over rings, their elements, twisted forms and automorphisms."
+notes = "Classical groups over finite fields are available as matrix groups."
+
+[[chapter]]
+part = "Lie Theory"
+title = "Representations of Lie Groups and Algebras"
+slug = "representations_of_lie_groups_and_algebras"
+intrinsics = 79
+status = "available"
+summary = "Highest-weight representations, weight multisets, tensor product decompositions and branching."
+calyx = ["sage.combinat.root_system.weyl_characters", "sage.combinat.root_system.branching_rules", "sage.algebras.lie_algebras.verma_module"]
+origin = "sage"
+
+[[chapter]]
+part = "Commutative Algebra"
+title = "Gröbner Bases"
+slug = "groebner_bases"
+intrinsics = 44
+status = "available"
+summary = "Monomial orders and Gröbner bases, including Boolean polynomial rings."
+calyx = ["sage.rings.polynomial.multi_polynomial_ideal", "sage.rings.polynomial.pbori"]
+origin = "sage"
+notes = "Large systems are slower than with Magma's F4."
+
+[[chapter]]
+part = "Commutative Algebra"
+title = "Polynomial Ring Ideal Operations"
+slug = "polynomial_ring_ideal_operations"
+intrinsics = 69
+status = "available"
+summary = "Ideal operations: elimination, radicals, primary decomposition and normalisation."
+calyx = ["sage.rings.polynomial.multi_polynomial_ideal"]
+origin = "sage"
+
+[[chapter]]
+part = "Commutative Algebra"
+title = "Local Polynomial Rings"
+slug = "local_polynomial_rings"
+intrinsics = 33
+status = "available"
+summary = "Local monomial orders and standard bases."
+calyx = ["sage.rings.polynomial.term_order", "sage.rings.polynomial.multi_polynomial_ideal"]
+origin = "sage"
+
+[[chapter]]
+part = "Commutative Algebra"
+title = "Affine Algebras"
+slug = "affine_algebras"
+intrinsics = 36
+status = "available"
+summary = "Quotients of polynomial rings and their ideals."
+calyx = ["sage.rings.quotient_ring", "sage.rings.polynomial.multi_polynomial_ideal"]
+origin = "sage"
+
+[[chapter]]
+part = "Commutative Algebra"
+title = "Modules over Multivariate Rings"
+slug = "modules_over_multivariate_rings"
+intrinsics = 93
+status = "partial"
+summary = "Modules over polynomial rings: presentations, resolutions and homological algebra."
+calyx = ["sage.homology.free_resolution", "sage.homology.graded_resolution"]
+origin = "sage"
+notes = "Free resolutions, syzygies and Betti numbers are available; Hom, Ext and Tor of general modules are limited."
+
+[[chapter]]
+part = "Commutative Algebra"
+title = "Invariant Theory"
+slug = "invariant_theory"
+intrinsics = 47
+status = "partial"
+summary = "Invariant rings of finite and reductive groups."
+calyx = ["sage.rings.invariants.invariant_theory", "sage.groups.matrix_gps.finitely_generated_gap"]
+origin = "sage"
+notes = "Invariant generators and Molien series of finite matrix groups and classical invariants of forms are available; primary and secondary invariants and invariants of reductive groups are missing."
+
+[[chapter]]
+part = "Commutative Algebra"
+title = "Differential Rings"
+slug = "differential_rings"
+intrinsics = 115
+status = "partial"
+summary = "Differential rings and fields, and linear differential operators."
+calyx = ["sage.rings.polynomial.ore_polynomial_ring"]
+origin = "sage"
+notes = "Differential operators can be built as Ore polynomials; formal solutions, singularity analysis and differential fields are missing."
+
+[[chapter]]
+part = "Algebraic Geometry"
+title = "Schemes"
+slug = "schemes"
+intrinsics = 282
+status = "available"
+summary = "Affine, projective and weighted projective schemes, their points and maps."
+calyx = ["sage.schemes.generic", "sage.schemes.projective.projective_space", "sage.schemes.affine.affine_space", "sage.schemes.weighted_projective"]
+origin = "sage"
+notes = "General blow-ups and linear systems are limited."
+
+[[chapter]]
+part = "Algebraic Geometry"
+title = "Coherent Sheaves"
+slug = "coherent_sheaves"
+intrinsics = 36
+status = "missing"
+summary = "Coherent sheaves on projective schemes and their cohomology."
+
+[[chapter]]
+part = "Algebraic Geometry"
+title = "Algebraic Curves"
+slug = "algebraic_curves"
+intrinsics = 227
+status = "partial"
+summary = "Curves: singularities, genus, function fields, divisors and Riemann–Roch spaces."
+calyx = ["sage.schemes.curves", "sage.schemes.curves.coleman"]
+origin = "both"
+notes = "Calyx adds Coleman integration and effective Chabauty on plane models (see Beyond the Handbook). Divisor class groups, zeta functions of general curves and gonality are missing."
+
+[[chapter]]
+part = "Algebraic Geometry"
+title = "Resolution Graphs and Splice Diagrams"
+slug = "resolution_graphs_and_splice_diagrams"
+intrinsics = 47
+status = "missing"
+summary = "Resolution graphs and splice diagrams of surface singularities."
+
+[[chapter]]
+part = "Algebraic Geometry"
+title = "Algebraic Surfaces"
+slug = "algebraic_surfaces"
+intrinsics = 114
+status = "missing"
+summary = "Algebraic surfaces: classification data, parametrization and del Pezzo surfaces."
+
+[[chapter]]
+part = "Algebraic Geometry"
+title = "Riemann Surfaces"
+slug = "riemann_surfaces"
+intrinsics = 29
+status = "available"
+summary = "Period matrices, the Abel–Jacobi map and integration on Riemann surfaces."
+calyx = ["sage.schemes.riemann_surfaces.riemann_surface"]
+origin = "sage"
+
+[[chapter]]
+part = "Algebraic Geometry"
+title = "Hilbert Series of Polarised Varieties"
+slug = "hilbert_series_of_polarised_varieties"
+intrinsics = 85
+status = "partial"
+summary = "Hilbert series of polarised varieties and the graded ring database."
+calyx = ["sage.rings.polynomial.hilbert"]
+origin = "sage"
+notes = "Hilbert series of ideals are available; polarised varieties with orbifold points and the graded ring database are missing."
+
+[[chapter]]
+part = "Algebraic Geometry"
+title = "Toric Varieties"
+slug = "toric_varieties"
+intrinsics = 160
+status = "available"
+summary = "Toric varieties, fans, divisors and their cohomology."
+calyx = ["sage.schemes.toric", "sage.geometry.fan"]
+origin = "sage"
+
+[[chapter]]
+part = "Arithmetic Geometry"
+title = "Rational Curves and Conics"
+slug = "rational_curves_and_conics"
+intrinsics = 27
+status = "available"
+summary = "Conics: rational points, parametrizations and Legendre equations."
+calyx = ["sage.schemes.plane_conics"]
+origin = "sage"
+
+[[chapter]]
+part = "Arithmetic Geometry"
+title = "Elliptic Curves"
+slug = "elliptic_curves"
+intrinsics = 110
+status = "available"
+summary = "Elliptic curves over general fields: models, points and isogenies."
+calyx = ["sage.schemes.elliptic_curves.ell_generic", "sage.schemes.elliptic_curves.ell_curve_isogeny"]
+origin = "sage"
+
+[[chapter]]
+part = "Arithmetic Geometry"
+title = "Elliptic Curves over Finite Fields"
+slug = "elliptic_curves_over_finite_fields"
+intrinsics = 30
+status = "available"
+summary = "Point counting, group structure and pairings."
+calyx = ["sage.schemes.elliptic_curves.ell_finite_field"]
+origin = "sage"
+
+[[chapter]]
+part = "Arithmetic Geometry"
+title = "Elliptic Curves over Q and Number Fields"
+slug = "elliptic_curves_over_q_and_number_fields"
+intrinsics = 127
+status = "available"
+summary = "Mordell–Weil groups, descent, heights, local data and Heegner points."
+calyx = ["sage.schemes.elliptic_curves.ell_rational_field", "sage.schemes.elliptic_curves.ell_number_field", "sage.schemes.elliptic_curves.heegner"]
+origin = "sage"
+notes = "Higher descents (3-, 4- and 8-descent) and the Cassels–Tate pairing are missing."
+
+[[chapter]]
+part = "Arithmetic Geometry"
+title = "Elliptic Curves over Function Fields"
+slug = "elliptic_curves_over_function_fields"
+intrinsics = 43
+status = "partial"
+summary = "Elliptic curves over function fields: local data, Mordell–Weil lattices and L-functions."
+calyx = ["sage.schemes.elliptic_curves.ell_generic"]
+origin = "sage"
+notes = "Curves over function fields can be created and have basic arithmetic; Mordell–Weil lattices and L-functions are missing."
+
+[[chapter]]
+part = "Arithmetic Geometry"
+title = "Models of Genus One Curves"
+slug = "models_of_genus_one_curves"
+intrinsics = 51
+status = "partial"
+summary = "Genus one models of degree 2 to 5: invariants, minimisation and reduction."
+calyx = ["sage.schemes.elliptic_curves.jacobian"]
+origin = "sage"
+notes = "Jacobians of plane cubics are available; invariants, minimisation and reduction of genus one models are missing."
+
+[[chapter]]
+part = "Arithmetic Geometry"
+title = "Plane Quartics"
+slug = "plane_quartics"
+intrinsics = 16
+status = "missing"
+summary = "Plane quartics: Dixmier–Ohno invariants, reconstruction and twists."
+notes = "Only a curve constructor exists."
+
+[[chapter]]
+part = "Arithmetic Geometry"
+title = "Hyperelliptic Curves"
+slug = "hyperelliptic_curves"
+intrinsics = 190
+status = "partial"
+summary = "Hyperelliptic curves and their Jacobians: points, invariants, descent, Chabauty and cyclic covers."
+calyx = ["sage.schemes.hyperelliptic_curves", "sage.schemes.hyperelliptic_curves.invariants", "sage.schemes.hyperelliptic_curves.monsky_washnitzer", "sage.schemes.cyclic_covers"]
+origin = "both"
+notes = "Models, invariants, Jacobian arithmetic, Frobenius, Coleman integrals and cyclic covers over finite fields are available, and Calyx adds effective Chabauty–Coleman on plane models. 2-descent on Jacobians, Mordell–Weil groups and Richelot isogenies are missing."
+
+[[chapter]]
+part = "Arithmetic Geometry"
+title = "Hypergeometric Motives"
+slug = "hypergeometric_motives"
+intrinsics = 41
+status = "available"
+summary = "Hypergeometric motives: Frobenius traces, Euler factors and L-series."
+calyx = ["sage.modular.hypergeometric_motive"]
+origin = "sage"
+
+[[chapter]]
+part = "Arithmetic Geometry"
+title = "L-Functions"
+slug = "l_functions"
+intrinsics = 43
+status = "available"
+summary = "L-series of arithmetic objects: special values, root numbers and functional equations."
+calyx = ["sage.lfunctions.pari", "sage.lfunctions.dokchitser"]
+origin = "sage"
+
+[[chapter]]
+part = "Modular Arithmetic Geometry"
+title = "Modular Curves"
+slug = "modular_curves"
+intrinsics = 29
+status = "partial"
+summary = "Models of modular curves, modular polynomials and class polynomials."
+calyx = ["sage.modular.arithgroup", "sage.modular.cusps", "sage.schemes.elliptic_curves.cm", "sage.schemes.elliptic_curves.heegner"]
+origin = "sage"
+notes = "Congruence subgroups, cusps, Heegner points and Hilbert class polynomials are available; models of modular curves and the modular polynomial databases are missing."
+
+[[chapter]]
+part = "Modular Arithmetic Geometry"
+title = "Small Modular Curves"
+slug = "small_modular_curves"
+intrinsics = 22
+status = "missing"
+summary = "A database of small modular curves with their maps to the j-line."
+
+[[chapter]]
+part = "Modular Arithmetic Geometry"
+title = "Congruence Subgroups of PSL2(R)"
+slug = "congruence_subgroups_of_psl2r"
+intrinsics = 62
+status = "available"
+summary = "Congruence subgroups: cusps, elliptic points, generators and fundamental domains."
+calyx = ["sage.modular.arithgroup", "sage.modular.arithgroup.farey_symbol"]
+origin = "sage"
+
+[[chapter]]
+part = "Modular Arithmetic Geometry"
+title = "Arithmetic Fuchsian Groups and Shimura Curves"
+slug = "arithmetic_fuchsian_groups_and_shimura_curves"
+intrinsics = 50
+status = "missing"
+summary = "Arithmetic Fuchsian groups, their fundamental domains and Shimura curves."
+
+[[chapter]]
+part = "Modular Arithmetic Geometry"
+title = "Modular Forms"
+slug = "modular_forms"
+intrinsics = 66
+status = "available"
+summary = "Spaces of modular forms: q-expansions, newforms and Hecke operators."
+calyx = ["sage.modular.modform", "sage.modular.modform.half_integral"]
+origin = "sage"
+notes = "Forms of weight one are missing."
+
+[[chapter]]
+part = "Modular Arithmetic Geometry"
+title = "Modular Symbols"
+slug = "modular_symbols"
+intrinsics = 83
+status = "available"
+summary = "Modular symbols and Hecke modules."
+calyx = ["sage.modular.modsym"]
+origin = "sage"
+
+[[chapter]]
+part = "Modular Arithmetic Geometry"
+title = "Brandt Modules"
+slug = "brandt_modules"
+intrinsics = 45
+status = "available"
+summary = "Brandt modules of definite quaternion algebras."
+calyx = ["sage.modular.quatalg.brandt"]
+origin = "sage"
+
+[[chapter]]
+part = "Modular Arithmetic Geometry"
+title = "Supersingular Divisors on Modular Curves"
+slug = "supersingular_divisors_on_modular_curves"
+intrinsics = 32
+status = "available"
+summary = "Supersingular modules and Hecke operators on them."
+calyx = ["sage.modular.ssmod.ssmod"]
+origin = "sage"
+
+[[chapter]]
+part = "Modular Arithmetic Geometry"
+title = "Modular Abelian Varieties"
+slug = "modular_abelian_varieties"
+intrinsics = 244
+status = "available"
+summary = "Modular abelian varieties: decomposition, torsion and L-ratios."
+calyx = ["sage.modular.abvar"]
+origin = "sage"
+
+[[chapter]]
+part = "Modular Arithmetic Geometry"
+title = "Hilbert Modular Forms"
+slug = "hilbert_modular_forms"
+intrinsics = 28
+status = "missing"
+summary = "Hilbert modular forms over totally real fields."
+
+[[chapter]]
+part = "Modular Arithmetic Geometry"
+title = "Modular Forms over Imaginary Quadratic Fields"
+slug = "modular_forms_over_imaginary_quadratic_fields"
+intrinsics = 9
+status = "missing"
+summary = "Bianchi modular forms over imaginary quadratic fields."
+
+[[chapter]]
+part = "Modular Arithmetic Geometry"
+title = "Algebraic Modular Forms"
+slug = "algebraic_modular_forms"
+intrinsics = 46
+status = "missing"
+summary = "Algebraic modular forms for definite orthogonal and unitary groups."
+
+[[chapter]]
+part = "Modular Arithmetic Geometry"
+title = "Admissible Representations of GL2(Qp)"
+slug = "admissible_representations_of_gl2qp"
+intrinsics = 11
+status = "available"
+summary = "Admissible representations of GL2(Qp) attached to newforms."
+calyx = ["sage.modular.local_comp"]
+origin = "sage"
+notes = "The local Galois representation attached to a component is missing."
+
+[[chapter]]
+part = "Topology"
+title = "Simplicial Homology"
+slug = "simplicial_homology"
+intrinsics = 36
+status = "available"
+summary = "Simplicial complexes and their homology."
+calyx = ["sage.topology.simplicial_complex", "sage.topology.simplicial_set"]
+origin = "sage"
+
+[[chapter]]
+part = "Geometry"
+title = "Finite Planes"
+slug = "finite_planes"
+intrinsics = 100
+status = "partial"
+summary = "Finite projective and affine planes, collineations, arcs and ovals."
+calyx = ["sage.combinat.designs.block_design"]
+origin = "sage"
+notes = "Projective and affine planes are available as designs with their automorphism groups; arcs, ovals and plane-specific functions are missing."
+
+[[chapter]]
+part = "Geometry"
+title = "Incidence Geometry"
+slug = "incidence_geometry"
+intrinsics = 45
+status = "missing"
+summary = "Incidence and coset geometries, residues and diagrams."
+
+[[chapter]]
+part = "Geometry"
+title = "Convex Polytopes and Polyhedra"
+slug = "convex_polytopes_and_polyhedra"
+intrinsics = 163
+status = "available"
+summary = "Polyhedra and lattice polytopes."
+calyx = ["sage.geometry.polyhedron", "sage.geometry.lattice_polytope"]
+origin = "sage"
+
+[[chapter]]
+part = "Combinatorics"
+title = "Enumerative Combinatorics"
+slug = "enumerative_combinatorics"
+intrinsics = 20
+status = "available"
+summary = "Counting functions: binomials, Stirling and Bell numbers, and more."
+calyx = ["sage.combinat.combinat"]
+origin = "sage"
+
+[[chapter]]
+part = "Combinatorics"
+title = "Partitions, Words and Young Tableaux"
+slug = "partitions_words_and_young_tableaux"
+intrinsics = 91
+status = "available"
+summary = "Partitions, words and Young tableaux."
+calyx = ["sage.combinat.partition", "sage.combinat.words", "sage.combinat.tableau"]
+origin = "sage"
+
+[[chapter]]
+part = "Combinatorics"
+title = "Symmetric Functions"
+slug = "symmetric_functions"
+intrinsics = 52
+status = "available"
+summary = "Symmetric functions in the classical bases."
+calyx = ["sage.combinat.sf"]
+origin = "sage"
+
+[[chapter]]
+part = "Combinatorics"
+title = "Incidence Structures and Designs"
+slug = "incidence_structures_and_designs"
+intrinsics = 101
+status = "available"
+summary = "Block designs and incidence structures."
+calyx = ["sage.combinat.designs", "sage.combinat.designs.incidence_structures"]
+origin = "sage"
+
+[[chapter]]
+part = "Combinatorics"
+title = "Hadamard Matrices"
+slug = "hadamard_matrices"
+intrinsics = 23
+status = "available"
+summary = "Hadamard matrices: constructions and normal forms."
+calyx = ["sage.combinat.matrices.hadamard_matrix"]
+origin = "sage"
+
+[[chapter]]
+part = "Combinatorics"
+title = "Graphs"
+slug = "graphs"
+intrinsics = 230
+status = "available"
+summary = "Graphs: construction, invariants, isomorphism and algorithms."
+calyx = ["sage.graphs"]
+origin = "sage"
+
+[[chapter]]
+part = "Combinatorics"
+title = "Multigraphs"
+slug = "multigraphs"
+intrinsics = 142
+status = "available"
+summary = "Graphs with multiple edges and loops."
+calyx = ["sage.graphs"]
+origin = "sage"
+
+[[chapter]]
+part = "Combinatorics"
+title = "Networks"
+slug = "networks"
+intrinsics = 10
+status = "available"
+summary = "Networks with capacities, and flows."
+calyx = ["sage.graphs.generic_graph"]
+origin = "sage"
+
+[[chapter]]
+part = "Coding Theory"
+title = "Linear Codes over Finite Fields"
+slug = "linear_codes_over_finite_fields"
+intrinsics = 218
+status = "available"
+summary = "Linear codes: families, weights, minimum distance and decoding."
+calyx = ["sage.coding"]
+origin = "sage"
+
+[[chapter]]
+part = "Coding Theory"
+title = "Algebraic-Geometric Codes"
+slug = "algebraic_geometric_codes"
+intrinsics = 13
+status = "available"
+summary = "Algebraic-geometric codes and their decoding."
+calyx = ["sage.coding.ag_code"]
+origin = "sage"
+
+[[chapter]]
+part = "Coding Theory"
+title = "Low Density Parity Check Codes"
+slug = "low_density_parity_check_codes"
+intrinsics = 20
+status = "missing"
+summary = "LDPC codes and their decoding."
+
+[[chapter]]
+part = "Coding Theory"
+title = "Linear Codes over Finite Rings"
+slug = "linear_codes_over_finite_rings"
+intrinsics = 69
+status = "missing"
+summary = "Linear codes over finite rings."
+
+[[chapter]]
+part = "Coding Theory"
+title = "Linear Codes over the Integer Residue Ring Z4"
+slug = "linear_codes_over_the_integer_residue_ring_z4"
+intrinsics = 77
+status = "missing"
+summary = "Linear codes over Z/4Z."
+
+[[chapter]]
+part = "Coding Theory"
+title = "Additive Codes"
+slug = "additive_codes"
+intrinsics = 84
+status = "missing"
+summary = "Additive codes over finite fields."
+
+[[chapter]]
+part = "Coding Theory"
+title = "Quantum Codes"
+slug = "quantum_codes"
+intrinsics = 60
+status = "missing"
+summary = "Quantum stabilizer codes."
+
+[[chapter]]
+part = "Cryptography"
+title = "Pseudo-Random Bit Sequences"
+slug = "pseudo_random_bit_sequences"
+intrinsics = 11
+status = "available"
+summary = "Linear feedback shift registers and pseudo-random bit generators."
+calyx = ["sage.crypto.lfsr", "sage.crypto.stream", "sage.matrix.berlekamp_massey"]
+origin = "sage"
+
+[[chapter]]
+part = "Optimization"
+title = "Linear Programming"
+slug = "linear_programming"
+intrinsics = 23
+status = "available"
+summary = "Linear and mixed integer programming."
+calyx = ["sage.numerical.mip", "sage.numerical.interactive_simplex_method"]
+origin = "sage"
+
+[[package]]
+name = "Coleman integration on curves (Balakrishnan–Tuitman)"
+url = "https://github.com/jtuitman/Coleman"
+status = "available"
+summary = "Coleman integrals on curves given by plane models, and effective Chabauty."
+calyx = ["sage.schemes.curves.coleman.data.coleman_data", "sage.schemes.curves.coleman.chabauty.effective_chabauty"]
+origin = "calyx"
+crosschecked = true
+notes = "Also covers ramified, singular-model and infinite residue disks, torsion packets and certified p-adic precision."
+
+[[package]]
+name = "Point counting on curves, pcc (Tuitman)"
+url = "https://github.com/jtuitman/pcc"
+status = "partial"
+summary = "Zeta functions of curves over finite fields from Frobenius on cohomology."
+calyx = ["sage.schemes.curves.coleman.data.cohomological_frobenius"]
+origin = "calyx"
+notes = "The Frobenius matrix is computed inside the Coleman package, but there is no zeta function interface yet."
+
+[[package]]
+name = "Quadratic Chabauty for modular curves, QCMod"
+url = "https://github.com/steffenmueller/QCMod"
+status = "missing"
+summary = "Rational points on modular curves by quadratic Chabauty."

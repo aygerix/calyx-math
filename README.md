@@ -2,6 +2,8 @@
 
 **An LLM-accelerated, free and open-source computer algebra system aiming for feature parity with Magma and beyond.**
 
+<!-- magma-parity-badge:start -->[![Magma parity](https://img.shields.io/badge/Magma%20parity-87%20of%20159%20chapters-yellow)](parity/README.md)<!-- magma-parity-badge:end -->
+
 Calyx began as a fork of [SageMath](https://www.sagemath.org/) and currently uses
 its ecosystem as a foundation. The long-term goal is broader: to become an
 independent computer algebra system for advanced research mathematics, with the
@@ -94,9 +96,51 @@ On larger arrangements, the resulting speedups can exceed an order of magnitude.
 Development branch: [`zvk-certified-numerics`](../../tree/zvk-certified-numerics)  
 Upstream PR: [sagemath/sage#42844](https://github.com/sagemath/sage/pull/42844)
 
+## Magma parity
+
+<!-- magma-parity:start -->
+Calyx tracks its coverage of Magma against the [Magma Handbook](https://magma.maths.usyd.edu.au/magma/handbook/) (V2.29), chapter by chapter. Of the 159 Handbook chapters that apply to Calyx, 87 are available and 40 partly available. The [full matrix](parity/README.md) lists every chapter with its status, where it lives in Calyx, and what is still missing.
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="parity/coverage-dark.svg"><img alt="Of the 159 Handbook chapters that apply to Calyx, 87 are available and 40 partly available." src="parity/coverage-light.svg"></picture>
+
+<details>
+<summary>Coverage by Handbook part</summary>
+
+| Handbook part | Coverage | ✅ | 🟡 | ❌ | ➖ |
+|---|---|--:|--:|--:|--:|
+| The Magma Language | `█████░░░░░` 50% | · | 1 | · | 7 |
+| Sets, Sequences, and Mappings | `██████████` 100% | 5 | · | · | 4 |
+| Basic Rings | `█████████░` 89% | 8 | · | 1 | · |
+| Matrices and Linear Algebra | `█████████░` 88% | 3 | 1 | · | · |
+| Lattices and Quadratic Forms | `██████░░░░` 60% | 3 | · | 2 | · |
+| Global Fields | `███████░░░` 65% | 6 | 5 | 2 | · |
+| Local Fields | `██████░░░░` 60% | 4 | 4 | 2 | · |
+| Modules | `██████░░░░` 62% | 2 | 1 | 1 | 1 |
+| Finite Groups | `█████░░░░░` 46% | 4 | 4 | 5 | · |
+| Finitely-Presented Groups | `███████░░░` 70% | 5 | 4 | 1 | 1 |
+| Algebras | `███████░░░` 68% | 5 | 5 | 1 | · |
+| Representation Theory | `██████░░░░` 60% | 2 | 2 | 1 | · |
+| Lie Theory | `████████░░` 75% | 6 | 3 | 1 | 1 |
+| Commutative Algebra | `████████░░` 79% | 4 | 3 | · | · |
+| Algebraic Geometry | `█████░░░░░` 50% | 3 | 2 | 3 | · |
+| Arithmetic Geometry | `████████░░` 75% | 6 | 3 | 1 | · |
+| Modular Arithmetic Geometry | `██████░░░░` 58% | 7 | 1 | 5 | · |
+| Topology | `██████████` 100% | 1 | · | · | · |
+| Geometry | `█████░░░░░` 50% | 1 | 1 | 1 | · |
+| Combinatorics | `██████████` 100% | 8 | · | · | · |
+| Coding Theory | `███░░░░░░░` 29% | 2 | · | 5 | · |
+| Cryptography | `██████████` 100% | 1 | · | · | · |
+| Optimization | `██████████` 100% | 1 | · | · | · |
+| **All 173 chapters** | `███████░░░` 67% | **87** | **40** | **32** | **14** |
+
+✅ available · 🟡 partial · ❌ missing · ➖ not applicable. Coverage counts partial chapters as half.
+
+</details>
+<!-- magma-parity:end -->
+
 ## Request a Magma feature
 
-If there is a Magma feature you need in free software, **open an issue**.
+If there is a Magma feature you need in free software, **[open an issue](https://github.com/aygerix/calyx-math/issues/new?template=magma-feature.yml)**.
 
 Useful feature requests include a link to the relevant Magma Handbook section
 and, if possible:

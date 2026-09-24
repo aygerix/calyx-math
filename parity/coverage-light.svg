@@ -1,0 +1,187 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="730" height="570" viewBox="0 0 730 570" role="img" aria-label="Of the 159 Handbook chapters that apply to Calyx, 87 are available and 40 partly available.">
+<title>Of the 159 Handbook chapters that apply to Calyx, 87 are available and 40 partly available.</title>
+<g font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="12" fill="#1f2328">
+<text x="0" y="16" font-size="14" font-weight="600">Magma Handbook coverage by part</text>
+<text x="730" y="16" text-anchor="end" fill="#59636e">87 available · 40 partial · 159 applicable chapters</text>
+<rect x="0" y="30" width="10" height="10" rx="2" fill="#1a7f37"/>
+<text x="15" y="39" fill="#59636e">Available</text>
+<rect x="96" y="30" width="10" height="10" rx="2" fill="#d4a72c"/>
+<text x="111" y="39" fill="#59636e">Partial</text>
+<rect x="178" y="30" width="10" height="10" rx="2" fill="#cf222e"/>
+<text x="193" y="39" fill="#59636e">Missing</text>
+<rect x="260" y="30" width="10" height="10" rx="2" fill="#8c959f"/>
+<text x="275" y="39" fill="#59636e">Not applicable</text>
+<text x="0" y="69">The Magma Language</text>
+<clipPath id="r0"><rect x="232" y="59" width="420" height="12" rx="3"/></clipPath>
+<g clip-path="url(#r0)"><rect x="232" y="59" width="420" height="12" fill="#eff2f5"/>
+<rect x="232.0" y="59" width="52.5" height="12" fill="#d4a72c"/>
+<rect x="284.5" y="59" width="367.5" height="12" fill="#8c959f"/>
+</g>
+<text x="662" y="69" fill="#59636e">0/1</text>
+<text x="0" y="91">Sets, Sequences, and Mappings</text>
+<clipPath id="r1"><rect x="232" y="81" width="420" height="12" rx="3"/></clipPath>
+<g clip-path="url(#r1)"><rect x="232" y="81" width="420" height="12" fill="#eff2f5"/>
+<rect x="232.0" y="81" width="233.3" height="12" fill="#1a7f37"/>
+<rect x="465.3" y="81" width="186.7" height="12" fill="#8c959f"/>
+</g>
+<text x="662" y="91" fill="#59636e">5/5</text>
+<text x="0" y="113">Basic Rings</text>
+<clipPath id="r2"><rect x="232" y="103" width="420" height="12" rx="3"/></clipPath>
+<g clip-path="url(#r2)"><rect x="232" y="103" width="420" height="12" fill="#eff2f5"/>
+<rect x="232.0" y="103" width="373.3" height="12" fill="#1a7f37"/>
+<rect x="605.3" y="103" width="46.7" height="12" fill="#cf222e"/>
+</g>
+<text x="662" y="113" fill="#59636e">8/9</text>
+<text x="0" y="135">Matrices and Linear Algebra</text>
+<clipPath id="r3"><rect x="232" y="125" width="420" height="12" rx="3"/></clipPath>
+<g clip-path="url(#r3)"><rect x="232" y="125" width="420" height="12" fill="#eff2f5"/>
+<rect x="232.0" y="125" width="315.0" height="12" fill="#1a7f37"/>
+<rect x="547.0" y="125" width="105.0" height="12" fill="#d4a72c"/>
+</g>
+<text x="662" y="135" fill="#59636e">3/4</text>
+<text x="0" y="157">Lattices and Quadratic Forms</text>
+<clipPath id="r4"><rect x="232" y="147" width="420" height="12" rx="3"/></clipPath>
+<g clip-path="url(#r4)"><rect x="232" y="147" width="420" height="12" fill="#eff2f5"/>
+<rect x="232.0" y="147" width="252.0" height="12" fill="#1a7f37"/>
+<rect x="484.0" y="147" width="168.0" height="12" fill="#cf222e"/>
+</g>
+<text x="662" y="157" fill="#59636e">3/5</text>
+<text x="0" y="179">Global Fields</text>
+<clipPath id="r5"><rect x="232" y="169" width="420" height="12" rx="3"/></clipPath>
+<g clip-path="url(#r5)"><rect x="232" y="169" width="420" height="12" fill="#eff2f5"/>
+<rect x="232.0" y="169" width="193.8" height="12" fill="#1a7f37"/>
+<rect x="425.8" y="169" width="161.5" height="12" fill="#d4a72c"/>
+<rect x="587.4" y="169" width="64.6" height="12" fill="#cf222e"/>
+</g>
+<text x="662" y="179" fill="#59636e">6/13</text>
+<text x="0" y="201">Local Fields</text>
+<clipPath id="r6"><rect x="232" y="191" width="420" height="12" rx="3"/></clipPath>
+<g clip-path="url(#r6)"><rect x="232" y="191" width="420" height="12" fill="#eff2f5"/>
+<rect x="232.0" y="191" width="168.0" height="12" fill="#1a7f37"/>
+<rect x="400.0" y="191" width="168.0" height="12" fill="#d4a72c"/>
+<rect x="568.0" y="191" width="84.0" height="12" fill="#cf222e"/>
+</g>
+<text x="662" y="201" fill="#59636e">4/10</text>
+<text x="0" y="223">Modules</text>
+<clipPath id="r7"><rect x="232" y="213" width="420" height="12" rx="3"/></clipPath>
+<g clip-path="url(#r7)"><rect x="232" y="213" width="420" height="12" fill="#eff2f5"/>
+<rect x="232.0" y="213" width="168.0" height="12" fill="#1a7f37"/>
+<rect x="400.0" y="213" width="84.0" height="12" fill="#d4a72c"/>
+<rect x="484.0" y="213" width="84.0" height="12" fill="#cf222e"/>
+<rect x="568.0" y="213" width="84.0" height="12" fill="#8c959f"/>
+</g>
+<text x="662" y="223" fill="#59636e">2/4</text>
+<text x="0" y="245">Finite Groups</text>
+<clipPath id="r8"><rect x="232" y="235" width="420" height="12" rx="3"/></clipPath>
+<g clip-path="url(#r8)"><rect x="232" y="235" width="420" height="12" fill="#eff2f5"/>
+<rect x="232.0" y="235" width="129.2" height="12" fill="#1a7f37"/>
+<rect x="361.2" y="235" width="129.2" height="12" fill="#d4a72c"/>
+<rect x="490.5" y="235" width="161.5" height="12" fill="#cf222e"/>
+</g>
+<text x="662" y="245" fill="#59636e">4/13</text>
+<text x="0" y="267">Finitely-Presented Groups</text>
+<clipPath id="r9"><rect x="232" y="257" width="420" height="12" rx="3"/></clipPath>
+<g clip-path="url(#r9)"><rect x="232" y="257" width="420" height="12" fill="#eff2f5"/>
+<rect x="232.0" y="257" width="190.9" height="12" fill="#1a7f37"/>
+<rect x="422.9" y="257" width="152.7" height="12" fill="#d4a72c"/>
+<rect x="575.6" y="257" width="38.2" height="12" fill="#cf222e"/>
+<rect x="613.8" y="257" width="38.2" height="12" fill="#8c959f"/>
+</g>
+<text x="662" y="267" fill="#59636e">5/10</text>
+<text x="0" y="289">Algebras</text>
+<clipPath id="r10"><rect x="232" y="279" width="420" height="12" rx="3"/></clipPath>
+<g clip-path="url(#r10)"><rect x="232" y="279" width="420" height="12" fill="#eff2f5"/>
+<rect x="232.0" y="279" width="190.9" height="12" fill="#1a7f37"/>
+<rect x="422.9" y="279" width="190.9" height="12" fill="#d4a72c"/>
+<rect x="613.8" y="279" width="38.2" height="12" fill="#cf222e"/>
+</g>
+<text x="662" y="289" fill="#59636e">5/11</text>
+<text x="0" y="311">Representation Theory</text>
+<clipPath id="r11"><rect x="232" y="301" width="420" height="12" rx="3"/></clipPath>
+<g clip-path="url(#r11)"><rect x="232" y="301" width="420" height="12" fill="#eff2f5"/>
+<rect x="232.0" y="301" width="168.0" height="12" fill="#1a7f37"/>
+<rect x="400.0" y="301" width="168.0" height="12" fill="#d4a72c"/>
+<rect x="568.0" y="301" width="84.0" height="12" fill="#cf222e"/>
+</g>
+<text x="662" y="311" fill="#59636e">2/5</text>
+<text x="0" y="333">Lie Theory</text>
+<clipPath id="r12"><rect x="232" y="323" width="420" height="12" rx="3"/></clipPath>
+<g clip-path="url(#r12)"><rect x="232" y="323" width="420" height="12" fill="#eff2f5"/>
+<rect x="232.0" y="323" width="229.1" height="12" fill="#1a7f37"/>
+<rect x="461.1" y="323" width="114.5" height="12" fill="#d4a72c"/>
+<rect x="575.6" y="323" width="38.2" height="12" fill="#cf222e"/>
+<rect x="613.8" y="323" width="38.2" height="12" fill="#8c959f"/>
+</g>
+<text x="662" y="333" fill="#59636e">6/10</text>
+<text x="0" y="355">Commutative Algebra</text>
+<clipPath id="r13"><rect x="232" y="345" width="420" height="12" rx="3"/></clipPath>
+<g clip-path="url(#r13)"><rect x="232" y="345" width="420" height="12" fill="#eff2f5"/>
+<rect x="232.0" y="345" width="240.0" height="12" fill="#1a7f37"/>
+<rect x="472.0" y="345" width="180.0" height="12" fill="#d4a72c"/>
+</g>
+<text x="662" y="355" fill="#59636e">4/7</text>
+<text x="0" y="377">Algebraic Geometry</text>
+<clipPath id="r14"><rect x="232" y="367" width="420" height="12" rx="3"/></clipPath>
+<g clip-path="url(#r14)"><rect x="232" y="367" width="420" height="12" fill="#eff2f5"/>
+<rect x="232.0" y="367" width="157.5" height="12" fill="#1a7f37"/>
+<rect x="389.5" y="367" width="105.0" height="12" fill="#d4a72c"/>
+<rect x="494.5" y="367" width="157.5" height="12" fill="#cf222e"/>
+</g>
+<text x="662" y="377" fill="#59636e">3/8</text>
+<text x="0" y="399">Arithmetic Geometry</text>
+<clipPath id="r15"><rect x="232" y="389" width="420" height="12" rx="3"/></clipPath>
+<g clip-path="url(#r15)"><rect x="232" y="389" width="420" height="12" fill="#eff2f5"/>
+<rect x="232.0" y="389" width="252.0" height="12" fill="#1a7f37"/>
+<rect x="484.0" y="389" width="126.0" height="12" fill="#d4a72c"/>
+<rect x="610.0" y="389" width="42.0" height="12" fill="#cf222e"/>
+</g>
+<text x="662" y="399" fill="#59636e">6/10</text>
+<text x="0" y="421">Modular Arithmetic Geometry</text>
+<clipPath id="r16"><rect x="232" y="411" width="420" height="12" rx="3"/></clipPath>
+<g clip-path="url(#r16)"><rect x="232" y="411" width="420" height="12" fill="#eff2f5"/>
+<rect x="232.0" y="411" width="226.2" height="12" fill="#1a7f37"/>
+<rect x="458.2" y="411" width="32.3" height="12" fill="#d4a72c"/>
+<rect x="490.5" y="411" width="161.5" height="12" fill="#cf222e"/>
+</g>
+<text x="662" y="421" fill="#59636e">7/13</text>
+<text x="0" y="443">Topology</text>
+<clipPath id="r17"><rect x="232" y="433" width="420" height="12" rx="3"/></clipPath>
+<g clip-path="url(#r17)"><rect x="232" y="433" width="420" height="12" fill="#eff2f5"/>
+<rect x="232.0" y="433" width="420.0" height="12" fill="#1a7f37"/>
+</g>
+<text x="662" y="443" fill="#59636e">1/1</text>
+<text x="0" y="465">Geometry</text>
+<clipPath id="r18"><rect x="232" y="455" width="420" height="12" rx="3"/></clipPath>
+<g clip-path="url(#r18)"><rect x="232" y="455" width="420" height="12" fill="#eff2f5"/>
+<rect x="232.0" y="455" width="140.0" height="12" fill="#1a7f37"/>
+<rect x="372.0" y="455" width="140.0" height="12" fill="#d4a72c"/>
+<rect x="512.0" y="455" width="140.0" height="12" fill="#cf222e"/>
+</g>
+<text x="662" y="465" fill="#59636e">1/3</text>
+<text x="0" y="487">Combinatorics</text>
+<clipPath id="r19"><rect x="232" y="477" width="420" height="12" rx="3"/></clipPath>
+<g clip-path="url(#r19)"><rect x="232" y="477" width="420" height="12" fill="#eff2f5"/>
+<rect x="232.0" y="477" width="420.0" height="12" fill="#1a7f37"/>
+</g>
+<text x="662" y="487" fill="#59636e">8/8</text>
+<text x="0" y="509">Coding Theory</text>
+<clipPath id="r20"><rect x="232" y="499" width="420" height="12" rx="3"/></clipPath>
+<g clip-path="url(#r20)"><rect x="232" y="499" width="420" height="12" fill="#eff2f5"/>
+<rect x="232.0" y="499" width="120.0" height="12" fill="#1a7f37"/>
+<rect x="352.0" y="499" width="300.0" height="12" fill="#cf222e"/>
+</g>
+<text x="662" y="509" fill="#59636e">2/7</text>
+<text x="0" y="531">Cryptography</text>
+<clipPath id="r21"><rect x="232" y="521" width="420" height="12" rx="3"/></clipPath>
+<g clip-path="url(#r21)"><rect x="232" y="521" width="420" height="12" fill="#eff2f5"/>
+<rect x="232.0" y="521" width="420.0" height="12" fill="#1a7f37"/>
+</g>
+<text x="662" y="531" fill="#59636e">1/1</text>
+<text x="0" y="553">Optimization</text>
+<clipPath id="r22"><rect x="232" y="543" width="420" height="12" rx="3"/></clipPath>
+<g clip-path="url(#r22)"><rect x="232" y="543" width="420" height="12" fill="#eff2f5"/>
+<rect x="232.0" y="543" width="420.0" height="12" fill="#1a7f37"/>
+</g>
+<text x="662" y="553" fill="#59636e">1/1</text>
+</g>
+</svg>

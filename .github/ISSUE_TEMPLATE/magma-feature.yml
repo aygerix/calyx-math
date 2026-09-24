@@ -1,0 +1,51 @@
+name: Magma feature request
+description: Ask for functionality that Magma has and Calyx lacks.
+title: "[Magma] "
+labels: ["magma-parity"]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        The [Magma parity matrix](https://github.com/aygerix/calyx-math/blob/develop/parity/README.md)
+        shows what Calyx already covers, chapter by chapter. Large requests are welcome:
+        a complete missing research workflow is often more interesting than a small isolated method.
+  - type: input
+    id: handbook
+    attributes:
+      label: Magma Handbook link
+      description: The Handbook chapter, section or intrinsic you need.
+      placeholder: https://magma.maths.usyd.edu.au/magma/handbook/...
+    validations:
+      required: true
+  - type: input
+    id: intrinsics
+    attributes:
+      label: Magma intrinsics or subsystem
+      placeholder: e.g. TwoDescent, HilbertModularForms
+  - type: textarea
+    id: example
+    attributes:
+      label: Example input
+      description: A small example, in Magma or in words.
+      render: text
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected output
+      description: The mathematical result you expect for the example.
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it matters for your work
+    validations:
+      required: true
+  - type: textarea
+    id: references
+    attributes:
+      label: Papers or references
+      description: Papers describing the underlying algorithm, if you know them.
+  - type: textarea
+    id: tests
+    attributes:
+      label: Test cases or benchmarks
+      description: Representative examples that would make good tests.
