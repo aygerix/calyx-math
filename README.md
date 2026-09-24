@@ -54,14 +54,6 @@ Code is expected to stand on normal mathematical and software evidence:
 - reproducible benchmarks;
 - explicit failure when a result cannot be justified.
 
-### U.S. legal background
-
-Under 17 U.S.C. § 102(b), copyright protection does not extend to an idea, procedure, process, system, method of operation, concept, principle, or discovery. The U.S. Copyright Office likewise states that the functional aspects of computer programs — including algorithms, functions, logic, and system design — are not protected by copyright. Copyright may nevertheless protect the particular code, documentation, and other original expression used to implement or describe those ideas.
-
-Federal trade-secret law separately defines "improper means" in 18 U.S.C. § 1839(6). That definition excludes reverse engineering and independent derivation from "improper means" when the information is acquired lawfully. Calyx therefore distinguishes independent analysis and implementation from acquisition through theft, misrepresentation, breach of a duty of confidentiality, unauthorized access, or other unlawful means.
-
-U.S. courts have also recognized in particular circumstances that intermediate copying or disassembly undertaken to obtain access to unprotected functional elements of software can constitute fair use. See *Sega Enterprises Ltd. v. Accolade, Inc.*, 977 F.2d 1510 (9th Cir. 1992), and *Sony Computer Entertainment, Inc. v. Connectix Corp.*, 203 F.3d 596 (9th Cir. 2000).
-
 
 ## Current work
 
