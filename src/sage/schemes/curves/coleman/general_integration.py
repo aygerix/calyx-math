@@ -1052,8 +1052,93 @@ def _laurent_primitive(differential, data):
     return LocalLogarithmicPrimitive(differential.integral(), residue)
 
 
+def _laurent_precision_bound(coefficients, valuation, parameter, field):
+    r"""Return a lower bound for the absolute precision of a Laurent value.
+
+    The value is `\sum_n c_n t^{k}` with `k = n + ` ``valuation``, where
+    `c_n` is ``coefficients[n]`` and `t` is ``parameter``, measured in the
+    valuation of ``field``.  A coefficient known to absolute precision `a`
+    contributes an error of valuation at least `e a + k v(t)`, where `e` is
+    the ramification index of ``field``.  An error of valuation `A` in `t`
+    changes `t^k` by an element of valuation at least `(k-1) v(t) + A`.
+
+    TESTS::
+
+        sage: from sage.schemes.curves.coleman.general_integration import (
+        ....:     _laurent_precision_bound)
+        sage: K = Qp(5, 6); R.<u> = K[]; E.<pi> = K.extension(u^2 - 5)
+        sage: _laurent_precision_bound([K(1), K(1, 3)], 1, pi.add_bigoh(9), E)
+        8
+    """
+    ramification = ZZ(field(field.prime()).valuation())
+    parameter_valuation = ZZ(parameter.valuation())
+    parameter_precision = parameter.precision_absolute()
+    bound = infinity
+    for n, coefficient in enumerate(coefficients):
+        exponent = valuation + n
+        bound = min(bound, ramification * coefficient.precision_absolute()
+                    + exponent * parameter_valuation)
+        if exponent:
+            bound = min(bound, ramification * coefficient.valuation()
+                        + (exponent - 1) * parameter_valuation
+                        + parameter_precision)
+    return bound
+
+
+def _is_eisenstein_over_padic_field(field):
+    r"""Return whether ``field`` is a totally ramified extension of `\QQ_p`.
+
+    TESTS::
+
+        sage: from sage.schemes.curves.coleman.general_integration import (
+        ....:     _is_eisenstein_over_padic_field)
+        sage: K = Qp(5, 6); R.<u> = K[]
+        sage: _is_eisenstein_over_padic_field(K.extension(u^3 - 5, names='pi'))
+        True
+        sage: _is_eisenstein_over_padic_field(K)
+        False
+    """
+    degree = ZZ(field.degree())
+    return (degree > 1 and field.base_ring().degree() == 1
+            and ZZ(field.absolute_e()) == degree)
+
+
+def _series_at_uniformizer(coefficients, field):
+    r"""Return `\sum_n c_n \pi^n` for the uniformizer `\pi` of ``field``.
+
+    An element of an Eisenstein extension of degree `d` is its list of
+    `\pi`-adic coefficients, so each block of `d` coefficients is converted
+    directly and the blocks are combined by Horner's rule in `\pi^d`.  This
+    takes one multiplication in ``field`` per block instead of one per
+    coefficient.  (Converting a list longer than `d` aborts in NTL.)
+
+    TESTS::
+
+        sage: from sage.schemes.curves.coleman.general_integration import (
+        ....:     _series_at_uniformizer)
+        sage: K = Qp(5, 6); R.<u> = K[]; E.<pi> = K.extension(u^3 - 5)
+        sage: c = [K(n + 1)^-1 for n in range(20)]
+        sage: _series_at_uniformizer(c, E) == sum(E(a) * pi^n for n, a in enumerate(c))
+        True
+    """
+    degree = ZZ(field.degree())
+    block_shift = field.gen()**degree
+    value = field.zero()
+    for start in reversed(range(0, len(coefficients), degree)):
+        value = (value * block_shift
+                 + field(list(coefficients[start:start + degree])))
+    return value
+
+
 def _laurent_at(primitive, parameter, field):
-    """Evaluate a Laurent primitive, rejecting a pole at parameter zero.
+    r"""Evaluate a Laurent primitive, rejecting a pole at parameter zero.
+
+    At the uniformizer of an Eisenstein extension of `\QQ_p`, the value is
+    assembled from `\pi`-adic blocks.  At other parameters of positive
+    valuation, the terms beyond the precision bound of
+    :func:`_laurent_precision_bound` are skipped.  In both cases the result
+    is capped at that bound, which also accounts for the precision of the
+    parameter.
 
     TESTS::
 
@@ -1061,17 +1146,58 @@ def _laurent_at(primitive, parameter, field):
         sage: K = Qp(5, 6); L.<t> = LaurentSeriesRing(K)
         sage: (_laurent_at(t + t^2, K(5), K) - 30).valuation() >= 6
         True
+
+    The value is correct to its precision for every parameter that the
+    approximate parameter allows, and agrees with Horner's rule::
+
+        sage: R.<u> = K[]; E.<pi> = K.extension(u^4 - 5)
+        sage: f = sum(K(n + 5)^-1 * t^n for n in range(-3, 60)) + O(t^60)
+        sage: def horner(f, s):
+        ....:     value = E.zero()
+        ....:     for c in reversed(f.list()):
+        ....:         value = value * s + E(c)
+        ....:     return value * s^f.valuation()
+        sage: for s, error in [(pi, 0), (pi.add_bigoh(15), pi^15),
+        ....:                  ((pi^3 + pi^4).add_bigoh(20), pi^20)]:
+        ....:     value = _laurent_at(f, s, E)
+        ....:     assert (value - horner(f, s)).is_zero()
+        ....:     for exact in [s.lift_to_precision(), s.lift_to_precision() + error]:
+        ....:         assert ((value - horner(f, exact)).valuation()
+        ....:                 >= value.precision_absolute())
     """
     if not primitive:
         return field.zero()
     valuation = ZZ(primitive.valuation())
     if not parameter and valuation < 0:
         raise ZeroDivisionError('the differential has a pole at the endpoint')
+    coefficients = primitive.list()
+    bound = infinity
+    if parameter and parameter.valuation() > 0:
+        bound = _laurent_precision_bound(
+            coefficients, valuation, parameter, field
+        )
+        if _is_eisenstein_over_padic_field(field) and parameter == field.gen():
+            value = (_series_at_uniformizer(coefficients, field)
+                     * field.gen()**valuation)
+            # Converting a block can lose up to one digit of `\QQ_p` to the
+            # precision cap of ``field``; Horner's rule is used if that
+            # loss would limit the result.
+            if value.precision_absolute() >= bound:
+                return value.add_bigoh(bound)
+        ramification = ZZ(field(field.prime()).valuation())
+        parameter_valuation = ZZ(parameter.valuation())
+        last = len(coefficients)
+        while last and (ramification * coefficients[last - 1].valuation()
+                        + (valuation + last - 1) * parameter_valuation
+                        >= bound):
+            last -= 1
+        coefficients = coefficients[:last]
     # Horner evaluation avoids one extension exponentiation for every term.
     value = field.zero()
-    for coefficient in reversed(primitive.list()):
+    for coefficient in reversed(coefficients):
         value = value * parameter + field(coefficient)
-    return value * parameter**valuation
+    value = value * parameter**valuation
+    return value if bound == infinity else value.add_bigoh(bound)
 
 
 def _endpoint_log_argument(parameter, endpoint, field):
