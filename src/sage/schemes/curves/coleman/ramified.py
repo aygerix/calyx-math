@@ -568,14 +568,41 @@ def _coefficient_solutions(equation, residue_coefficient, field,
         [3 + O(7^6)]
         sage: _coefficient_solutions((z-1)*(z-2), k(2), K, k)
         [2 + O(7^6)]
+
+    Trailing coefficients known only to be zero are dropped before root
+    finding; they bound the precision of the solution instead::
+
+        sage: K = Qp(11, 13); R.<z> = K[]; k = GF(11)
+        sage: equation = R([K(0, 5), K(15), K(0), K(0, 5)])
+        sage: _coefficient_solutions(equation, k(0), K, k)
+        [O(11^5)]
     """
-    if not equation or all(not coefficient for coefficient in equation.list()):
+    coefficients = list(equation.list())
+    dropped_precision = infinity
+    while coefficients and not coefficients[-1]:
+        # A trailing coefficient known only to be zero cannot change an
+        # integral root beyond its own precision.  Passing it on as a
+        # leading coefficient makes PARI's p-adic factorization unreliable.
+        dropped_precision = min(dropped_precision,
+                                coefficients.pop().precision_absolute())
+    if not coefficients or all(not coefficient for coefficient in coefficients):
         return [field(residue_coefficient.lift())]
-    return [
-        solution for solution in equation.roots(multiplicities=False)
-        if (solution.valuation() >= 0
-            and residue_field(solution.residue()) == residue_coefficient)
-    ]
+    equation = equation.parent()(coefficients)
+    if not equation.degree():
+        return []
+    derivative = equation.derivative()
+    solutions = []
+    for solution in equation.roots(multiplicities=False):
+        if (solution.valuation() < 0
+                or residue_field(solution.residue()) != residue_coefficient):
+            continue
+        if dropped_precision != infinity:
+            slope = derivative(solution)
+            loss = ZZ(slope.valuation()) if slope else ZZ(dropped_precision)
+            solution = solution.add_bigoh(
+                max(ZZ.zero(), ZZ(dropped_precision) - max(ZZ.zero(), loss)))
+        solutions.append(solution)
+    return solutions
 
 
 def approximate_root(coefficients, constant, expansion, prec):
@@ -1250,12 +1277,18 @@ def _digit_lifted_padic_root(poly, approximate, target):
     return root
 
 
-def _multiple_root_center(poly, approximate, target):
+def _multiple_root_center(poly, approximate, target, *, exact_cluster=False):
     r"""Lift the common center of a residue-multiple root cluster.
 
     The derivative of order one less than the residual multiplicity has a
     simple root at the common center.  A center is returned only when it also
     satisfies the original relation to ``target`` digits.
+
+    In general only ``target/m`` digits of a cluster of ``m`` roots are
+    determined.  If ``exact_cluster`` is true, the caller has certified that
+    every root in this residue class is a conjugate branch of one point.
+    These roots then coincide exactly, and their common value is a simple
+    root of the derivative of order ``m-1``, with Hensel precision.
 
     TESTS::
 
@@ -1267,6 +1300,10 @@ def _multiple_root_center(poly, approximate, target):
         (4, True)
         sage: _multiple_root_center(z^2 + K(0, 8), K(10, 2), 8)
         O(5^4)
+        sage: _multiple_root_center(z^4 + K(0, 8), K(0), 8)
+        O(5^2)
+        sage: _multiple_root_center(z^4 + K(0, 8), K(0), 8, exact_cluster=True)
+        O(5^8)
         sage: _multiple_root_center((z-5)*(z+5), K(0), 8) is None
         True
     """
@@ -1319,13 +1356,23 @@ def _multiple_root_center(poly, approximate, target):
         return None
     root_precision = root.precision_absolute()
     relation_precision = (ZZ(target) + multiplicity - 1) // multiplicity
+    if exact_cluster:
+        derivative_value = derivative(root)
+        if derivative_value:
+            relation_precision = max(
+                relation_precision,
+                ZZ(target) - max(ZZ.zero(), ZZ(derivative_value.valuation())),
+            )
     precision = (relation_precision if root_precision == infinity
                  else min(ZZ(root_precision), relation_precision))
     return root.add_bigoh(precision)
 
 
-def _selected_padic_root(poly, approximate):
+def _selected_padic_root(poly, approximate, *, exact_cluster=False):
     """Choose the unique rational p-adic root in the same residue class.
+
+    ``exact_cluster`` is passed to :func:`_multiple_root_center`.  With it,
+    an exact zero root in the selected residue class is returned exactly.
 
     TESTS::
 
@@ -1356,6 +1403,11 @@ def _selected_padic_root(poly, approximate):
         ValueError: the selected disk has no unique Qp-rational lift
     """
     field = approximate.parent()
+    if (exact_cluster and approximate.valuation() > 0
+            and poly[0].precision_absolute() == infinity):
+        # Every root in this residue class is a branch of one point, and
+        # zero is an exact root in it, so all of those branches are zero.
+        return field.zero()
     coefficient_precisions = [
         ZZ(coefficient.precision_absolute())
         for coefficient in poly
@@ -1377,7 +1429,8 @@ def _selected_padic_root(poly, approximate):
     if (value.valuation() >= target and derivative_value
             and derivative_value.valuation() == 0):
         return root.add_bigoh(root_precision(root))
-    multiple_root = _multiple_root_center(poly, approximate, target)
+    multiple_root = _multiple_root_center(poly, approximate, target,
+                                          exact_cluster=exact_cluster)
     if multiple_root is not None:
         return multiple_root
     factorization_error = None
@@ -1445,6 +1498,89 @@ def _at_padic_value(poly, value, field):
     )
 
 
+def _unshared_coordinates(P, data):
+    r"""Return the basis coordinates that certify the residue place of ``P``.
+
+    A bad residue disk contains exactly one point above the root of `r` (or
+    above infinity) in it.  If no other place of the reduced curve above the
+    same base point shares the residue of the ``i``-th basis function, every
+    root of that function's relation with `x` in this residue class is a
+    conjugate branch of that one point.  Those roots coincide exactly, which
+    :func:`_multiple_root_center` uses to keep the full precision.
+
+    OUTPUT: a frozenset of zero-based indices; empty if the residue place of
+    ``P`` is not a unique rational place
+
+    TESTS:
+
+    Three rational places at infinity on this genus-three model reduce to
+    `(1, 0, 4)`, `(1, 0, 6)` and `(1, 4, 6)`.  Only coordinates with a
+    residue unique to their place are certified::
+
+        sage: from sage.schemes.curves.coleman.data import coleman_data
+        sage: from sage.schemes.curves.coleman.points import ColemanIntegrationPoint
+        sage: from sage.schemes.curves.coleman.ramified import _unshared_coordinates
+        sage: R.<x> = QQ[]; S.<y> = R[]
+        sage: Q = (y^3 + (3*x^2 + x - 2)*y^2
+        ....:      + (-3*x^3 - 3*x^2 + 2*x + 2)*y + x^4 + x^3)
+        sage: data = coleman_data(Q, 7, 2, genus=3)
+        sage: K = Qp(7, 2)
+        sage: [sorted(_unshared_coordinates(
+        ....:     ColemanIntegrationPoint(K(0), tuple(map(K, b)), True), data))
+        ....:  for b in [(1, 0, 4), (1, 0, 6), (1, 4, 6)]]
+        [[2], [], [1]]
+    """
+    cache = getattr(data, "_ramified_unshared", None)
+    if cache is None:
+        cache = {}
+        data._ramified_unshared = cache
+    K, L = _reduced_model(data)
+    k = K.constant_base_field()
+    point_values = tuple(_padic_residue(b, k) for b in P.b)
+    base_residue = None if P.infinity else _padic_residue(P.x, k)
+    key = (bool(P.infinity), base_residue, point_values)
+    if key in cache:
+        return cache[key]
+    W = data.Winf if P.infinity else data.W0
+    bmod = tuple(sum((_reduce_rational_function(W[i, j], K) * L.gen()**j
+                      for j in range(data.Q.degree())), L.zero())
+                 for i in range(data.Q.degree()))
+    if P.infinity:
+        below = K.place_infinite()
+    else:
+        below = K.maximal_order().ideal(K.gen() - base_residue).place()
+    own = []
+    others = []
+    for place in L.places_above(below):
+        values = []
+        for b in bmod:
+            try:
+                values.append(_residue(b, place))
+            except (ValueError, ZeroDivisionError, TypeError):
+                values.append(None)
+        matches = (place.degree() == 1
+                   and all(value is not None and value == target
+                           for value, target in zip(values, point_values)))
+        (own if matches else others).append(values)
+    unshared = set()
+    if len(own) == 1:
+        for i, target in enumerate(point_values):
+            shared = False
+            for values in others:
+                value = values[i]
+                try:
+                    shared = value is None or value == target
+                except (TypeError, ValueError):
+                    shared = True
+                if shared:
+                    break
+            if not shared:
+                unshared.add(i)
+    result = frozenset(unshared)
+    cache[key] = result
+    return result
+
+
 def find_bad_point_in_disk(P, data):
     r"""Lift a bad residue disk to its point above ``r=0`` or infinity.
 
@@ -1462,7 +1598,29 @@ def find_bad_point_in_disk(P, data):
         sage: P = find_bad_point_in_disk(
         ....:     point_from_affine_coordinates((1, 0), data), data)
         sage: P.x, P.b
-        (1 + O(5^8), (1 + O(5^8), O(5^4)))
+        (1 + O(5^8), (1 + O(5^8), 0))
+
+    The conjugate branches at a totally ramified point coincide, so the
+    center keeps the working precision::
+
+        sage: from sage.schemes.curves.coleman.data import coleman_data
+        sage: from sage.schemes.curves.coleman.points import point_from_basis_coordinates
+        sage: fermat = coleman_data(y^4 + x^4 - 1, 13, 5, genus=3)
+        sage: center = find_bad_point_in_disk(point_from_basis_coordinates(
+        ....:     1, [1, 0, 0, 0], False, fermat), fermat)
+        sage: center.b
+        (1 + O(13^5), 0, 0, 0)
+
+    On this singular model the point at infinity has the same basis values
+    as the point over `x=2`, so the relation with the parameter has a
+    spurious double root.  The relation with `x` certifies the value::
+
+        sage: singular = coleman_data(
+        ....:     y^3 + 2*x^4 - 6*x^3 + 3*x^2 - 4*x + 12, 11, 4, genus=2)
+        sage: center = find_bad_point_in_disk(point_from_basis_coordinates(
+        ....:     2, [1, 0, 0], False, singular), singular)
+        sage: center.b
+        (1 + O(11^4), 0, 0)
     """
     if not is_in_bad_residue_disk(P, data):
         raise ValueError("residue disk does not contain a bad point")
@@ -1480,6 +1638,7 @@ def find_bad_point_in_disk(P, data):
             x0 = _selected_padic_root(r, P.x)
             relation_x = x0
     _, index, _, _ = local_data(P, data)
+    unshared = _unshared_coordinates(P, data)
     L, bfinite, binfinite = _rational_bases(data)
     bfun = binfinite if P.infinity else bfinite
     xfun = L(1 / L.base_field().gen()) if P.infinity else L(L.base_field().gen())
@@ -1490,16 +1649,30 @@ def find_bad_point_in_disk(P, data):
                 data, (P.infinity, 0, "b", i), xfun, b
             )
             values[i] = _selected_padic_root(
-                _at_padic_value(relation, relation_x, field), values[i])
+                _at_padic_value(relation, relation_x, field), values[i],
+                exact_cluster=i in unshared)
     else:
         j = index - 1
         relation = _cached_minpoly(
             data, (P.infinity, 0, "b", j), xfun, bfun[j]
         )
         values[j] = _selected_padic_root(
-            _at_padic_value(relation, relation_x, field), values[j])
+            _at_padic_value(relation, relation_x, field), values[j],
+            exact_cluster=j in unshared)
         for i, b in enumerate(bfun):
             if i == j:
+                continue
+            if i in unshared:
+                # The relation with the parameter can also vanish at places
+                # outside this fiber, such as a point at infinity with the
+                # same basis values.  The relation with ``x`` sees only this
+                # fiber, where the residue class is certified.
+                relation = _cached_minpoly(
+                    data, (P.infinity, 0, "b", i), xfun, b
+                )
+                values[i] = _selected_padic_root(
+                    _at_padic_value(relation, relation_x, field), values[i],
+                    exact_cluster=True)
                 continue
             relation = _cached_minpoly(
                 data, (P.infinity, index, "b", i), bfun[j], b
