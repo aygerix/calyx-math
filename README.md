@@ -35,6 +35,7 @@ LLMs are used to:
 
 - explore unfamiliar parts of large mathematical codebases;
 - translate algorithms from papers into implementation plans;
+- reverse engineer the control flows of proprietary mathematical software;
 - generate and refactor routine code;
 - construct adversarial tests and regression cases;
 - compare APIs and implementations across computer algebra systems;
@@ -49,8 +50,7 @@ discovery, test construction, documentation, and iterative refactoring can often
 be brought to a testable state much sooner, leaving more human time for the
 mathematics, algorithm design, validation, and difficult edge cases.
 
-LLMs are not treated as mathematical correctness oracles. Code is expected to
-stand on normal mathematical and software evidence:
+Code is expected to stand on normal mathematical and software evidence:
 
 - exact or certified algorithms where required;
 - explicit precision accounting for numerical and p-adic computations;
@@ -59,8 +59,6 @@ stand on normal mathematical and software evidence:
 - comparison with independent implementations where possible;
 - reproducible benchmarks;
 - explicit failure when a result cannot be justified.
-
-The development loop is accelerated; the standard of evidence is not lowered.
 
 ## Current work
 
