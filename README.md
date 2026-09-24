@@ -113,7 +113,7 @@ and, if possible:
 - any papers describing the underlying algorithm;
 - representative examples or benchmarks that would make good tests.
 
-Large requests are welcome. A complete missing research workflow is often more
+Large requests are absolutely welcome. A complete missing research workflow is often more
 interesting than a small isolated method.
 
 The long-term roadmap is simple: systematically close the important gaps between
