@@ -15,10 +15,11 @@ from sage.rings.integer_ring import ZZ
 from sage.rings.rational_field import QQ
 
 from .auxiliary import (
+    _irreducible_reduction,
     _model_rings,
     _validate_prime,
     auxiliary_polynomials,
-    curve_genus,
+    good_reduction_genus,
     integral_basis_matrices,
     is_p_integral,
     is_smooth_mod_p,
@@ -185,15 +186,7 @@ def de_rham_cohomology_basis(Q, p, N, *, genus=None):
     if not _is_irreducible_model(Q):
         raise ValueError("Q must be irreducible over QQ(x)")
 
-    actual_genus = ZZ(curve_genus(Q, p))
-    if genus is None:
-        genus = actual_genus
-    else:
-        genus = ZZ(genus)
-        if genus != actual_genus:
-            raise ValueError(
-                f"genus must equal the curve genus ({actual_genus})"
-            )
+    _irreducible_reduction(Q, p)
     r, Delta, s = auxiliary_polynomials(Q)
     W0, Winf = integral_basis_matrices(Q)
     W0_inverse = W0.inverse()
@@ -204,6 +197,15 @@ def de_rham_cohomology_basis(Q, p, N, *, genus=None):
             or not all(is_p_integral(A, p) for A in
                        (W0, W0_inverse, Winf, Winf_inverse))):
         raise ValueError("bad prime for this plane model")
+    actual_genus = good_reduction_genus(Q, p, W0, Winf)
+    if genus is None:
+        genus = actual_genus
+    else:
+        genus = ZZ(genus)
+        if genus != actual_genus:
+            raise ValueError(
+                f"genus must equal the curve genus ({actual_genus})"
+            )
 
     G = connection_matrix(Q, Delta, s)
     G0 = gauge_connection_matrix(G, W0)
@@ -278,16 +280,7 @@ def coleman_data(Q, p, N, *, use_open_curve=False, basis0=None, basis1=None,
         raise ValueError("Q must be irreducible over QQ(x)")
 
     degree = Q.degree()
-    actual_genus = ZZ(curve_genus(Q, p))
-    if genus is None:
-        genus = actual_genus
-    else:
-        genus = ZZ(genus)
-        if genus != actual_genus:
-            raise ValueError(
-                f"genus must equal the curve genus ({actual_genus})"
-            )
-
+    _irreducible_reduction(Q, p)
     r, Delta, s = auxiliary_polynomials(Q)
     W0, Winf = integral_basis_matrices(Q)
     W0_inverse = W0.inverse()
@@ -299,6 +292,15 @@ def coleman_data(Q, p, N, *, use_open_curve=False, basis0=None, basis1=None,
             or not all(is_p_integral(A, p) for A in
                        (W0, W0_inverse, Winf, Winf_inverse))):
         raise ValueError("bad prime for this plane model")
+    actual_genus = good_reduction_genus(Q, p, W0, Winf)
+    if genus is None:
+        genus = actual_genus
+    else:
+        genus = ZZ(genus)
+        if genus != actual_genus:
+            raise ValueError(
+                f"genus must equal the curve genus ({actual_genus})"
+            )
 
     G = connection_matrix(Q, Delta, s)
     G0 = gauge_connection_matrix(G, W0)

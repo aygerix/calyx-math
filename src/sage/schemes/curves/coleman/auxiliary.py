@@ -207,11 +207,140 @@ def curve_genus(Q, p):
         ...
         ValueError: bad prime: Q is reducible modulo p
     """
+    Kx, q = _irreducible_reduction(Q, p)
+    function_field = Kx.extension(q, names=q.parent().variable_name())
+    return function_field.genus()
+
+
+def _irreducible_reduction(Q, p):
+    r"""Return the reduction of ``Q`` modulo ``p``, which must be irreducible.
+
+    TESTS::
+
+        sage: from sage.schemes.curves.coleman.auxiliary import _irreducible_reduction
+        sage: R.<x> = QQ[]; S.<y> = R[]
+        sage: _irreducible_reduction(y^2 - x, 5)[1]
+        y^2 + 4*x
+        sage: _irreducible_reduction(y^2 - x^2, 5)
+        Traceback (most recent call last):
+        ...
+        ValueError: bad prime: Q is reducible modulo p
+    """
     Kx, q = _reduce_model_mod_prime(Q, p)
     if not q.is_irreducible():
         raise ValueError("bad prime: Q is reducible modulo p")
-    function_field = Kx.extension(q, names=q.parent().variable_name())
-    return function_field.genus()
+    return Kx, q
+
+
+def _has_smooth_affine_point(Q, p):
+    r"""Return whether ``Q = 0`` has a point over `\GF{p}` off the branch locus.
+
+    The point `(a, b)` must satisfy `Q(a, b) \equiv 0` and
+    `\partial Q/\partial y (a, b) \not\equiv 0 \pmod{p}`, so it is a smooth
+    point of the reduction that is unramified over the `x`-line.
+
+    TESTS::
+
+        sage: from sage.schemes.curves.coleman.auxiliary import _has_smooth_affine_point
+        sage: R.<x> = QQ[]; S.<y> = R[]
+        sage: _has_smooth_affine_point(y^2 - (x^3 - x), 5)
+        True
+
+    The curve `y^3 = 3x^3` is three lines, conjugate over `\QQ(\sqrt[3]{3})`.
+    Modulo `7`, where `3` is not a cube, its only affine point is singular::
+
+        sage: _has_smooth_affine_point(y^3 - 3*x^3, 7)
+        False
+    """
+    k = GF(p)
+    Ry = PolynomialRing(k, names='y')
+    coefficients = [c.change_ring(k) for c in Q.list()]
+    return any(multiplicity == 1
+               for a in k
+               for _, multiplicity in Ry([c(a) for c in coefficients]).roots())
+
+
+def good_reduction_genus(Q, p, W0, Winf):
+    r"""
+    Return the genus of the curve `Q = 0`, which has good reduction at ``p``.
+
+    The integral bases ``W0`` and ``Winf`` give the genus quickly by
+    :func:`genus_from_integral_bases`, provided the curve is geometrically
+    irreducible.  At a prime of good reduction, the constant field of the
+    reduction contains the residue fields of the constant field of the
+    curve over `\QQ`.  A point over `\GF{p}` found by
+    :func:`_has_smooth_affine_point` has degree one, so it proves that the
+    constant field is `\QQ`.  Without such a point, the genus of the
+    reduction is computed by :func:`curve_genus`, as for a curve that is not
+    geometrically irreducible.
+
+    EXAMPLES::
+
+        sage: from sage.schemes.curves.coleman.auxiliary import (
+        ....:     good_reduction_genus, integral_basis_matrices)
+        sage: R.<x> = QQ[]; S.<y> = R[]
+        sage: Q = y^4 + x^4 - 1
+        sage: good_reduction_genus(Q, 13, *integral_basis_matrices(Q))
+        3
+
+    The model `y^3 = 3x^3` is three lines, conjugate over `\QQ(\sqrt[3]{3})`,
+    so it is not geometrically irreducible, and the integral bases alone
+    would give a negative genus::
+
+        sage: Q = y^3 - 3*x^3
+        sage: good_reduction_genus(Q, 7, *integral_basis_matrices(Q))
+        0
+    """
+    if _has_smooth_affine_point(Q, p):
+        return genus_from_integral_bases(Q, W0, Winf)
+    return ZZ(curve_genus(Q, p))
+
+
+def genus_from_integral_bases(Q, W0, Winf):
+    r"""
+    Return the genus of the curve `Q = 0` from its integral bases.
+
+    ``Q`` is monic in `y` of degree `d`.  The rows of ``W0`` and ``Winf``
+    express bases of the maximal orders over `\QQ[x]` and over `\QQ[1/x]` in
+    the power basis of `y`, as returned by :func:`integral_basis_matrices`.
+    Such a basis has discriminant `\det(W)^2 \operatorname{disc}_y(Q)`.  The
+    discriminant divisor of the degree-`d` map `x` to the projective line
+    has degree `\delta`: the degree of the finite discriminant plus the
+    order of the discriminant at infinity.  The Riemann--Hurwitz formula
+    gives `2g - 2 = -2d + \delta`.
+
+    This is the genus of the normalization, so singular plane models are
+    handled as well.  Under the good-reduction conditions checked by
+    :func:`~sage.schemes.curves.coleman.data.coleman_data`, it is also the
+    genus of the reduction modulo `p`, which :func:`curve_genus` computes
+    much more slowly.
+
+    EXAMPLES::
+
+        sage: from sage.schemes.curves.coleman.auxiliary import (
+        ....:     genus_from_integral_bases, integral_basis_matrices)
+        sage: R.<x> = QQ[]; S.<y> = R[]
+        sage: [genus_from_integral_bases(Q, *integral_basis_matrices(Q))
+        ....:  for Q in [y^2 - (x^3 - x), y^2 - (x^6 + 1), y^3 - x,
+        ....:            y^4 + x^4 - 1, y^3 + x^3*y + x]]
+        [1, 2, 0, 3, 3]
+
+    A singular plane model of a curve of genus `2`::
+
+        sage: Q = y^3 + 2*x^4 - 6*x^3 + 3*x^2 - 4*x + 12
+        sage: genus_from_integral_bases(Q, *integral_basis_matrices(Q))
+        2
+    """
+    field = W0.base_ring()
+    discriminant = field(Q.discriminant())
+    finite = W0.determinant()**2 * discriminant
+    infinite = Winf.determinant()**2 * discriminant
+    delta = (finite.numerator().degree() - finite.denominator().degree()
+             + infinite.denominator().degree() - infinite.numerator().degree())
+    genus, odd = ZZ(delta - 2 * Q.degree() + 2).quo_rem(2)
+    if odd or genus < 0:
+        raise ArithmeticError("the integral bases are not those of a curve")
+    return genus
 
 
 def is_smooth_mod_p(f, p):
