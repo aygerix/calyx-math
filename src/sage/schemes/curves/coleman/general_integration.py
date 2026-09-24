@@ -75,9 +75,10 @@ case::
 from dataclasses import dataclass
 from functools import lru_cache
 
-from sage.matrix.constructor import identity_matrix
+from sage.matrix.constructor import identity_matrix, matrix
 from sage.modules.free_module_element import vector
 
+from sage.rings.finite_rings.integer_mod_ring import IntegerModRing
 from sage.rings.function_field.constructor import FunctionField
 from sage.rings.infinity import infinity
 from sage.rings.integer_ring import ZZ
@@ -479,6 +480,83 @@ def evaluate_finite_primitive(f0, P, data):
         raise ZeroDivisionError('finite primitive has a pole at this endpoint') from error
 
 
+def _evaluate_finite_primitives(f0_list, P, data):
+    """Evaluate several finite primitives with shared endpoint arithmetic."""
+    f0_list = tuple(f0_list)
+    if (not is_in_bad_residue_disk(P, data)
+            or (P.infinity and not P.x)):
+        return [evaluate_finite_primitive(f0, P, data) for f0 in f0_list]
+
+    x_value = 1 / P.x if P.infinity else P.x
+    z_value = (_evaluate_rational_function(data.r, x_value)
+               / data.r.leading_coefficient())
+    if not z_value:
+        return [evaluate_finite_primitive(f0, P, data) for f0 in f0_list]
+
+    field = P.x.parent()
+    basis_values = _basis_values(P, data, finite_basis=True)
+    ramification = ZZ(field(field.prime()).valuation())
+    x_valuation = x_value.valuation()
+    z_valuation = z_value.valuation()
+    polynomial_cache = {}
+    power_cache = {ZZ.zero(): field.one(), ZZ.one(): z_value}
+
+    def polynomial_value(polynomial):
+        try:
+            return polynomial_cache[polynomial]
+        except KeyError:
+            value = polynomial(x_value)
+            polynomial_cache[polynomial] = value
+            return value
+
+    def z_power(exponent):
+        exponent = ZZ(exponent)
+        if exponent not in power_cache:
+            power_cache[exponent] = z_value**exponent
+        return power_cache[exponent]
+
+    output = []
+    for f0 in f0_list:
+        total = field.zero()
+        precision = ZZ(data.N) * ramification
+        for index, entry in enumerate(f0):
+            terms = list(_series_terms(entry) or [])
+            if not terms:
+                continue
+            current_exponent, polynomial = terms[-1]
+            entry_value = polynomial_value(polynomial)
+            for radix_exponent, polynomial in reversed(terms[:-1]):
+                entry_value = (
+                    entry_value * z_power(current_exponent - radix_exponent)
+                    + polynomial_value(polynomial)
+                )
+                current_exponent = radix_exponent
+            entry_value *= z_power(current_exponent)
+            total += entry_value * basis_values[index]
+
+            basis_valuation = basis_values[index].valuation()
+            for radix_exponent, polynomial in terms:
+                for exponent, coefficient in enumerate(polynomial.list()):
+                    if coefficient:
+                        precision = min(
+                            precision,
+                            ZZ(data.Nmax) * ramification
+                            + min(ZZ.zero(), ZZ(QQ(coefficient).valuation(
+                                field.prime()))) * ramification
+                            + ZZ(exponent) * x_valuation
+                            + ZZ(radix_exponent) * z_valuation
+                            + basis_valuation,
+                        )
+        precision = min(precision, total.precision_absolute())
+        if precision <= 0:
+            raise PrecisionError(
+                'primitive evaluation has no reliable p-adic digits; '
+                'move the endpoint to a near-boundary point'
+            )
+        output.append((total, ZZ(precision // ramification)))
+    return output
+
+
 def evaluate_infinite_primitive(finf, P, data):
     r"""Evaluate ``finf`` using the infinite integral basis.
 
@@ -630,6 +708,229 @@ def _local_parameter_value(P, center, index, field):
     return field(P.x) - field(center.x)
 
 
+def _evaluate_rational_functions_at_series(functions, value):
+    r"""Evaluate rational functions using one shared table of series powers.
+
+    Polynomial evaluation by repeated Horner substitution repeats nearly the
+    same power-series multiplications for every coefficient of a differential
+    basis.  At a finite local parameter, precomputing the required powers of
+    ``value`` makes the number of series-by-series products depend on the
+    maximum degree, rather than the sum of all degrees.
+
+    TESTS::
+
+        sage: from sage.schemes.curves.coleman.general_integration import _evaluate_rational_functions_at_series
+        sage: R.<x> = QQ[]; T.<t> = PowerSeriesRing(QQ, default_prec=8)
+        sage: functions = ((x^3 + 2*x + 1)/3, (x^2 - 1)/(x + 2))
+        sage: value = t + t^2 + O(t^8)
+        sage: fast = _evaluate_rational_functions_at_series(functions, value)
+        sage: from sage.schemes.curves.coleman.cohomology import _evaluate_rational_function
+        sage: slow = tuple(_evaluate_rational_function(f, value) for f in functions)
+        sage: all((a-b).is_zero() for a, b in zip(fast, slow))
+        True
+    """
+    functions = tuple(functions)
+    if not functions:
+        return ()
+    if value.valuation() < 0:
+        return tuple(_evaluate_rational_function(f, value) for f in functions)
+
+    parent = value.parent()
+    decomposed = []
+    polynomial_coefficients = {}
+    maximum_degree = 0
+
+    def coefficients(polynomial):
+        nonlocal maximum_degree
+        if not callable(polynomial):
+            return None
+        try:
+            cached = polynomial_coefficients.get(polynomial)
+        except TypeError:
+            cached = None
+        if cached is not None:
+            return cached
+        try:
+            cached = tuple(polynomial.list())
+        except AttributeError:
+            return None
+        maximum_degree = max(maximum_degree, len(cached) - 1)
+        try:
+            polynomial_coefficients[polynomial] = cached
+        except TypeError:
+            pass
+        return cached
+
+    for function in functions:
+        if not function:
+            decomposed.append(None)
+            continue
+        try:
+            numerator = function.numerator()
+            denominator = function.denominator()
+        except AttributeError:
+            numerator = function
+            denominator = 1
+        numerator_coefficients = coefficients(numerator)
+        denominator_coefficients = coefficients(denominator)
+        if callable(numerator) and numerator_coefficients is None:
+            return tuple(_evaluate_rational_function(f, value)
+                         for f in functions)
+        if callable(denominator) and denominator_coefficients is None:
+            return tuple(_evaluate_rational_function(f, value)
+                         for f in functions)
+        decomposed.append((numerator, numerator_coefficients,
+                           denominator, denominator_coefficients))
+
+    powers = [parent.one()]
+    for _ in range(maximum_degree):
+        powers.append(powers[-1] * value)
+
+    evaluated_polynomials = {}
+
+    def evaluate(polynomial, coefficient_list):
+        if coefficient_list is None:
+            return parent(polynomial)
+        try:
+            cached = evaluated_polynomials.get(polynomial)
+        except TypeError:
+            cached = None
+        if cached is not None:
+            return cached
+        result = sum(
+            (parent(coefficient) * powers[exponent]
+             for exponent, coefficient in enumerate(coefficient_list)
+             if coefficient),
+            parent.zero(),
+        )
+        try:
+            evaluated_polynomials[polynomial] = result
+        except TypeError:
+            pass
+        return result
+
+    output = []
+    for entry in decomposed:
+        if entry is None:
+            output.append(parent.zero())
+            continue
+        numerator, numerator_coefficients, denominator, denominator_coefficients = entry
+        output.append(
+            evaluate(numerator, numerator_coefficients)
+            / evaluate(denominator, denominator_coefficients)
+        )
+    return tuple(output)
+
+
+def _local_differentials_in_ring(center, data, basis, ring, coordinate,
+                                 stored_basis):
+    """Expand ``basis`` in a supplied Laurent-series coefficient ring."""
+    change_entries = []
+    if center.infinity:
+        x_series = coordinate**(-1)
+        change = data.W0 * data.Winf.inverse()
+        change_entries = list(change.list())
+    else:
+        x_series = coordinate
+    coefficient_entries = [coefficient for row in basis for coefficient in row]
+    evaluated = iter(_evaluate_rational_functions_at_series(
+        [data.r] + change_entries + coefficient_entries, x_series
+    ))
+    r_series = next(evaluated)
+    if center.infinity:
+        change_values = matrix(
+            ring, change.nrows(), change.ncols(),
+            [next(evaluated) for _ in change_entries],
+        )
+        finite_basis = vector(ring, [
+            sum((change_values[i, j] * stored_basis[j]
+                 for j in range(data.Q.degree())),
+                ring.zero()) for i in range(data.Q.degree())
+        ])
+    else:
+        finite_basis = stored_basis
+    scale = (ring(data.r.leading_coefficient()) * x_series.derivative()
+             / r_series)
+    return [
+        sum((next(evaluated) * finite_basis[i]
+             for i in range(len(row))),
+            ring.zero()) * scale for row in basis
+    ]
+
+
+def _modular_local_differentials(center, data, prec, basis, xt, bt):
+    r"""Use packed arithmetic modulo ``p^N`` when all inputs are integral.
+
+    A capped-relative p-adic power series stores a separate p-adic object for
+    every coefficient.  The local differential computation needs only fixed
+    absolute coefficient precision, so arithmetic over ``ZZ/p^N ZZ`` gives
+    the same result while using compiled dense polynomial kernels.  ``None``
+    signals that the inputs require the general p-adic path.
+    """
+    field = center.x.parent()
+    try:
+        if field.degree() != 1 or field(field.prime()).valuation() != 1:
+            return None
+        prime = ZZ(field.prime())
+        coefficient_precision = ZZ(field.precision_cap())
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+    coefficients = [field(coefficient)
+                    for series in (xt,) + tuple(bt)
+                    for coefficient in series.list()]
+    if any(coefficient and coefficient.valuation() < 0
+           for coefficient in coefficients):
+        return None
+    finite_precisions = [
+        coefficient.precision_absolute() for coefficient in coefficients
+        if coefficient.precision_absolute() != infinity
+    ]
+    if finite_precisions:
+        coefficient_precision = min(
+            coefficient_precision, *(ZZ(value) for value in finite_precisions)
+        )
+    if coefficient_precision <= 0:
+        return None
+
+    coefficient_ring = IntegerModRing(prime**coefficient_precision)
+    modular_ring = LaurentSeriesRing(
+        coefficient_ring, 't', default_prec=prec
+    )
+
+    def to_modular(series):
+        values = [
+            coefficient_ring(ZZ(field(coefficient).lift()))
+            for coefficient in series.list()
+        ]
+        return modular_ring(values).add_bigoh(series.precision_absolute())
+
+    try:
+        coordinate = to_modular(xt)
+        stored_basis = vector(
+            modular_ring, [to_modular(value) for value in bt]
+        )
+        modular = _local_differentials_in_ring(
+            center, data, basis, modular_ring, coordinate, stored_basis
+        )
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+
+    padic_ring = LaurentSeriesRing(field, 't', default_prec=prec)
+
+    def to_padic(series):
+        if not series:
+            return padic_ring.zero().add_bigoh(series.precision_absolute())
+        values = [
+            field(ZZ(coefficient.lift())).add_bigoh(coefficient_precision)
+            for coefficient in series.list()
+        ]
+        return (padic_ring(values).shift(ZZ(series.valuation()))
+                .add_bigoh(series.precision_absolute()))
+
+    return [to_padic(series) for series in modular]
+
+
 def _local_differentials(center, data, prec, indices=None):
     """Expand each de Rham differential at a bad or infinite center.
 
@@ -648,30 +949,17 @@ def _local_differentials(center, data, prec, indices=None):
     from .ramified import local_coordinates
 
     xt, bt, index = local_coordinates(center, prec, data)
-    ring = LaurentSeriesRing(center.x.parent(), 't', default_prec=prec)
-    coordinate = ring(xt)
-    stored_basis = vector(ring, [ring(value) for value in bt])
-    if center.infinity:
-        x_series = coordinate**(-1)
-        change = data.W0 * data.Winf.inverse()
-        finite_basis = vector(ring, [
-            sum((_evaluate_rational_function(change[i, j], x_series)
-                 * stored_basis[j] for j in range(data.Q.degree())),
-                ring.zero()) for i in range(data.Q.degree())
-        ])
-    else:
-        x_series = coordinate
-        finite_basis = stored_basis
-    r_series = _evaluate_rational_function(data.r, x_series)
-    scale = (ring(data.r.leading_coefficient()) * x_series.derivative()
-             / r_series)
     basis = (data.basis if indices is None
              else [data.basis[i] for i in indices])
-    differentials = [
-        sum((_evaluate_rational_function(coefficient, x_series)
-             * finite_basis[i] for i, coefficient in enumerate(w)),
-            ring.zero()) * scale for w in basis
-    ]
+    differentials = _modular_local_differentials(
+        center, data, prec, basis, xt, bt
+    )
+    if differentials is None:
+        ring = LaurentSeriesRing(center.x.parent(), 't', default_prec=prec)
+        differentials = _local_differentials_in_ring(
+            center, data, basis, ring, ring(xt),
+            vector(ring, [ring(value) for value in bt]),
+        )
     return index, differentials
 
 
@@ -801,7 +1089,8 @@ def _local_primitive_at(primitive, parameter, endpoint, field, data, *,
     return regular + field(residue) * logarithm
 
 
-def _tiny_integrals_local(center, start, end, data, prec, indices=None):
+def _tiny_integrals_local(center, start, end, data, prec, indices=None,
+                          local_expansion=None):
     """Integrate between two points of the selected bad residue disk.
 
     TESTS::
@@ -857,9 +1146,14 @@ def _tiny_integrals_local(center, start, end, data, prec, indices=None):
     field = (end.x.parent() if end.x.parent().ramification_index() > 1
              else start.x.parent())
     e = ZZ(field(data.p).valuation())
-    index, differentials = _local_differentials(
-        center, data, prec, indices=indices
-    )
+    if local_expansion is None:
+        index, differentials = _local_differentials(
+            center, data, prec, indices=indices
+        )
+    else:
+        index, differentials = local_expansion
+        if len(differentials) != len(indices):
+            raise ValueError('local differential expansion has the wrong size')
     t_start = _local_parameter_value(start, center, index, field)
     t_end = _local_parameter_value(end, center, index, field)
     start_scale = (field(start.tangent_scale)
@@ -1065,7 +1359,6 @@ def _boundary_extension(data, endpoints, centers, e=None):
     E = base.extension(ring.gen()**e - data.p, names='pi')
     return E, ZZ(e)
 
-
 def _lift_center(center, data, field):
     """Reconstruct a bad center at the boundary field's precision.
 
@@ -1247,13 +1540,16 @@ def _general_integrals(P1, P2, data, *, e=None, indices=None):
     precision = ZZ(data.N)
     for i in range(2):
         if bad[i]:
+            local_expansion = _local_differentials(
+                centers[i], data, prec, indices=indices
+            )
             first, first_precision = _tiny_integrals_local(
                 centers[i], endpoints[i], boundary[i], data, prec,
-                indices=indices
+                indices=indices, local_expansion=local_expansion
             )
             second, second_precision = _tiny_integrals_local(
                 centers[i], boundary[i], images[i], data, prec,
-                indices=indices
+                indices=indices, local_expansion=local_expansion
             )
         else:
             first, first_precision = zero, ZZ(data.N)
@@ -1265,19 +1561,31 @@ def _general_integrals(P1, P2, data, *, e=None, indices=None):
         frobenius_tiny.append(vector(extension, second))
         precision = min(precision, first_precision, second_precision)
 
+    finite_values = [
+        _evaluate_finite_primitives(
+            (data.f0_list[i] for i in indices), endpoint, data
+        )
+        for endpoint in boundary
+    ]
     rhs = []
     for position, i in enumerate(indices):
         values = []
-        for endpoint in boundary:
-            terms = []
-            for evaluator, primitive_list in (
-                (evaluate_finite_primitive, data.f0_list),
-                (evaluate_infinite_primitive, data.finf_list),
-                (evaluate_terminal_primitive, data.fend_list),
-            ):
-                term, term_precision = evaluator(primitive_list[i], endpoint, data)
-                terms.append(extension(term))
-                precision = min(precision, term_precision)
+        for endpoint_index, endpoint in enumerate(boundary):
+            finite_term, finite_precision = finite_values[
+                endpoint_index
+            ][position]
+            infinite_term, infinite_precision = evaluate_infinite_primitive(
+                data.finf_list[i], endpoint, data
+            )
+            terminal_term, terminal_precision = evaluate_terminal_primitive(
+                data.fend_list[i], endpoint, data
+            )
+            precision = min(
+                precision, finite_precision, infinite_precision,
+                terminal_precision,
+            )
+            terms = [extension(finite_term), extension(infinite_term),
+                     extension(terminal_term)]
             values.append(sum(terms, extension.zero()))
         rhs.append(values[0] - values[1] - frobenius_tiny[0][position]
                    + frobenius_tiny[1][position])

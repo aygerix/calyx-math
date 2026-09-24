@@ -52,7 +52,10 @@ def _exact_left_kernel(A):
     )
     integral, _ = A._clear_denom()
     basis = integral.transpose().__pari__().matker().mattranspose().sage()
-    kernel = basis.change_ring(QQ).row_space()
+    # PARI returns an independent exact kernel basis.  Preserve that certified
+    # user basis instead of immediately repeating the row reduction over QQ.
+    ambient = VectorSpace(QQ, A.nrows())
+    kernel = ambient.span_of_basis(basis.change_ring(QQ).rows(), check=False)
     verbose("finished exact left kernel", level=1, t=timing)
     return kernel
 
@@ -79,7 +82,12 @@ def _exact_intersection(left, right):
         left_basis.stack(-right.basis_matrix())
     ).basis_matrix()
     coefficients = relations.matrix_from_columns(range(left.dimension()))
-    return ambient.subspace((coefficients * left_basis).rows())
+    # Projection to the left coordinates is injective on the relation
+    # kernel because both input matrices have independent rows.  Preserve
+    # the resulting independent basis without another row reduction.
+    return ambient.span_of_basis(
+        (coefficients * left_basis).rows(), check=False
+    )
 
 
 def differentiate_polynomial(f):
@@ -606,7 +614,32 @@ def vector_valuation_at_zero(v):
     return min(order_at_zero(entry) for entry in v)
 
 
-def residue_at_infinity(w, Q, r, W0, Winf, Ginf, Jinf, Tinfinv):
+def _infinity_residue_context(Q, r, W0, Winf, Ginf, Jinf):
+    """Precompute the invariant data used by infinity-residue reductions."""
+    d = Q.degree()
+    degree_r = r.degree()
+    Kt = FunctionField(QQ, names="t")
+    t = Kt.gen()
+
+    W_inverse = (Winf * W0.inverse()).inverse()
+    transformed_W_inverse = _substitute_inverse_matrix(W_inverse, Kt)
+    transformed_Ginf = _substitute_inverse_matrix(Ginf, Kt)
+    residue_connection = -_evaluate_matrix(
+        transformed_Ginf / t, QQ.zero(), QQ
+    )
+    r_in_K = Ginf.base_ring()(r)
+    transformed_r = _substitute_inverse(r_in_K, Kt)
+    transformed_rG = transformed_r * transformed_Ginf
+    residue_functionals = tuple(Jinf.right_kernel().basis())
+    return (
+        d, degree_r, Kt, t, transformed_W_inverse,
+        residue_connection, transformed_rG, transformed_r,
+        residue_functionals,
+    )
+
+
+def residue_at_infinity(w, Q, r, W0, Winf, Ginf, Jinf, Tinfinv,
+                        _context=None):
     r"""Compute the residues at infinity of ``sum(w_i*b_i^0*dx/r)``.
 
     TESTS:
@@ -619,22 +652,15 @@ def residue_at_infinity(w, Q, r, W0, Winf, Ginf, Jinf, Tinfinv):
         ....:     y^2 - (x^3 - 10*x + 9), 5, 2, genus=1)[0])  # indirect doctest
         2
     """
-    d = Q.degree()
-    degree_r = r.degree()
-    Kt = FunctionField(QQ, names="t")
-    t = Kt.gen()
-
-    W = Winf * W0.inverse()
-    W_inverse = W.inverse()
+    if _context is None:
+        _context = _infinity_residue_context(
+            Q, r, W0, Winf, Ginf, Jinf
+        )
+    (d, degree_r, Kt, t, transformed_W_inverse,
+     residue_connection, transformed_rG, transformed_r,
+     residue_functionals) = _context
     transformed_w = vector(Kt, [_substitute_inverse(entry, Kt) for entry in w])
-    transformed_w *= _substitute_inverse_matrix(W_inverse, Kt)
-
-    residue_connection = -_evaluate_matrix(
-        _substitute_inverse_matrix(Ginf, Kt) / t, QQ.zero(), QQ
-    )
-    r_in_K = Ginf.base_ring()(r)
-    transformed_rG = _substitute_inverse_matrix(r_in_K * Ginf, Kt)
-    transformed_r = _substitute_inverse(r_in_K, Kt)
+    transformed_w *= transformed_W_inverse
 
     while vector_valuation_at_zero(transformed_w) < -degree_r + 1:
         m = -vector_valuation_at_zero(transformed_w) - degree_r + 1
@@ -658,8 +684,23 @@ def residue_at_infinity(w, Q, r, W0, Winf, Ginf, Jinf, Tinfinv):
     constant *= Tinfinv
     return vector(QQ, [
         constant.dot_product(functional)
-        for functional in Jinf.right_kernel().basis()
+        for functional in residue_functionals
     ])
+
+
+def _relative_complement_from_basis(space, fixed):
+    """Return a complement to the independent vectors in ``fixed``."""
+    ambient = space.ambient_vector_space()
+    candidates = list(reversed(space.echelonized_basis()))
+    pivots = matrix(QQ, list(fixed) + candidates).transpose().pivots()
+    if len(pivots) != space.dimension():
+        raise ValueError("the fixed vectors must span a subspace of the first space")
+    chosen = [candidates[index - len(fixed)] for index in pivots
+              if index >= len(fixed)]
+    # ``chosen`` is a subset of an echelon basis, listed in reverse order.
+    return ambient.subspace(
+        list(reversed(chosen)), check=False, already_echelonized=True
+    )
 
 
 def _relative_complement(space, subspace):
@@ -673,18 +714,12 @@ def _relative_complement(space, subspace):
         sage: _relative_complement(V, U).basis()
         [(0, 1, 0), (0, 0, 1)]
     """
-    ambient = space.ambient_vector_space()
     # Give priority to the trailing pivots of ``space``.  This choice is
     # mathematically immaterial, but it fixes reproducible coordinates for
     # Coleman integrals.
-    fixed = list(subspace.basis())
-    candidates = list(reversed(space.basis()))
-    pivots = matrix(QQ, fixed + candidates).transpose().pivots()
-    if len(pivots) != space.dimension():
-        raise ValueError("the second space must be a subspace of the first")
-    chosen = [candidates[index - len(fixed)] for index in pivots
-              if index >= len(fixed)]
-    return ambient.subspace(chosen)
+    return _relative_complement_from_basis(
+        space, subspace.echelonized_basis()
+    )
 
 
 def _polynomial_matrix(A, polynomial_ring):
@@ -782,9 +817,13 @@ def basis_cohomology(Q, p, r, W0, Winf, G0, Ginf, J0, Jinf,
         residue_at_finite_places(test_w, Q, r, J0, T0inv)
     )
     finite_residues = matrix(QQ, dimension_E0, finite_residue_dimension, 0)
-    infinite_residue_dimension = len(
-        residue_at_infinity(test_w, Q, r, W0, Winf, Ginf, Jinf, Tinfinv)
+    infinity_residue_context = _infinity_residue_context(
+        Q, r, W0, Winf, Ginf, Jinf
     )
+    infinite_residue_dimension = len(residue_at_infinity(
+        test_w, Q, r, W0, Winf, Ginf, Jinf, Tinfinv,
+        _context=infinity_residue_context,
+    ))
     infinite_residues = matrix(QQ, dimension_E0,
                                infinite_residue_dimension, 0)
 
@@ -793,7 +832,8 @@ def basis_cohomology(Q, p, r, W0, Winf, G0, Ginf, J0, Jinf,
         w[power_y] = x**power_x
         finite = residue_at_finite_places(w, Q, r, J0, T0inv)
         infinite = residue_at_infinity(
-            w, Q, r, W0, Winf, Ginf, Jinf, Tinfinv
+            w, Q, r, W0, Winf, Ginf, Jinf, Tinfinv,
+            _context=infinity_residue_context,
         )
         for j, coefficient in enumerate(finite):
             finite_residues[i, j] = coefficient
@@ -816,11 +856,13 @@ def basis_cohomology(Q, p, r, W0, Winf, G0, Ginf, J0, Jinf,
     def validate_partition(name, vectors, ambient, expected, previous=None):
         if len(vectors) != expected:
             raise ValueError(f"{name} must contain {expected} vectors")
-        if any(item not in ambient for item in vectors):
-            raise ValueError(f"{name} is not contained in the required space")
+        vectors = [E0(item) for item in vectors]
         span = E0.subspace(vectors)
         if span.dimension() != expected:
             raise ValueError(f"{name} must be linearly independent")
+        combined = E0.subspace(list(ambient.basis()) + vectors)
+        if combined.dimension() != ambient.dimension():
+            raise ValueError(f"{name} is not contained in the required space")
         if previous is not None:
             combined = E0.subspace(list(previous.basis()) + list(vectors))
             if combined.dimension() != previous.dimension() + expected:
@@ -847,7 +889,7 @@ def basis_cohomology(Q, p, r, W0, Winf, G0, Ginf, J0, Jinf,
 
     rG0 = _polynomial_matrix(G0 * G0.base_ring()(r), polynomial_ring)
     derivative_pairs = []
-    for coordinates in B0_intersection_Binf.basis():
+    for coordinates in B0_intersection_Binf.echelonized_basis():
         primitive = vector(polynomial_ring, d)
         for coefficient, (power_y, power_x) in zip(coordinates, monomials_B0):
             primitive[power_y] += coefficient * x**power_x
@@ -866,9 +908,9 @@ def basis_cohomology(Q, p, r, W0, Winf, G0, Ginf, J0, Jinf,
     if basis0:
         b0 = [E0(polynomials_to_vector(item, degree_bound_E0))
               for item in basis0]
+        validate_partition("basis0", b0, first_kind, genus)
     else:
-        b0 = list(first_kind.basis())
-    validate_partition("basis0", b0, first_kind, genus)
+        b0 = list(first_kind.echelonized_basis())
 
     dual_space = _relative_complement(
         cocycles, first_kind + coboundaries
@@ -876,13 +918,13 @@ def basis_cohomology(Q, p, r, W0, Winf, G0, Ginf, J0, Jinf,
     if basis1:
         b1 = [E0(polynomials_to_vector(item, degree_bound_E0))
               for item in basis1]
+        validate_partition(
+            "basis1", b1, cocycles, genus, first_kind + coboundaries
+        )
     else:
         b1 = list(dual_space.basis())
     if dual_space.dimension() != genus:
         raise ArithmeticError("the first de Rham cohomology has dimension != 2g")
-    validate_partition(
-        "basis1", b1, cocycles, genus, first_kind + coboundaries
-    )
 
     dimension_H1X = len(b0) + len(b1)
     if dimension_H1X != 2 * genus:
@@ -896,15 +938,17 @@ def basis_cohomology(Q, p, r, W0, Winf, G0, Ginf, J0, Jinf,
     if basis2:
         b2 = [E0(polynomials_to_vector(item, degree_bound_E0))
               for item in basis2]
+        validate_partition(
+            "basis2", b2, finite_regular_logarithmic,
+            H1Y_mod_H1X.dimension(), first_kind
+        )
     else:
         b2 = list(H1Y_mod_H1X.basis())
-    validate_partition(
-        "basis2", b2, finite_regular_logarithmic,
-        H1Y_mod_H1X.dimension(), first_kind
-    )
 
-    b3 = list(_relative_complement(
-        E0_intersection_Einf, cocycles + H1Y_mod_H1X
+    b3 = list(_relative_complement_from_basis(
+        E0_intersection_Einf,
+        list(cocycles.echelonized_basis())
+        + list(H1Y_mod_H1X.echelonized_basis()),
     ).basis())
     b4 = list(_relative_complement(E0, E0_intersection_Einf).basis())
     b5 = [pair[0] for pair in nonconstant_pairs]

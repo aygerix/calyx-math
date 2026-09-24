@@ -90,7 +90,6 @@ def radix_reduce(f, r):
     if not r.is_monic():
         raise ValueError("r must be monic")
 
-    z = laurent_ring.gen()
     output_coefficients = []
     for coefficient in f.list():
         terms = dict(_finite_laurent_terms(coefficient) or [])
@@ -108,9 +107,12 @@ def radix_reduce(f, r):
                     )
                     final_exponent = max(final_exponent, exponent + 1)
                 exponent += 1
-            reduced = sum((laurent_ring(polynomial) * z**exponent
-                           for exponent, polynomial in terms.items()
-                           if polynomial), laurent_ring.zero())
+            first_exponent = min(terms)
+            coefficients = [
+                terms.get(exponent, polynomial_ring.zero())
+                for exponent in range(first_exponent, final_exponent + 1)
+            ]
+            reduced = laurent_ring(coefficients).shift(first_exponent)
         else:
             reduced = laurent_ring.zero()
         output_coefficients.append(reduced)

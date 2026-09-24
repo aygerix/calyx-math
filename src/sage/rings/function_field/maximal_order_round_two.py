@@ -30,6 +30,7 @@ from sage.modules.free_module_element import vector
 
 from sage.arith.functions import lcm
 from sage.rings.number_field.number_field import NumberField
+from sage.rings.polynomial.polynomial_ring_constructor import PolynomialRing
 from sage.rings.rational_field import QQ
 
 
@@ -322,9 +323,17 @@ def round_two_maximal_order_basis(field, *, return_iterations=False):
 
     generator = field.gen()
     basis = tuple(generator**i for i in range(field.degree()))
-    discriminant = _polynomial_part(
-        defining_polynomial.discriminant(), polynomial_ring
+    # All coefficients are integral, so compute the discriminant in
+    # QQ[x][y].  Keeping it over QQ(x) selects a generic fraction-field
+    # resultant and repeatedly normalizes large rational functions.
+    integral_polynomial_ring = PolynomialRing(
+        polynomial_ring, defining_polynomial.variable_name()
     )
+    integral_polynomial = integral_polynomial_ring([
+        _polynomial_part(coefficient, polynomial_ring)
+        for coefficient in defining_polynomial
+    ])
+    discriminant = integral_polynomial.discriminant()
     iterations = {}
 
     repeated_part = discriminant.gcd(discriminant.derivative())

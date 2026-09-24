@@ -69,6 +69,7 @@ point through the value of `y/x`::
 """
 
 from sage.matrix.constructor import matrix
+from sage.modules.free_module_element import vector
 
 from sage.rings.finite_rings.finite_field_constructor import GF
 from sage.rings.function_field.constructor import FunctionField
@@ -260,6 +261,64 @@ def local_data(P, data):
     return e, index, place, bmod
 
 
+def _one_left_kernel_relation(integral_matrix):
+    r"""Return one rational relation among the rows, or ``None``.
+
+    A modular rank profile rejects full-row-rank matrices before any exact
+    linear algebra.  When relations exist, one dependent row is recovered
+    from a square nonsingular minor and then checked against every column.
+    This avoids constructing a basis for a kernel when the caller needs only
+    one relation.
+
+    EXAMPLES::
+
+        sage: from sage.schemes.curves.coleman.ramified import _one_left_kernel_relation
+        sage: A = matrix(ZZ, [[1, 0], [2, 0]])
+        sage: relation = _one_left_kernel_relation(A)
+        sage: relation * A
+        (0, 0)
+        sage: _one_left_kernel_relation(identity_matrix(ZZ, 3)) is None
+        True
+    """
+    profiles = []
+    for prime in (65521, 65519):
+        modular = integral_matrix.change_ring(GF(prime))
+        row_pivots = tuple(modular.transpose().pivots())
+        if len(row_pivots) == integral_matrix.nrows():
+            return None
+        profiles.append((len(row_pivots), modular, row_pivots))
+
+    for _, modular, row_pivots in sorted(profiles, reverse=True,
+                                         key=lambda item: item[0]):
+        pivot_set = set(row_pivots)
+        column_pivots = tuple(
+            modular.matrix_from_rows(row_pivots).pivots()
+        )
+        square = integral_matrix.matrix_from_rows_and_columns(
+            row_pivots, column_pivots
+        ).change_ring(QQ)
+        for dependent in range(integral_matrix.nrows()):
+            if dependent in pivot_set:
+                continue
+            right = -vector(
+                QQ, [integral_matrix[dependent, column]
+                     for column in column_pivots]
+            )
+            solution = square.solve_left(right)
+            relation = vector(QQ, integral_matrix.nrows())
+            relation[dependent] = 1
+            for row, coefficient in zip(row_pivots, solution):
+                relation[row] = coefficient
+            if not relation * integral_matrix:
+                return relation
+
+    kernel = (
+        integral_matrix.transpose().__pari__().matker()
+        .mattranspose().sage()
+    )
+    return None if not kernel.nrows() else kernel.row(0)
+
+
 def minimal_polynomial(f1, f2, *, max_bound=30):
     r"""Return a polynomial relation for ``f2`` over ``QQ(f1)``.
 
@@ -351,34 +410,30 @@ def minimal_polynomial(f1, f2, *, max_bound=30):
                    for row in polynomials]
         relation_matrix = matrix(QQ, columns)
         integral_matrix, _ = relation_matrix._clear_denom()
-        kernel_basis = (
-            integral_matrix.transpose().__pari__().matker()
-            .mattranspose().sage().rows()
-        )
-        if not kernel_basis:
+        relation = _one_left_kernel_relation(integral_matrix)
+        if relation is None:
             continue
-        for relation in kernel_basis:
-            candidate = Rz([sum((Rx(relation[i * (bound + 1) + j]) * Rx.gen()**j
-                                 for j in range(bound + 1)), Rx.zero())
-                            for i in range(bound + 1)])
-            if candidate.degree() < 1:
+        candidate = Rz([sum((Rx(relation[i * (bound + 1) + j]) * Rx.gen()**j
+                             for j in range(bound + 1)), Rx.zero())
+                        for i in range(bound + 1)])
+        if candidate.degree() < 1:
+            continue
+        for factor, _ in candidate.factor():
+            if factor.degree() < 1:
                 continue
-            for factor, _ in candidate.factor():
-                if factor.degree() < 1:
-                    continue
-                value = sum((L(c(f1)) * f2**i for i, c in enumerate(factor.list())),
-                            L.zero())
-                if not value:
-                    denominator = ZZ.one()
-                    for coefficient in factor.list():
-                        for scalar in coefficient.list():
-                            denominator = denominator.lcm(QQ(scalar).denominator())
-                    integral = Rz(denominator * factor)
-                    content = ZZ.zero()
-                    for coefficient in integral.list():
-                        for scalar in coefficient.list():
-                            content = content.gcd(ZZ(scalar))
-                    return Rz(integral / content)
+            value = sum((L(c(f1)) * f2**i for i, c in enumerate(factor.list())),
+                        L.zero())
+            if not value:
+                denominator = ZZ.one()
+                for coefficient in factor.list():
+                    for scalar in coefficient.list():
+                        denominator = denominator.lcm(QQ(scalar).denominator())
+                integral = Rz(denominator * factor)
+                content = ZZ.zero()
+                for coefficient in integral.list():
+                    for scalar in coefficient.list():
+                        content = content.gcd(ZZ(scalar))
+                return Rz(integral / content)
     raise ArithmeticError("could not determine a polynomial relation within max_bound")
 
 

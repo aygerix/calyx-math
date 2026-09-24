@@ -231,7 +231,14 @@ def push_matrix_to_field(A, field):
         sage: push_matrix_to_field(matrix(QQ, [[1, 2]]), K)
         [1 2]
     """
-    return matrix(field, A.nrows(), A.ncols(), [field(entry) for entry in A.list()])
+    entries = []
+    for entry in A.list():
+        parent = entry.parent()
+        if field is not QQ and parent is not QQ and parent is not field:
+            entries.append(field(_number_field_coefficients(entry)))
+        else:
+            entries.append(field(entry))
+    return matrix(field, A.nrows(), A.ncols(), entries)
 
 
 def _field_polynomial(value, polynomial_ring):
@@ -295,30 +302,53 @@ def reduction_matrices(Q, p, N, r, W0, Winf, e0, einf,
     working_precision_finite = N + N0
     count_finite = p * (N - 1)
     per_factor = []
+    reduced_factors = []
     for index, factor in enumerate(factors):
-        if factor.degree() == 1:
+        reduced_factor = reduce_polynomial_mod_prime_power(
+            factor, p, working_precision_finite
+        )
+        reduced_factors.append(reduced_factor)
+        field_factor = (
+            reduced_factor
+            if reduced_factor.degree() == 1 or reduced_factor.is_irreducible()
+            else factor
+        )
+        if field_factor.degree() == 1:
             field = QQ
-            root = -factor[0]
+            root = -field_factor[0]
         else:
-            field = NumberField(factor, name="a")
+            field = NumberField(field_factor, name="a")
             root = field.gen()
         D = push_matrix_to_field(J0[index], field)
-        P = push_matrix_to_field(T0[index], field)
-        P_inverse = push_matrix_to_field(T0inv[index], field)
+        P = reduce_number_field_matrix_mod_prime_power(
+            push_matrix_to_field(T0[index], field),
+            p, working_precision_finite
+        )
+        P_inverse = reduce_number_field_matrix_mod_prime_power(
+            push_matrix_to_field(T0inv[index], field),
+            p, working_precision_finite
+        )
         denominator_inverse = reduce_number_field_mod_prime_power(
             field(r.derivative()(root))**(-1), p, working_precision_finite
         )
         matrices = []
-        for step in range(1, count_finite + 1):
-            shifted = D - step * identity_matrix(field, degree)
-            reduction = P_inverse * shifted.inverse() * P
+        identity = identity_matrix(field, degree)
+        for _ in range(count_finite):
+            D -= identity
+            reduction = P_inverse * D.inverse() * P
             reduction *= denominator_inverse
             matrices.append(reduce_number_field_matrix_mod_prime_power(
                 reduction, p, working_precision_finite
             ))
         per_factor.append(matrices)
 
-    idempotents = _crt_idempotents(r, factors)
+    r_reduced = reduce_polynomial_mod_prime_power(
+        r, p, working_precision_finite
+    )
+    crt_modulus = polynomial_ring.one()
+    for factor in reduced_factors:
+        crt_modulus *= factor
+    idempotents = _crt_idempotents(crt_modulus, reduced_factors)
     finite = []
     for step in range(count_finite):
         entries = []
@@ -329,9 +359,10 @@ def reduction_matrices(Q, p, N, r, W0, Winf, e0, einf,
                     local = _field_polynomial(
                         per_factor[index][step][row, column], polynomial_ring
                     )
-                    entry += (local * idempotents[index]) % r
-                entries.append(reduce_polynomial_mod_prime_power(entry % r, p,
-                                                                 working_precision_finite))
+                    entry += (local * idempotents[index]) % r_reduced
+                entries.append(reduce_polynomial_mod_prime_power(
+                    entry % r_reduced, p, working_precision_finite
+                ))
         finite.append(matrix(polynomial_ring, degree, degree, entries))
 
     W = Winf * W0.inverse()
