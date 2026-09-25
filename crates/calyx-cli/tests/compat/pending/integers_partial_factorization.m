@@ -30,3 +30,14 @@ N := [2, 3, 4, 6, 8, 9, 12, 16, 18, 24, 27, 32, 36, 45, 48, 54, 64, 72, 75, 90, 
 for x in N do for y in N do
   printf "%o %o:", x, y; show(PartialFactorization([x, y]));
 end for; end for;
+// seven or more integers, where the order of the singleton subsets differs
+// from 1..n, including sizes past each resize of the table.
+for S in [[1, 1, 1, 1, 125, 20, 4], [27, 1, 1, 1, 24, 1, 8], [1, 5, 9, 1, 1, 1, 1, 675], [1, 1, 1, 1, 1, 1, 1, 1, 1, 125, 20, 4],
+          [53900, 121000, 38416, 1715, 8575, 1100, 3969], [100, 1, 1, 10, 2, 1, 45, 72, 675]] do
+  printf "%o:", S; show(PartialFactorization(S));
+end for;
+for n in [7, 8, 12, 13, 14, 15, 24, 25, 30, 44] do
+  S := [ (i mod 6 + 2)^(i mod 3 + 1) * (i mod 4 + 2) * (i mod 5 + 1)^2 : i in [1..n] ];
+  printf "%o:", n; show(PartialFactorization(S));
+  printf "%o:", -n; show(PartialFactorization(Reverse(S)));
+end for;

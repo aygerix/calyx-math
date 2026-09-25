@@ -43,8 +43,9 @@ Development follows the order of the Magma handbook. Currently implemented:
   factorization sequences, arithmetic and combinatorial functions,
   modular arithmetic). The other chapters follow (see the roadmap).
 
-See [docs/ROADMAP.md](docs/ROADMAP.md) for a detailed checklist and what
-comes next.
+See [docs/ROADMAP.md](docs/ROADMAP.md) for a chapter-by-chapter summary,
+and the [issues](https://github.com/aygerix/calyx-math/issues) for open
+work and known differences from Magma.
 
 ## Building
 

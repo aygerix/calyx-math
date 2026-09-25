@@ -1,7 +1,10 @@
 # Roadmap and handbook coverage
 
-calyx follows the structure of the Magma handbook. This page tracks what is
-implemented, what is deliberately different, and what is missing.
+calyx follows the structure of the Magma handbook. This page summarises
+what is implemented and what is deliberately different. Open work (bugs,
+missing features, known differences from Magma) is tracked as
+[GitHub issues](https://github.com/aygerix/calyx-math/issues); see "Open
+work" at the end.
 
 ## Part I: The Magma Language
 
@@ -9,12 +12,12 @@ implemented, what is deliberately different, and what is missing.
 | --- | --- |
 | Statements and expressions | Done: assignment (multiple, indexed, generator, mutation), `delete`, booleans, `eq`/`cmpeq`, coercion `!`, `where ... is`, `select`, `case` statement and expression, `for`/`while`/`repeat`, `for random`, dual iteration `i -> x`, `break x`/`continue x`, `eval`, comments and `\` continuation, `time`/`vtime`, types and extended types, `ISA`, `MakeType`, `CoveringStructure`, random seeds, `IsIntrinsic`. |
 | Functions, procedures and packages | Done: `function`/`procedure` (both forms), `func<>`/`proc<>`, parameters, variadic functions, `$$`, `forward`, `local`, reference arguments (including `~A[x]` and `` ~r`f ``), closures capturing values at creation, packages with `intrinsic`, `Attach`/`Detach`/`AttachSpec`, automatic reloading of changed packages, `import`, `require`/`requirege`/`requirerange`, `Nresults`, attributes (`AddAttribute`, `declare attributes`), user-defined types (`declare type`, `New`, `Clone`, user `Print`, `Parent`, `IsCoercible`, `in`, operators), verbose flags. |
-| Input and output | Mostly done: strings and their intrinsics (including `Split` and `Regexp`), `print` with print levels, `printf`/`fprintf`/`Sprintf` (widths, `%o %O %m %h`), `Sprint`, previous values `$1`..., indentation, `PrintFile`, `SetOutputFile`, `SetLogFile`, file objects (`Open`, `Gets`, `Puts`, ...), `Pipe`, `System`, `load`/`iload`, `read`/`readi`. **Missing:** binary strings, sockets, `POpen`, asynchronous I/O, `ReadObject`/`WriteObject`, `save`/`restore`. |
-| Environment and options | Partly done: `-b -e -h -n -s -S -V` and `name:=value` arguments, set/get intrinsics (`SetColumns`, `SetAssertions`, `SetVerbose`, ...), `ShowIdentifiers`, `ShowValues`, `ListSignatures`, `ListCategories`, `?Name` help. **Missing:** `%p`-style history commands, most environment variables, vi mode. |
-| Parallelism | Not started. |
+| Input and output | Mostly done: strings and their intrinsics (including `Split` and `Regexp`), `print` with print levels, `printf`/`fprintf`/`Sprintf` (widths, `%o %O %m %h`), `Sprint`, previous values `$1`..., indentation, `PrintFile`, `SetOutputFile`, `SetLogFile`, file objects (`Open`, `Gets`, `Puts`, ...), `Pipe`, `System`, `load`/`iload`, `read`/`readi`. **Missing:** binary strings, sockets, `POpen`, asynchronous I/O, `ReadObject`/`WriteObject`, `save`/`restore` ([#27](https://github.com/aygerix/calyx-math/issues/27)). |
+| Environment and options | Partly done: `-b -e -h -n -s -S -V` and `name:=value` arguments, set/get intrinsics (`SetColumns`, `SetAssertions`, `SetVerbose`, ...), `ShowIdentifiers`, `ShowValues`, `ListSignatures`, `ListCategories`, `?Name` help. **Missing:** `%p`-style history commands, most environment variables, vi mode ([#28](https://github.com/aygerix/calyx-math/issues/28)). |
+| Parallelism | Not started ([#29](https://github.com/aygerix/calyx-math/issues/29)). |
 | Magma semantics | Done (see "Differences" below). |
-| Profiler | Intrinsics accepted; no profile data is collected yet. |
-| Debugger | `SetDebugOnError` accepted; no debugger yet. |
+| Profiler | Intrinsics accepted; no profile data is collected yet ([#30](https://github.com/aygerix/calyx-math/issues/30)). |
+| Debugger | `SetDebugOnError` accepted; no debugger yet ([#31](https://github.com/aygerix/calyx-math/issues/31)). |
 
 ## Part II: Sets, Sequences, and Mappings
 
@@ -28,7 +31,7 @@ implemented, what is deliberately different, and what is missing.
 | Associative arrays | Done, including `Default` values and widening of the index universe. |
 | Coproducts | Done. |
 | Records | Done. |
-| Mappings | Done for maps given by rules, graphs and coercions, composition, inverses and preimages. Homomorphisms given by generator images need the algebraic structures of later parts. |
+| Mappings | Done for maps given by rules, graphs and coercions, composition, inverses and preimages. Homomorphisms given by generator images need the algebraic structures of later parts ([#33](https://github.com/aygerix/calyx-math/issues/33)). |
 
 ## Checking against Magma
 
@@ -52,7 +55,10 @@ digits, and a literal such as `1/0` is rejected when it is read.
   but iterates over them, and prints sets of strings, tuples, sets and
   sequences, in its internal hash order. calyx iterates in sorted order
   (or insertion order), so loops over sets and some printed sets can list
-  elements in a different order.
+  elements in a different order. For example `Subsets({1..8}, 1)` prints
+  as `{3}, {6}, {1}, ...` in Magma. `PartialFactorization` does reproduce
+  Magma's iteration order of `Subsets({1..n}, 1)`, which it depends on
+  ([#32](https://github.com/aygerix/calyx-math/issues/32)).
 - **Iterator order.** In `[ e : x in X, y in Y ]` the first iterator is
   the inner loop, while in `[ e : x, y in S ]` the first variable is the
   outer one; both match Magma.
@@ -84,95 +90,21 @@ forced coercion, and caching (one `Integers(n)` per modulus, one default
 
 | Chapter | Status |
 | --- | --- |
-| Introduction to rings | Done: `Characteristic`, `#R` (`Infinity` for infinite rings), `IsFinite` and all the ring predicates (`IsField`, `IsEuclideanDomain`, `IsPID`, `IsUFD`, `HasGCD`, ..., with Magma's answers for every kind of ring), `PrimeRing`, `PrimeField`, `Centre`, ring equality and membership (with Magma's errors between unrelated rings), element predicates (`IsUnit`, `IsIdempotent`, `IsNilpotent`, `IsZeroDivisor`, `IsIrreducible`, `IsPrime`), Magma's order on residues, finite field elements and polynomials (`lt`, `Sort`), `Maximum`/`Minimum`, ideals of the integers (`ideal< >`, `quo< >`, ideal arithmetic, `ResidueClassField`), `ext< R \| >`, and naming of structures and aggregates by assignment (generators print as `F.1`, maps show `RngInt: Z`). **Pending:** `IsIrreducible`/`IsPrime` of polynomials (they need the polynomial factorisation of the polynomial chapters), ideals of polynomial rings, `Localization` and `Completion` (local rings come later). |
-| Ring of integers | Done: creation (`Integers`, `IntegerRing`, `RingOfIntegers`, hexadecimal literals, `elt< >`, `sub< >`, the natural `hom< >`), coercion into Z, hexadecimal printing (`:Hex`), arithmetic and bit operations (`div`/`mod`, `Quotrem`, `ExactQuotient`, `ShiftLeft`, `Bitwise*`, `ModByPowerOf2`), predicates, `Isqrt`/`Iroot`/`IsPower`/`IsSquare`, `Ilog`, `Valuation`, digit sequences (`Intseq`/`Seqint`), gcds (`Xgcd` of sequences with small multipliers), random integers and primes, primality (proven with FLINT, `IsProbablePrime` with bases), `NextPrime`/`PreviousPrime`/`NthPrime`/`PrimesUpTo`, `Factorization` with its parameters and stored factors, the individual factoring methods (`TrialDivision`, `PollardRho`, `pMinus1`, `pPlus1`, `SQUFOF`, `ECM` with Suyama curves, `ECMOrder`, `MPQS`), `Divisors`, `CoprimeBasis`, `PartialFactorization`, `Cunningham`, factorization sequences (`RngIntEltFact`: arithmetic, divisor functions, predicates), arithmetic functions (`EulerPhi` and its inverse, `CarmichaelLambda`, `DivisorSigma`, `MoebiusMu`, `DickmanRho`), combinatorial functions, modular arithmetic (`Modexp`, `Modinv`, `Modsqrt`, `Modorder`, `PrimitiveRoot`, `Solution`, `CRT`), quadratic residue symbols and `NormEquation`. **Pending:** see "Left out of the Ring of Integers chapter" below. |
-| Residue class rings, rationals, finite fields, polynomials, real and complex fields, nearfields | Not yet: the chapter-specific intrinsics come next. |
+| Introduction to rings | Done: `Characteristic`, `#R` (`Infinity` for infinite rings), `IsFinite` and all the ring predicates (`IsField`, `IsEuclideanDomain`, `IsPID`, `IsUFD`, `HasGCD`, ..., with Magma's answers for every kind of ring), `PrimeRing`, `PrimeField`, `Centre`, ring equality and membership (with Magma's errors between unrelated rings), element predicates (`IsUnit`, `IsIdempotent`, `IsNilpotent`, `IsZeroDivisor`, `IsIrreducible`, `IsPrime`), Magma's order on residues, finite field elements and polynomials (`lt`, `Sort`), `Maximum`/`Minimum`, ideals of the integers (`ideal< >`, `quo< >`, ideal arithmetic, `ResidueClassField`), `ext< R \| >`, and naming of structures and aggregates by assignment (generators print as `F.1`, maps show `RngInt: Z`). **Pending:** `IsIrreducible`/`IsPrime` of polynomials ([#34](https://github.com/aygerix/calyx-math/issues/34)), ideals of polynomial rings ([#35](https://github.com/aygerix/calyx-math/issues/35)), `Localization` and `Completion` ([#36](https://github.com/aygerix/calyx-math/issues/36)). |
+| Ring of integers | Done, pending validation against 2.29 ([#24](https://github.com/aygerix/calyx-math/issues/24)): creation (`Integers`, `IntegerRing`, `RingOfIntegers`, hexadecimal literals, `elt< >`, `sub< >`, the natural `hom< >`), coercion into Z, hexadecimal printing (`:Hex`), arithmetic and bit operations (`div`/`mod`, `Quotrem`, `ExactQuotient`, `ShiftLeft`, `Bitwise*`, `ModByPowerOf2`), predicates, `Isqrt`/`Iroot`/`IsPower`/`IsSquare`, `Ilog`, `Valuation`, digit sequences (`Intseq`/`Seqint`), gcds (`Xgcd` of sequences with small multipliers), random integers and primes, primality (proven with FLINT, `IsProbablePrime` with bases), `NextPrime`/`PreviousPrime`/`NthPrime`/`PrimesUpTo`, `Factorization` with its parameters and stored factors, the individual factoring methods (`TrialDivision`, `PollardRho`, `pMinus1`, `pPlus1`, `SQUFOF`, `ECM` with Suyama curves, `ECMOrder`, `MPQS`), `Divisors`, `CoprimeBasis`, `PartialFactorization`, `Cunningham`, factorization sequences (`RngIntEltFact`: arithmetic, divisor functions, predicates), arithmetic functions (`EulerPhi` and its inverse, `CarmichaelLambda`, `DivisorSigma`, `MoebiusMu`, `DickmanRho`), combinatorial functions, modular arithmetic (`Modexp`, `Modinv`, `Modsqrt`, `Modorder`, `PrimitiveRoot`, `Solution`, `CRT`), quadratic residue symbols and `NormEquation`. **Pending:** see the [`area: integers` issues](https://github.com/aygerix/calyx-math/issues?q=is%3Aopen+label%3A%22area%3A+integers%22). |
+| Residue class rings, rationals, finite fields, polynomials, real and complex fields, nearfields | Not yet: the chapter-specific intrinsics come next ([#37](https://github.com/aygerix/calyx-math/issues/37), [#38](https://github.com/aygerix/calyx-math/issues/38), [#39](https://github.com/aygerix/calyx-math/issues/39), [#40](https://github.com/aygerix/calyx-math/issues/40), [#41](https://github.com/aygerix/calyx-math/issues/41), [#42](https://github.com/aygerix/calyx-math/issues/42), [#43](https://github.com/aygerix/calyx-math/issues/43)). |
 
-## To do
+## Open work
 
-- **Confirm the pending compat scripts against Magma 2.29.** The scripts in
-  `crates/calyx-cli/tests/compat/pending/` were written while the public
-  calculator was offline and checked against Magma 2.22 only. Record their
-  2.29 output and move them into the compat suite (see the README there):
-  - `aggregate_names.m`, `aggregate_universes.m`: naming of aggregates in
-    maps and by loop variables; sequences of literals without a common
-    universe.
-  - `integers_*.m`: the Ring of Integers chapter (the handbook examples,
-    creation, arithmetic, gcds, random values, arithmetic functions,
-    primes, factorization and its methods, partial factorizations,
-    factorization sequences, modular arithmetic, and tables of `Modsqrt`
-    roots and `NormEquation` solutions).
-  - `sequence_range_index.m`: `s[i..j]` indexing and `[Any]` in the
-    extended types of empty aggregates.
-  - `runtime_error_continuation.m`: statements after a runtime error on
-    the same line still run; after a syntax error, the statements before
-    it have run.
-  - `print_wrapping_per_call.m`: each `print`/`printf` wraps its output
-    from column 0, whatever is already on the line.
-  - `unassigned_targets.m`: assigning into or mutating an identifier that
-    was never assigned.
+Everything still to do is a GitHub issue, labelled by area (`area:
+integers`, `area: rings`, ...), kind (`bug`, `missing`,
+`known-difference`, `perf`, `testing`) and priority (`P1` to `P3`), with
+one milestone per handbook Part:
 
-  Where 2.22 and 2.29 differ (2.22 cannot prove primality without its
-  library directory, words some errors differently, and crashes on a few
-  inputs that the scripts avoid), follow 2.29.
-- **Left out of the Ring of Integers chapter**, to come back to:
-  - The Number Field Sieve (`NumberFieldSieve`, `NFSProcess` and its
-    stages, the polynomial selection tools). It is a large, file-based
-    subsystem of its own and needs the polynomial and real chapters first.
-  - `AdditiveGroup(Z)`, `MultiplicativeGroup(Z)` and `ClassGroup(Z)`. They
-    return abelian groups (`GrpAb`) and maps, so they wait for abelian
-    groups in Part V.
-  - `Cunningham(b, k, c)`, which factors b^k ± 1. Magma answers from
-    tables of known factors of these numbers (the Cunningham project
-    tables) that it ships with. calyx needs the same factors; without them,
-    algebraic splitting of b^k ± 1 plus general factorisation gives the
-    same answers but can take far longer for large k. A decoded copy of the table sits in `databases/`
-    (ignored by git); how calyx will ship the factors is still to be
-    decided.
-  - `PrimalityCertificate`, `CheckCertificate` and `OldCertificate`. These
-    need an ECPP prover that records its proof. FLINT proves primality
-    by other methods and gives no certificate. A calyx certificate would be
-    a valid proof, but not the same curves and points as Magma's, so only
-    `CheckCertificate` could be compared directly.
-- **Known differences in the Ring of Integers chapter.** Where Magma makes
-  an arbitrary choice, calyx reproduces it as far as black-box testing
-  against 2.22 shows; these are the cases that still differ:
-  - `Modsqrt(n, 2^k)` for k >= 7 can return a different one of the square
-    roots (it differs by 2^(k-1)). All other moduli tested agree.
-  - `NormEquation(d, m)` returns the same first solution as Magma for 160 of
-    161 tested pairs; for (2, 57) Magma gives (5, 4) and calyx (7, 2).
-  - `PartialFactorization`: the cofactors (a coprime base of what is left,
-    ordered by which integers they divide) always agree, and the square
-    parts agree for 840 of 841 tested pairs and most longer sequences, but
-    not for the handbook's four-integer example (Magma splits 15^2 as
-    5^2 3^2 there) or the pair [288, 108]. The order in which Magma pairs
-    up the integers is not yet understood.
-  - The factoring methods are the documented algorithms, but which factor
-    they find first, and the default bounds (`B2` for `pMinus1`, `pPlus1`
-    and `ECM`; the random curves of `ECM` and `ECMSteps`), may differ. For
-    instance `SQUFOF(360)` gives the full factorization in calyx and a
-    partial one in 2.22.
-  - `DickmanRho` is computed exactly (power series on each unit interval);
-    2.22's values differ from the true ones by about 1e-22 on [2, 3].
-  - `ECMOrder` for a singular curve reports the error without the
-    traceback into Magma's package code.
-  - `TrialDivision` follows the 2.29 handbook (the factors found, then the
-    unfactored part); 2.22 returns the factors and a list of composites.
-  - `StoreFactor` of a set stores the elements; 2.22 ignores sets.
-  - `RandomPrime(0)` and `RandomPrime(1)` report an error, as 2.22 does;
-    the handbook says they return 0. Check which 2.29 does.
-  - Integers too long for one line inside an error message wrap at a
-    space in calyx; Magma breaks them with a backslash.
-  - `SetColumns(0)` stops line wrapping in calyx, but Magma also prints
-    nested sequences without indentation then.
+- [Open issues](https://github.com/aygerix/calyx-math/issues)
+- [Known differences from Magma](https://github.com/aygerix/calyx-math/issues?q=is%3Aopen+label%3Aknown-difference)
+- [Waiting on Magma 2.29](https://github.com/aygerix/calyx-math/issues?q=is%3Aopen+label%3Aneeds-2.29),
+  including the pending compat scripts ([#24](https://github.com/aygerix/calyx-math/issues/24))
 
-## Next
-
-1. The rest of Part III chapter by chapter: residue class rings,
-   rationals, finite fields (including towers and embeddings), univariate
-   and multivariate polynomials (factorisation via FLINT), real and complex
-   fields, then nearfields.
-2. Generator-based constructors (`sub<>`, `quo<>`, `ext<>`, `hom<>` with
-   generator images) on top of those structures.
-3. Part V (groups), using GAP where it is the right tool, and Singular for
-   commutative algebra.
+After the rest of Part III come the generator-based constructors ([#33](https://github.com/aygerix/calyx-math/issues/33))
+and Part V ([#44](https://github.com/aygerix/calyx-math/issues/44)).

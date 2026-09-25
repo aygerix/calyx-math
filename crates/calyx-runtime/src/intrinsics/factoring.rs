@@ -2,6 +2,8 @@
 //! (trial division, Pollard rho, SQUFOF, p - 1, p + 1, ECM, the quadratic
 //! sieve), coprime bases, partial factorizations and Cunningham numbers.
 
+use std::collections::HashMap;
+
 use calyx_flint::Integer;
 
 use super::factseq::{Fact, fact_mul, fact_value, factor};
@@ -851,37 +853,114 @@ fn coprime_basis_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(fact_value(&coprime_basis(&super::ints::ints_of(&a.args[0])?)))
 }
 
-/// Square factors and coprime (or equal) cofactors of each integer, using
-/// only gcds and exact divisions.
+/// Primary bucket counts of Magma's hash tables for sets, beyond the
+/// initial 11.
+const SET_TABLE_SIZES: [u64; 69] = [
+    17, 19, 29, 37, 43, 53, 67, 89, 127, 157, 211, 277, 373, 491, 653, 877, 1153, 1543, 2039, 2711, 3607, 4793, 6379, 8501, 11279, 15013, 19949, 26539, 35291,
+    46933, 62417, 83009, 110419, 146833, 195311, 259733, 345451, 459443, 611057, 812699, 1080899, 1437577, 1911977, 2542919, 3382103, 4498177, 5982577,
+    7956821, 10582571, 14074807, 18719483, 24896917, 33112897, 44040163, 58573399, 77902631, 103610489, 137801941, 183276589, 243757873, 324197953, 431183287,
+    574911079, 766548109, 1022064149, 1362752201, 1817002973, 2422670633, 3230227519,
+];
+
+fn set_table_size(required: u64) -> u64 {
+    if required < 12 { 11 } else { SET_TABLE_SIZES.iter().copied().find(|&b| b >= required).unwrap_or(required) }
+}
+
+/// The order in which Magma iterates `Subsets({1..n}, 1)`, as 0-based
+/// positions.
 ///
-/// Square factors come from repeated sweeps over ordered pairs (i, j): with
-/// g = gcd(r_i, r_j) and h = gcd(g, r_i/g) > 1, h^2 is split off r_i. The
-/// cofactors are then written over the natural coprime base of what is
-/// left, its elements ordered by the set of integers they divide (smaller
-/// sets first, then by position).
+/// The singletons sit in a chained hash table with `set_table_size(n)`
+/// primary buckets B and max(floor(6B/5), B + 1) - B collision nodes; {i}
+/// hashes to 1 xor (27 i (i + 11) + 7) mod 2^32. When a collision finds no
+/// free node, the table grows to `set_table_size(floor(3B/2))` buckets and
+/// takes the old elements in their iteration order before retrying.
+/// Iteration visits the buckets in turn, each followed by its chain.
+fn singleton_order(n: usize) -> Vec<usize> {
+    fn insert(buckets: &mut Vec<Vec<usize>>, collisions: &mut usize, i: usize) {
+        let x = i as u32;
+        let hash = 1 ^ 27u32.wrapping_mul(x).wrapping_mul(x.wrapping_add(11)).wrapping_add(7);
+        loop {
+            let b = buckets.len();
+            let chain = &mut buckets[hash as usize % b];
+            if chain.is_empty() {
+                chain.push(i);
+                return;
+            }
+            if *collisions < (b * 6 / 5).max(b + 1) - b {
+                chain.push(i);
+                *collisions += 1;
+                return;
+            }
+            let old = buckets.concat();
+            *buckets = vec![Vec::new(); set_table_size((b + b / 2) as u64) as usize];
+            *collisions = 0;
+            for y in old {
+                insert(buckets, collisions, y);
+            }
+        }
+    }
+    let mut buckets = vec![Vec::new(); set_table_size(n as u64) as usize];
+    let mut collisions = 0;
+    for i in 1..=n {
+        insert(&mut buckets, &mut collisions, i);
+    }
+    buckets.concat().into_iter().map(|i| i - 1).collect()
+}
+
+/// Square factors and pairwise coprime cofactors of each integer, using
+/// only gcds and exact divisions: Lemma 2.5 of Cremona and Rusin,
+/// "Efficient solution of rational conics", Math. Comp. 72 (2003).
+///
+/// Each subset I of the positions carries a value c_I, starting from
+/// c_{i} = |a_i| with the singletons in `singleton_order`. Each sweep visits
+/// the pairs I, J of subsets known when it starts; if d = gcd(c_I, c_J) > 1,
+/// c_I and c_J are divided by d, c of the symmetric difference (added at the
+/// end if new) is multiplied by d, and <d, 2> joins the square part of each
+/// position in both I and J. Sweeps repeat until nothing changes. The
+/// cofactors of position i are the values c_I > 1 with i in I, in subset
+/// order.
 fn partial_factorization(s: &[Integer]) -> Vec<(Fact, Fact)> {
-    let k = s.len();
-    let mut r: Vec<Integer> = s.iter().map(|x| x.abs()).collect();
-    let mut f: Vec<Fact> = vec![Fact::new(); k];
+    let n = s.len();
+    let words = n.div_ceil(64);
+    let has = |w: &[u64], k: usize| w[k / 64] >> (k % 64) & 1 == 1;
+    let mut supports: Vec<Vec<u64>> = Vec::new();
+    let mut values: Vec<Integer> = Vec::new();
+    for i in singleton_order(n) {
+        let mut w = vec![0u64; words];
+        w[i / 64] |= 1 << (i % 64);
+        supports.push(w);
+        values.push(s[i].abs());
+    }
+    let mut index: HashMap<Vec<u64>, usize> = supports.iter().cloned().zip(0..).collect();
+    let mut f: Vec<Fact> = vec![Fact::new(); n];
     loop {
         let mut changed = false;
-        for i in 0..k {
-            for j in 0..k {
-                if i == j {
+        let m = supports.len();
+        for i in 0..m {
+            for j in i + 1..m {
+                if values[i].is_one() {
+                    break;
+                }
+                let d = values[i].gcd(&values[j]);
+                if d.is_one() {
                     continue;
                 }
-                let g = r[i].gcd(&r[j]);
-                if g.is_one() {
-                    continue;
+                values[i] = values[i].divexact(&d);
+                values[j] = values[j].divexact(&d);
+                let x: Vec<u64> = supports[i].iter().zip(&supports[j]).map(|(a, b)| a ^ b).collect();
+                match index.get(&x) {
+                    Some(&k) => values[k] = &values[k] * &d,
+                    None => {
+                        index.insert(x.clone(), supports.len());
+                        supports.push(x);
+                        values.push(d.clone());
+                    }
                 }
-                let h = g.gcd(&r[i].divexact(&g));
-                if h.is_one() {
-                    continue;
-                }
-                r[i] = r[i].divexact(&(&h * &h));
-                match f[i].iter_mut().find(|(x, _)| *x == h) {
-                    Some((_, e)) => *e += 2,
-                    None => f[i].push((h, 2)),
+                for k in (0..n).filter(|&k| has(&supports[i], k) && has(&supports[j], k)) {
+                    match f[k].iter_mut().find(|(y, _)| *y == d) {
+                        Some((_, e)) => *e += 2,
+                        None => f[k].push((d.clone(), 2)),
+                    }
                 }
                 changed = true;
             }
@@ -890,14 +969,13 @@ fn partial_factorization(s: &[Integer]) -> Vec<(Fact, Fact)> {
             break;
         }
     }
-    let mut base: Vec<(Integer, Vec<u64>)> =
-        coprime_basis(&r).into_iter().map(|(b, _)| (b.clone(), r.iter().map(|x| if x.is_zero() { 0 } else { x.remove(&b).0 }).collect())).collect();
-    let support = |w: &[u64]| -> Vec<usize> { (0..w.len()).filter(|&i| w[i] > 0).collect() };
-    base.sort_by(|(x, v), (y, w)| {
-        let (sv, sw) = (support(v), support(w));
-        sv.len().cmp(&sw.len()).then_with(|| sv.cmp(&sw)).then_with(|| x.cmp(y))
-    });
-    f.into_iter().enumerate().map(|(i, fi)| (fi, base.iter().filter(|(_, w)| w[i] > 0).map(|(b, w)| (b.clone(), w[i])).collect())).collect()
+    f.into_iter()
+        .enumerate()
+        .map(|(k, fk)| {
+            let g = supports.iter().zip(&values).filter(|(w, c)| has(w, k) && !c.is_one()).map(|(_, c)| (c.clone(), 1)).collect();
+            (fk, g)
+        })
+        .collect()
 }
 
 fn partial_factorization_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
