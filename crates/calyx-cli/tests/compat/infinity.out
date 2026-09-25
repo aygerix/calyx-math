@@ -1,0 +1,70 @@
+Infinity
+-Infinity
+Infty
+Power Structure of Infty
+Infinity()
+MinusInfinity()
+Infinity
+Infinity
+true
+6
+Infinity
+-Infinity
+Infinity
+-Infinity
+-Infinity
+-Infinity
+Infinity
+0
+Infinity
+-Infinity
+Infinity
+
+>> I - I;
+     ^
+Runtime error in '-': Result of computation is not well defined
+
+
+>> I * 0;
+     ^
+Runtime error in '*': Result of computation is not well defined
+
+
+>> I mod 2;
+     ^
+Runtime error in 'mod': Bad argument types
+Argument types given: ExtReElt, ExtReElt
+
+false
+true
+true
+true
+false
+true
+false
+false
+true
+Infinity
+-Infinity
+Infinity 2
+[ -Infinity, 1/2, 1, Infinity ]
+[ Infinity, -Infinity ]
+{ Infinity }
+<Infinity, 1>
+Infinity 1
+Power Structure of Infty
+Extended Reals
+Extended Reals
+Extended Reals
+false
+
+>> Integers()!I;
+             ^
+Runtime error in '!': Illegal coercion
+LHS: RngInt
+RHS: Infty
+true
+Infinity
+-1
+false
+

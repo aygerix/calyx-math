@@ -40,6 +40,7 @@ impl Interp {
             Value::Map(m) => Value::structure(StructKind::Maps(m.domain.clone(), m.codomain.clone())),
             Value::CopElt(c) => Value::Struct(c.cop.clone()),
             Value::Elt(e) => e.parent_value(),
+            Value::Perm(p) => Value::Struct(p.group.clone()),
             Value::Obj(o) => {
                 let sym = Sym::new("Parent");
                 if self.select_signature(sym, std::slice::from_ref(v), &[false], false).is_some_and(|s| !s.generic) {
@@ -60,11 +61,31 @@ impl Interp {
             Ok(v) => Ok(v),
             Err(msg) => {
                 let reason = msg.unwrap_or_else(|| "Illegal coercion".to_string());
-                // Magma shows a tuple's type as <>.
-                let rhs = if matches!(x, Value::Tuple(_)) { "<>".to_string() } else { self.type_name(x) };
+                let rhs = self.coercion_type_name(x);
                 let text = format!("{reason}\nLHS: {}\nRHS: {rhs}", self.type_name(s));
                 Err(RuntimeError { style: crate::error::ErrStyle::Plain, ..RuntimeError::runtime(text) })
             }
+        }
+    }
+
+    /// How a coercion error names the type of the value coerced: aggregates
+    /// by their brackets around the element type (`[RngIntElt]`, `<>`).
+    fn coercion_type_name(&self, x: &Value) -> String {
+        let elt = |me: &Interp, u: &Option<Value>| match u {
+            None => String::new(),
+            Some(Value::Struct(s)) => match &s.kind {
+                StructKind::PowerSeq(_) => "[]".to_string(),
+                StructKind::PowerSet(_) => "{}".to_string(),
+                _ => me.static_element_type(u.as_ref().unwrap()).display(&me.types).to_string(),
+            },
+            Some(u) => me.static_element_type(u).display(&me.types).to_string(),
+        };
+        match x {
+            Value::Tuple(_) => "<>".to_string(),
+            Value::Seq(s) => format!("[{}]", elt(self, &s.universe)),
+            Value::Set(s) => format!("{{{}}}", elt(self, &s.universe)),
+            Value::ISet(s) => format!("{{@{}@}}", elt(self, &s.universe)),
+            _ => self.type_name(x),
         }
     }
 
@@ -77,6 +98,23 @@ impl Interp {
         match s {
             Value::Struct(st) => match &st.kind {
                 StructKind::Ring(_) => self.coerce_into_ring(st, x),
+                StructKind::SymGroup(n) => self.coerce_into_sym(*n as usize, x),
+                StructKind::IntIdeal(n) => match x {
+                    Value::Int(_) | Value::Rat(_) => {
+                        let v = match self.try_coerce(&Value::integers(), x)? {
+                            Ok(v) => v,
+                            Err(e) => return Ok(Err(e)),
+                        };
+                        let Value::Int(k) = &v else { unreachable!() };
+                        let inside = if n.is_zero() { k.is_zero() } else { k.div_rem_euclid(n).is_some_and(|(_, r)| r.is_zero()) };
+                        if inside { Ok(Ok(v)) } else { Ok(Err(Some("Element is not in the ideal".into()))) }
+                    }
+                    _ => fail(),
+                },
+                StructKind::ExtendedReals => match x {
+                    Value::Int(_) | Value::Rat(_) | Value::Real(_) | Value::Infinity(_) => Ok(Ok(x.clone())),
+                    _ => fail(),
+                },
                 StructKind::Integers | StructKind::Rationals | StructKind::Reals(_) if matches!(x, Value::Elt(_)) => {
                     let Value::Elt(e) = x else { unreachable!() };
                     match self.coerce_ring_elt_down(&st.kind, e) {
@@ -151,14 +189,14 @@ impl Interp {
                                 Err(m) => return Ok(Err(m)),
                             }
                         }
-                        Ok(Ok(Value::ISet(Rc::new(SetIndx { universe: Some(u.clone()), elems: out }))))
+                        Ok(Ok(Value::ISet(Rc::new(SetIndx { universe: Some(u.clone()), elems: out, name: Default::default() }))))
                     }
                     _ => fail(),
                 },
                 StructKind::PowerMSet(u) => match x {
                     Value::MSet(set) => {
                         let Some(u) = u else { return Ok(Ok(x.clone())) };
-                        let mut out = SetMulti { universe: Some(u.clone()), elems: VMap::default() };
+                        let mut out = SetMulti { universe: Some(u.clone()), elems: VMap::default(), name: Default::default() };
                         for (e, n) in set.elems.iter() {
                             match self.try_coerce(u, e)? {
                                 Ok(v) => out.insert(v, *n),
@@ -329,8 +367,10 @@ impl Interp {
                 (Some(p), Some(q)) => self.common_universe(p, q).map(Some),
             }
         };
+        let extended = |k: &StructKind| matches!(k, Integers | Rationals | Reals(_) | ExtendedReals | PowerStructure(t::INFTY));
         match (&x.kind, &y.kind) {
             (Integers, Rationals) | (Rationals, Integers) => Some(Value::rationals()),
+            (PowerStructure(t::INFTY) | ExtendedReals, k) | (k, PowerStructure(t::INFTY) | ExtendedReals) if extended(k) => Some(Value::extended_reals()),
             (Integers | Rationals, Reals(_)) => Some(b.clone()),
             (Reals(_), Integers | Rationals) => Some(a.clone()),
             (Reals(p), Reals(q)) => Some(Value::reals(*p.min(q))),
@@ -452,7 +492,7 @@ impl Interp {
                 for v in vals {
                     set.insert(v);
                 }
-                Value::ISet(Rc::new(SetIndx { universe: u, elems: set }))
+                Value::ISet(Rc::new(SetIndx { universe: u, elems: set, name: Default::default() }))
             }
             AggKind::MSet => {
                 let n = vals.len();
@@ -463,7 +503,7 @@ impl Interp {
 
     pub fn build_multiset(&mut self, universe: Option<Value>, mut vals: Vec<Value>, mults: Vec<u64>) -> RResult<Value> {
         let u = self.unify_universe(&mut vals, universe)?;
-        let mut m = SetMulti { universe: u, elems: VMap::default() };
+        let mut m = SetMulti { universe: u, elems: VMap::default(), name: Default::default() };
         for (v, n) in vals.into_iter().zip(mults) {
             m.insert(v, n);
         }
@@ -609,6 +649,24 @@ impl Interp {
                 }
             }
             Value::Assoc(_) => Err(RuntimeError::runtime("Use IsDefined to test membership in an associative array").in_context("in")),
+            Value::Struct(st) if matches!((&st.kind, x), (StructKind::Ring(_), Value::Elt(_))) => {
+                let Value::Elt(e) = x else { unreachable!() };
+                let StructKind::Ring(r) = &st.kind else { unreachable!() };
+                if let Some(err) = ring_membership_error(r, e.ring()) {
+                    return Err(RuntimeError::runtime(err).in_context("in"));
+                }
+                match self.try_coerce(s, x)? {
+                    Ok(v) => Ok(self.values_equal_weak(&v, x)?),
+                    Err(_) => Ok(false),
+                }
+            }
+            Value::Struct(st) if matches!((&st.kind, x), (StructKind::SymGroup(_), Value::Perm(_))) => {
+                let Value::Perm(p) = x else { unreachable!() };
+                if crate::perms::sym_degree(st) != Some(p.degree()) {
+                    return Err(RuntimeError::runtime("Arguments have no covering structure").in_context("in"));
+                }
+                Ok(true)
+            }
             Value::Struct(_) | Value::Obj(_) => {
                 if let Value::Obj(_) = s {
                     if let Some(v) = self.dispatch_user_operator("in", vec![x.clone(), s.clone()])? {
@@ -668,6 +726,9 @@ impl Interp {
                 StructKind::Coproduct(_) => TypeVal::Cat(t::COP_ELT),
                 StructKind::PowerStructure(ty) => TypeVal::Cat(*ty),
                 StructKind::Ring(r) => TypeVal::Cat(r.elt_type()),
+                StructKind::SymGroup(_) => TypeVal::Cat(t::GRP_PERM_ELT),
+                StructKind::ExtendedReals => TypeVal::Cat(t::EXT_RE_ELT),
+                StructKind::IntIdeal(_) => TypeVal::Cat(t::RNG_INT_ELT),
             },
             Value::Seq(s) => match s.universe.clone() {
                 Some(u) => self.element_type_of(&u),
@@ -710,14 +771,16 @@ impl Interp {
             Value::ISet(s) => tmp(&s.universe, t::SET_INDX),
             Value::MSet(s) => tmp(&s.universe, t::SET_MULTI),
             Value::Map(m) => TypeVal::Ext(t::MAP, Rc::from(vec![TypeArg::Type(TypeVal::Cat(self.static_type_of_structure(&m.domain))), TypeArg::Type(TypeVal::Cat(self.static_type_of_structure(&m.codomain)))])),
-            Value::Elt(e) => match e.ring().base() {
-                Some(b) => TypeVal::Ext(v.type_id(), Rc::from(vec![TypeArg::Type(TypeVal::Cat(b.type_id()))])),
-                None => TypeVal::Cat(v.type_id()),
+            // Univariate polynomial types show their coefficient ring;
+            // multivariate ones do not.
+            Value::Elt(e) => match (&e.ring().kind, e.ring().base()) {
+                (crate::rings::RingKind::UPoly { .. }, Some(b)) => TypeVal::Ext(v.type_id(), Rc::from(vec![TypeArg::Type(TypeVal::Cat(b.type_id()))])),
+                _ => TypeVal::Cat(v.type_id()),
             },
             Value::Struct(s) => match &s.kind {
                 StructKind::PowerSeq(u) => tmp(u, t::POW_SEQ_ENUM),
                 StructKind::PowerSet(u) => tmp(u, t::POW_SET_ENUM),
-                StructKind::Ring(r) if r.base().is_some() => TypeVal::Ext(v.type_id(), Rc::from(vec![TypeArg::Type(TypeVal::Cat(r.base().unwrap().type_id()))])),
+                StructKind::Ring(r) if matches!(r.kind, crate::rings::RingKind::UPoly { .. }) => TypeVal::Ext(v.type_id(), Rc::from(vec![TypeArg::Type(TypeVal::Cat(r.base().unwrap().type_id()))])),
                 _ => TypeVal::Cat(v.type_id()),
             },
             _ => TypeVal::Cat(v.type_id()),
@@ -748,6 +811,9 @@ impl Interp {
                 StructKind::Coproduct(_) => TypeVal::Cat(t::COP_ELT),
                 StructKind::PowerStructure(ty) => TypeVal::Cat(*ty),
                 StructKind::Ring(r) => TypeVal::Cat(r.elt_type()),
+                StructKind::SymGroup(_) => TypeVal::Cat(t::GRP_PERM_ELT),
+                StructKind::ExtendedReals => TypeVal::Cat(t::EXT_RE_ELT),
+                StructKind::IntIdeal(_) => TypeVal::Cat(t::RNG_INT_ELT),
             },
             Value::Seq(s) => s.universe.as_ref().map(|u| self.static_element_type(u)).unwrap_or(TypeVal::Cat(t::ANY)),
             Value::Set(s) => s.universe.as_ref().map(|u| self.static_element_type(u)).unwrap_or(TypeVal::Cat(t::ANY)),
@@ -835,5 +901,22 @@ impl Interp {
             TypePat::MSet(_) => tv.base() == t::SET_MULTI,
             TypePat::Tuple => tv.base() == t::TUP,
         }
+    }
+}
+
+/// Why `x in R` is an error for an element `x` of the ring `a` and a
+/// different ring `r`: finite rings that no ring contains both of, and
+/// distinct polynomial rings.
+fn ring_membership_error(r: &crate::rings::Ring, a: &crate::rings::Ring) -> Option<&'static str> {
+    use crate::rings::RingKind;
+    if r.id == a.id {
+        return None;
+    }
+    match (&r.kind, &a.kind) {
+        (RingKind::Finite(f), RingKind::Finite(g)) if f.p != g.p => Some("Arguments have no covering structure"),
+        (RingKind::Residue(m), RingKind::Residue(n)) if m != n => Some("Arguments have no covering structure"),
+        (RingKind::Residue(_), RingKind::Finite(_)) | (RingKind::Finite(_), RingKind::Residue(_)) => Some("Bad argument types"),
+        (RingKind::UPoly { .. } | RingKind::MPoly { .. }, RingKind::UPoly { .. } | RingKind::MPoly { .. }) => Some("Arguments are not compatible"),
+        _ => None,
     }
 }

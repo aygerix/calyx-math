@@ -640,9 +640,18 @@ fn undefine_imp(_it: &mut Interp, a: &mut CallArgs) -> RResult<()> {
 both_forms!(undefine_proc, undefine_func, undefine_imp);
 
 /// Sort values, optionally with a comparison function; returns the
-/// permutation (as the sequence of original positions).
+/// original position of each sorted value.
 fn sort_with(it: &mut Interp, vals: &mut Vec<Value>, cmp: Option<&Value>) -> RResult<Vec<usize>> {
     let mut idx: Vec<usize> = (0..vals.len()).collect();
+    // Without a comparison function the elements must have an order, even
+    // when there is nothing to compare.
+    if cmp.is_none() {
+        if let Some(v) = vals.first() {
+            if it.compare_ord(v, v)?.is_none() {
+                return Err(RuntimeError::runtime("No comparison algorithm for sequence elts"));
+            }
+        }
+    }
     // Merge sort with a fallible comparator (stable).
     let mut err = None;
     let snapshot = vals.clone();
@@ -700,8 +709,10 @@ fn merge_sort(v: &mut [usize], cmp: &mut dyn FnMut(usize, usize) -> Ordering) {
     v.copy_from_slice(&merged);
 }
 
-fn perm_value(idx: &[usize]) -> Value {
-    Value::int_seq(idx.iter().map(|&i| Integer::from_u64(i as u64 + 1)))
+/// The sorting permutation, in `Sym(n)`: it maps `i` to the original
+/// position of the i-th sorted value.
+fn perm_value(it: &mut Interp, idx: &[usize]) -> Value {
+    it.perm(idx.iter().map(|&i| i as u32).collect())
 }
 
 fn sort_proc(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
@@ -714,10 +725,10 @@ fn sort_proc(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     let idx = sort_with(it, &mut s.elems, cmp.as_ref())?;
     // Sort(~S, ~p) also returns the permutation.
     if a.args.len() > 1 && !matches!(a.args[1], Value::Func(_) | Value::Intr(_)) {
-        a.args[1] = perm_value(&idx);
+        a.args[1] = perm_value(it, &idx);
     }
     if a.args.len() > 2 {
-        a.args[2] = perm_value(&idx);
+        a.args[2] = perm_value(it, &idx);
     }
     none()
 }
@@ -731,7 +742,12 @@ fn sort_func(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
                 return Err(RuntimeError::runtime("Cannot sort a sequence with undefined entries"));
             }
             let idx = sort_with(it, &mut s2.elems, cmp.as_ref())?;
-            Ok(vec![Value::Seq(Rc::new(s2)), perm_value(&idx)])
+            // Only the form with a comparison function returns the permutation.
+            let sorted = Value::Seq(Rc::new(s2));
+            if cmp.is_none() {
+                return one(sorted);
+            }
+            Ok(vec![sorted, perm_value(it, &idx)])
         }
         Value::Set(s) => {
             let mut v: Vec<Value> = s.iter().collect();
@@ -939,7 +955,7 @@ fn multisets(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     let mut idx = vec![0usize; k];
     if n > 0 || k == 0 {
         loop {
-            let mut m = SetMulti { universe: s.universe.clone(), elems: VMap::default() };
+            let mut m = SetMulti { universe: s.universe.clone(), elems: VMap::default(), name: Default::default() };
             for &i in &idx {
                 m.insert(elems[i].clone(), 1);
             }
@@ -1120,7 +1136,7 @@ fn partition(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     let mut pos = 0;
     for n in sizes {
         // Parts of a range still print as ranges.
-        out.push(Value::Seq(Rc::new(SeqEnum { universe: s.universe.clone(), elems: s.elems[pos..pos + n].to_vec(), range_hint: s.range_hint })));
+        out.push(Value::Seq(Rc::new(SeqEnum { universe: s.universe.clone(), elems: s.elems[pos..pos + n].to_vec(), range_hint: s.range_hint, name: Default::default() })));
         pos += n;
     }
     one(Value::seq(Some(Value::structure(StructKind::PowerSeq(s.universe.clone()))), out))
@@ -1440,11 +1456,11 @@ pub fn register(it: &mut Interp) {
     it.def("Undefine", "~S::SeqEnum, i::RngIntElt", "Make S[i] undefined.", undefine_proc);
     it.def("Undefine", "S::SeqEnum, i::RngIntElt -> SeqEnum", "S with S[i] undefined.", undefine_func);
     it.def("Sort", "~S::SeqEnum", "Sort S into increasing order.", sort_proc);
-    it.def("Sort", "~S::SeqEnum, ~p", "Sort S and set p to the sorting permutation (as a sequence of positions).", sort_proc);
+    it.def("Sort", "~S::SeqEnum, ~p", "Sort S and set p to the sorting permutation, which maps i to the original position of the i-th element.", sort_proc);
     it.def("Sort", "~S::SeqEnum, C::Program", "Sort S using the comparison function C.", sort_proc);
     it.def("Sort", "~S::SeqEnum, C::Program, ~p", "Sort S using C and set p to the sorting permutation.", sort_proc);
-    it.def("Sort", "S::SeqEnum -> SeqEnum, SeqEnum", "S sorted, and the sorting permutation (as a sequence of positions).", sort_func);
-    it.def("Sort", "S::SeqEnum, C::Program -> SeqEnum, SeqEnum", "S sorted using the comparison function C.", sort_func);
+    it.def("Sort", "S::SeqEnum -> SeqEnum", "S sorted into increasing order.", sort_func);
+    it.def("Sort", "S::SeqEnum, C::Program -> SeqEnum, GrpPermElt", "S sorted using the comparison function C, and the sorting permutation.", sort_func);
     it.def("Sort", "S::SetEnum -> SeqEnum", "The elements of S in increasing order.", sort_func);
     it.def("Sort", "S::SetEnum, C::Program -> SeqEnum", "The elements of S sorted using C.", sort_func);
     it.def("Sort", "L::List, C::Program -> List", "L sorted using the comparison function C.", sort_func);

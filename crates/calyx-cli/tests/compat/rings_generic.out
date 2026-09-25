@@ -1,0 +1,348 @@
+Integer Ring
+Power Structure of RngInt
+RngInt
+0 Infinity false
+true true true false false
+true true true
+true true true true true
+Integer Ring
+true
+0 1 0
+Rational Field
+Power Structure of FldRat
+FldRat
+0 Infinity false
+true true true true true
+true true false
+true true true true true
+Rational Field
+true
+0 1 0
+Real field of precision 30
+Power Structure of FldRe
+FldRe
+0 Infinity false
+true true true true true
+true true false
+true true true true false
+Rational Field
+true
+0.000000000000000000000000000000 1.00000000000000000000000000000
+0.000000000000000000000000000000
+Complex field of precision 30
+Power Structure of FldCom
+FldCom
+0 Infinity false
+true true true true true
+true true false
+true true true true false
+Rational Field
+true
+0.000000000000000000000000000000 1.00000000000000000000000000000
+0.000000000000000000000000000000
+Residue class ring of integers modulo 6
+Power Structure of RngIntRes
+RngIntRes
+6 6 true 6
+true true false false false
+false true true
+false true false false true
+Residue class ring of integers modulo 6
+true
+0 1 0
+Residue class ring of integers modulo 7
+Power Structure of RngIntRes
+RngIntRes
+7 7 true 7
+true true false true true
+true true true
+true true true true true
+Residue class ring of integers modulo 7
+true
+0 1 0
+Finite field of size 3^2
+Power Structure of FldFin
+FldFin
+3 9 true 9
+true true false true true
+true true false
+true true true true true
+Finite field of size 3
+true
+0 1 0
+Finite field of size 7
+Power Structure of FldFin
+FldFin
+7 7 true 7
+true true false true true
+true true false
+true true true true true
+Finite field of size 7
+true
+0 1 0
+Univariate Polynomial Ring over Rational Field
+Power Structure of RngUPol
+RngUPol
+0 Infinity false
+true true false false false
+true true true
+true true true true true
+Rational Field
+true
+0
+1
+0
+Univariate Polynomial Ring over Integer Ring
+Power Structure of RngUPol
+RngUPol
+0 Infinity false
+true true false false false
+false false false
+false false true true true
+Integer Ring
+true
+0
+1
+0
+Univariate Polynomial Ring over IntegerRing(6)
+Power Structure of RngUPol
+RngUPol
+6 Infinity false
+true true false false false
+false false false
+false false false false true
+Residue class ring of integers modulo 6
+true
+0
+1
+0
+Univariate Polynomial Ring over GF(3^2)
+Power Structure of RngUPol
+RngUPol
+3 Infinity false
+true true false false false
+true true true
+true true true true true
+Finite field of size 3
+true
+0
+1
+0
+Univariate Polynomial Ring over Real field of precision 30
+Power Structure of RngUPol
+RngUPol
+0 Infinity false
+true true false false false
+false false false
+true true true true false
+Rational Field
+true
+0
+1.00000000000000000000000000000
+0
+Univariate Polynomial Ring over Complex field of precision 30
+Power Structure of RngUPol
+RngUPol
+0 Infinity false
+true true false false false
+false false false
+true true true true false
+Rational Field
+true
+0
+1.00000000000000000000000000000
+0
+5 Infinity false false false
+false true true true Finite field of size 5
+0 Infinity false false false
+false true true true Rational Field
+0 Infinity false false false
+false true true false Rational Field
+
+>> IsEuclideanDomain(M);
+                    ^
+Runtime error in 'IsEuclideanDomain': Algorithm for 'IsEuclideanDomain' not
+available for this object
+
+
+>> IsEuclideanRing(M);
+                  ^
+Runtime error in 'IsEuclideanRing': Algorithm for 'IsEuclideanRing' not
+available for this object
+
+
+>> IsPID(MQ);
+        ^
+Runtime error in 'IsPID': Algorithm for 'IsPrincipalIdealDomain' not available
+for this object
+
+
+>> IsPIR(MR);
+        ^
+Runtime error in 'IsPIR': Algorithm for 'IsPrincipalIdealRing' not available for
+this object
+
+Rational Field
+Rational Field
+Rational Field
+Finite field of size 3
+
+>> PrimeField(Integers());
+             ^
+Runtime error in 'PrimeField': Bad argument types
+Argument types given: RngInt
+
+
+>> PrimeField(Integers(7));
+             ^
+Runtime error in 'PrimeField': Bad argument types
+Argument types given: RngIntRes
+
+
+>> PrimeField(M);
+             ^
+Runtime error in 'PrimeField': Bad argument types
+Argument types given: RngMPol
+
+false
+true
+true
+true
+false
+true
+false
+false
+true
+true
+
+>> PolynomialRing(Q) eq PolynomialRing(Z);
+                     ^
+Runtime error in 'eq': Arguments are not compatible
+Argument types given: RngUPol[FldRat], RngUPol[RngInt]
+
+
+>> PolynomialRing(Q) ne PolynomialRing(Z);
+                     ^
+Runtime error in 'ne': Arguments are not compatible
+Argument types given: RngUPol[FldRat], RngUPol[RngInt]
+
+
+>> M eq PolynomialRing(GF(5), 2);
+     ^
+Runtime error in 'eq': Arguments are not compatible
+Argument types given: RngMPol, RngMPol
+
+true
+
+>> Z eq Integers(6);
+     ^
+Runtime error in 'eq': Bad argument types
+Argument types given: RngInt, RngIntRes
+
+
+>> Integers() ne Integers(6);
+              ^
+Runtime error in 'ne': Bad argument types
+Argument types given: RngInt, RngIntRes
+
+
+>> Q eq RealField();
+     ^
+Runtime error in 'eq': Bad argument types
+Argument types given: FldRat, FldRe
+
+
+>> RealField() eq ComplexField();
+               ^
+Runtime error in 'eq': Bad argument types
+Argument types given: FldRe, FldCom
+
+
+>> GF(7) eq Integers(7);
+         ^
+Runtime error in 'eq': Bad argument types
+Argument types given: FldFin, RngIntRes
+
+
+>> PolynomialRing(Q) eq M;
+                     ^
+Runtime error in 'eq': Bad argument types
+Argument types given: RngUPol[FldRat], RngMPol
+
+false
+true
+true
+true
+true
+true
+true
+false
+false
+
+>> x in PZ;
+     ^
+Runtime error in 'in': Arguments are not compatible
+
+
+>> y in P;
+     ^
+Runtime error in 'in': Arguments are not compatible
+
+true
+false
+false
+true
+true
+
+>> w in GF(7);
+     ^
+Runtime error in 'in': Arguments have no covering structure
+
+
+>> Integers(6)!2 in Integers(4);
+                 ^
+Runtime error in 'in': Arguments have no covering structure
+
+
+>> Integers(6)!2 in GF(7);
+                 ^
+Runtime error in 'in': Bad argument types
+
+
+>> GF(7)!2 in Integers(7);
+           ^
+Runtime error in 'in': Bad argument types
+
+true
+Residue class ring of integers modulo 6
+
+>> Random(Z);
+         ^
+Runtime error in 'Random': Bad argument types
+Argument types given: RngInt
+
+
+>> Random(Q);
+         ^
+Runtime error in 'Random': Bad argument types
+Argument types given: FldRat
+
+
+>> Random(ComplexField());
+         ^
+Runtime error in 'Random': Bad argument types
+Argument types given: FldCom
+
+
+>> Random(P);
+         ^
+Runtime error in 'Random': Bad argument types
+Argument types given: RngUPol[FldRat]
+
+
+>> Random(M);
+         ^
+Runtime error in 'Random': Bad argument types
+Argument types given: RngMPol
+
+

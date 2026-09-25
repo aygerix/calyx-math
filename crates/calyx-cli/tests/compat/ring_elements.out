@@ -1,0 +1,287 @@
+0 Integer Ring
+true false false false true
+1 Integer Ring
+false true false true true
+-1 Integer Ring
+false false true true false
+2 Integer Ring
+false false false false false
+6 Integer Ring
+false false false false false
+-2 Integer Ring
+false false false false false
+1/2 Rational Field
+false false false true false
+0.000000000000000000000000000000 Real field of precision 30
+true false false false true
+1.00000000000000000000000000000 Real field of precision 30
+false true false true true
+-1.00000000000000000000000000000 Real field of precision 30
+false false true true false
+1.50000000000000000000000000000 Real field of precision 30
+false false false true false
+1.00000000000000000000000000000*i Complex field of precision 30
+false false false true false
+1.00000000000000000000000000000 Complex field of precision 30
+false true false true true
+0 Residue class ring of integers modulo 6
+true false false false true
+1 Residue class ring of integers modulo 6
+false true false true true
+5 Residue class ring of integers modulo 6
+false false true true false
+2 Residue class ring of integers modulo 6
+false false false false false
+3 Residue class ring of integers modulo 6
+false false false false true
+4 Residue class ring of integers modulo 6
+false false false false true
+3 Residue class ring of integers modulo 7
+false false false true false
+6 Residue class ring of integers modulo 7
+false false true true false
+w Finite field of size 3^2
+false false false true false
+1 Finite field of size 3^2
+false true false true true
+0 Finite field of size 3^2
+true false false false true
+3 Finite field of size 7
+false false false true false
+x
+Univariate Polynomial Ring in x over Rational Field
+false false false false false
+x^2 + 1
+Univariate Polynomial Ring in x over Rational Field
+false false false false false
+2
+Univariate Polynomial Ring in x over Rational Field
+false false false true false
+0
+Univariate Polynomial Ring in x over Rational Field
+true false false false true
+-1
+Univariate Polynomial Ring in x over Rational Field
+false false true true false
+2*y
+Univariate Polynomial Ring in y over Integer Ring
+false false false false false
+2
+Univariate Polynomial Ring in y over Integer Ring
+false false false false false
+-1
+Univariate Polynomial Ring in y over Integer Ring
+false false true true false
+a
+Polynomial ring of rank 2 over GF(5)
+Order: Lexicographical
+Variables: a, b
+false false false false false
+a*b
+Polynomial ring of rank 2 over GF(5)
+Order: Lexicographical
+Variables: a, b
+false false false false false
+1
+Polynomial ring of rank 2 over GF(5)
+Order: Lexicographical
+Variables: a, b
+false true false true true
+0
+Polynomial ring of rank 2 over GF(5)
+Order: Lexicographical
+Variables: a, b
+true false false false true
+2*t
+Univariate Polynomial Ring in t over IntegerRing(6)
+false false false false false
+t^2
+Univariate Polynomial Ring in t over IntegerRing(6)
+false false false false false
+true 1
+false
+false
+false
+true 1
+false
+false
+true 1
+false
+false
+false
+false
+false
+true 3
+true 2
+true 3
+true 2
+false
+true 1
+true 1
+true 1
+
+>> IsNilpotent(x);
+              ^
+Runtime error in 'IsNilpotent': Operation not supported for this type of element
+
+
+>> IsNilpotent(a);
+              ^
+Runtime error in 'IsNilpotent': Operation not supported for this type of element
+
+false
+false
+false
+false
+false
+false
+false
+true
+true
+true
+false
+false
+false
+false
+false
+false
+
+>> IsZeroDivisor(2*t);
+                ^
+Runtime error in 'IsZeroDivisor': Algorithm not possible for this type of
+element
+
+false false
+false false
+false false
+true true
+true true
+false false
+true true
+false false
+false false
+false false
+false false
+false false
+false false
+false false
+false false
+
+>> IsIrreducible(Z6!2);
+                ^
+Runtime error in 'IsIrreducible': Algorithm not possible for this type of
+element
+
+
+>> IsPrime(Z7!3);
+          ^
+Runtime error in 'IsPrime': Algorithm not possible for this type of element
+
+
+>> IsIrreducible(P!0);
+                ^
+Runtime error in 'IsIrreducible': Argument 1 is not non-zero
+
+
+>> IsPrime(M!0);
+          ^
+Runtime error in 'IsPrime': Argument 1 is not non-zero
+
+3
+3
+x
+w^5
+1/2*x
+5
+1
+true
+true
+true
+true
+false
+true
+[ false, true, true, true, true, true, true, true, false, false, true, true,
+true, true, true, true, false, false, false, true, true, true, true, true,
+false, false, false, false, true, true, true, true, false, false, false, false,
+false, true, true, true, false, false, false, false, false, false, true, true,
+false, false, false, false, false, false, false, true, false, false, false,
+false, false, false, false, false ]
+true
+false
+[ 0, 1, 2, 3, 4, 5, 6 ]
+[ 0, 1, w, w^2, w^3, 2, w^5, w^6, w^7 ]
+true
+false
+true
+false
+true
+true
+true
+false
+true
+false
+[ 1, 3, 5 ]
+[
+    0,
+    1,
+    -x,
+    x,
+    x + 1,
+    x^2
+]
+[
+    -3,
+    3,
+    -y,
+    2*y,
+    y^2
+]
+false
+true
+true
+true
+[
+    1,
+    b,
+    b^2,
+    a,
+    a*b,
+    a^2
+]
+[
+    0,
+    1,
+    G.1,
+    G.1 + 1,
+    G.1^2
+]
+[ 1, G2.1, G2.1^2, G2.1^629989 ]
+
+>> i lt 1;
+     ^
+Runtime error in 'lt': No comparison algorithm exists for given objects
+
+
+>> CC!1 lt CC!2;
+        ^
+Runtime error in 'lt': No comparison algorithm exists for given objects
+
+3
+1/3
+2.00000000000000000000000000000
+-1
+3 1
+1/3 2
+
+>> Maximum(Z6!2, Z6!3);
+          ^
+Runtime error in 'Maximum': Bad argument types
+Argument types given: RngIntResElt, RngIntResElt
+
+
+>> Minimum(w, w^2);
+          ^
+Runtime error in 'Minimum': Bad argument types
+Argument types given: FldFinElt, FldFinElt
+
+

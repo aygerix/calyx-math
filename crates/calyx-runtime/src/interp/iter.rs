@@ -232,7 +232,33 @@ impl Interp {
         Ok(Flow::Normal)
     }
 
+    /// Bind a loop variable. A structure without a name is known by the
+    /// loop variable only while the variable holds it; `named` tracks the
+    /// structure named this way so the name can be taken back.
+    fn bind_loop_var(&mut self, var: Place, v: Value, f: &mut Frame, named: &mut Option<Value>) {
+        if let Some(cell) = named.take().as_ref().and_then(|n| n.name_cell()) {
+            *cell.borrow_mut() = None;
+        }
+        if let Some(cell) = v.name_cell() {
+            if cell.borrow().is_none() {
+                *cell.borrow_mut() = Some(var.name());
+                *named = Some(v.clone());
+            }
+        }
+        self.store_place(var, v, f);
+    }
+
     pub(super) fn for_in(&mut self, var: &Place, index: Option<&Place>, domain: &DomainEx, random: bool, body: &[S], f: &mut Frame) -> RResult<Flow> {
+        let mut named = None;
+        let r = self.for_in_named(var, index, domain, random, body, f, &mut named);
+        if let Some(cell) = named.as_ref().and_then(|n| n.name_cell()) {
+            *cell.borrow_mut() = None;
+        }
+        r
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn for_in_named(&mut self, var: &Place, index: Option<&Place>, domain: &DomainEx, random: bool, body: &[S], f: &mut Frame, named: &mut Option<Value>) -> RResult<Flow> {
         if random {
             let dom = match domain {
                 DomainEx::General(e) => self.eval(e, f)?,
@@ -247,7 +273,7 @@ impl Interp {
                 if let Some(ip) = index {
                     self.assign_place(*ip, i, f)?;
                 }
-                self.assign_place(*var, x, f)?;
+                self.bind_loop_var(*var, x, f, named);
                 if let Some(flow) = self.loop_body(body, f, var)? {
                     return Ok(flow);
                 }
@@ -259,7 +285,7 @@ impl Interp {
             if let Some(ip) = index {
                 self.assign_place(*ip, i, f)?;
             }
-            self.assign_place(*var, x, f)?;
+            self.bind_loop_var(*var, x, f, named);
             if let Some(flow) = self.loop_body(body, f, var)? {
                 return Ok(flow);
             }

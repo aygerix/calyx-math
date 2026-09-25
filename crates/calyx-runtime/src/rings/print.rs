@@ -65,6 +65,19 @@ fn int_poly(coeffs: &[Integer], name: &str) -> String {
     join_terms(&terms)
 }
 
+/// The printing name of the i-th generator of the ring of `e`: its assigned
+/// name, else `F.i` for a field or univariate polynomial ring assigned to
+/// `F`, else `$.i`.
+fn gen_name(e: &Elt, i: usize) -> String {
+    let ring = e.ring();
+    if !ring.has_names() && matches!(ring.kind, RingKind::Finite(_) | RingKind::UPoly { .. }) {
+        if let Some(n) = *e.parent.name.borrow() {
+            return format!("{n}.{i}");
+        }
+    }
+    ring.gen_name(i)
+}
+
 /// Format an element of a ring.
 pub fn format_ring_elt(it: &mut Interp, e: &Elt, level: Level) -> RResult<String> {
     let ring = e.ring();
@@ -74,7 +87,7 @@ pub fn format_ring_elt(it: &mut Interp, e: &Elt, level: Level) -> RResult<String
             if f.degree == 1 {
                 return Ok(e.residue().unwrap_or_default().to_string());
             }
-            let name = ring.gen_name(1);
+            let name = gen_name(e, 1);
             if f.power_printing.get() {
                 if let Some(k) = e.x.zech_log() {
                     // Elements of the prime field print as integers.
@@ -92,7 +105,7 @@ pub fn format_ring_elt(it: &mut Interp, e: &Elt, level: Level) -> RResult<String
         }
         RingKind::UPoly { base, .. } => {
             let base = base.clone();
-            let name = ring.gen_name(1);
+            let name = gen_name(e, 1);
             let mut terms = Vec::new();
             for k in (0..e.x.poly_len()).rev() {
                 let c = e.x.poly_coeff(k);
@@ -136,11 +149,12 @@ pub fn format_ring_elt(it: &mut Interp, e: &Elt, level: Level) -> RResult<String
 }
 
 impl Interp {
-    /// Format a ring (the structure itself).
-    pub fn format_ring(&mut self, r: &Ring, level: Level) -> RResult<String> {
+    /// A ring (the structure itself) as lines of text. Coefficient rings are
+    /// named briefly (at the minimal level).
+    pub fn format_ring(&mut self, r: &Ring, level: Level) -> RResult<Vec<String>> {
         if level == Level::Magma {
-            return Ok(match &r.kind {
-                RingKind::Residue(m) => format!("ResidueClassRing({m})"),
+            return Ok(vec![match &r.kind {
+                RingKind::Residue(m) => format!("IntegerRing({m})"),
                 RingKind::Finite(f) => {
                     if f.degree == 1 {
                         format!("GF({})", f.p)
@@ -157,40 +171,43 @@ impl Interp {
                 }
                 RingKind::MPoly { base, rank, order } => {
                     let b = self.format_flat(&base.clone(), level)?;
-                    let o = match order {
-                        MonomialOrder::Lex => "\"lex\"",
-                        MonomialOrder::DegLex => "\"glex\"",
-                        MonomialOrder::DegRevLex => "\"grevlex\"",
-                    };
-                    format!("PolynomialRing({b}, {rank}, {o})")
+                    match order {
+                        MonomialOrder::Lex => format!("PolynomialRing({b}, {rank})"),
+                        MonomialOrder::DegLex => format!("PolynomialRing({b}, {rank}, \"glex\")"),
+                        MonomialOrder::DegRevLex => format!("PolynomialRing({b}, {rank}, \"grevlex\")"),
+                    }
                 }
                 RingKind::Complex(d) => format!("ComplexField({d})"),
-            });
+            }]);
         }
+        let minimal = level == Level::Minimal;
         Ok(match &r.kind {
-            RingKind::Residue(m) => format!("Residue class ring of integers modulo {m}"),
+            RingKind::Residue(m) if minimal => vec![format!("IntegerRing({m})")],
+            RingKind::Residue(m) => vec![format!("Residue class ring of integers modulo {m}")],
             RingKind::Finite(f) => {
-                if f.degree == 1 {
-                    format!("Finite field of size {}", f.p)
-                } else {
-                    format!("Finite field of size {}^{}", f.p, f.degree)
-                }
+                let size = if f.degree == 1 { f.p.to_string() } else { format!("{}^{}", f.p, f.degree) };
+                vec![if minimal { format!("GF({size})") } else { format!("Finite field of size {size}") }]
             }
             RingKind::UPoly { base, .. } => {
-                let b = self.format_flat(&base.clone(), level)?;
-                if r.has_names() { format!("Univariate Polynomial Ring in {} over {b}", r.gen_name(1)) } else { format!("Univariate Polynomial Ring over {b}") }
+                let b = self.format_flat(&base.clone(), Level::Minimal)?;
+                vec![if r.has_names() { format!("Univariate Polynomial Ring in {} over {b}", r.gen_name(1)) } else { format!("Univariate Polynomial Ring over {b}") }]
             }
             RingKind::MPoly { base, rank, order } => {
-                let b = self.format_flat(&base.clone(), level)?;
-                let o = match order {
-                    MonomialOrder::Lex => "Lexicographical Order",
-                    MonomialOrder::DegLex => "Graded Lexicographical Order",
-                    MonomialOrder::DegRevLex => "Graded Reverse Lexicographical Order",
-                };
-                let vars: Vec<String> = (1..=*rank).map(|i| r.gen_name(i)).collect();
-                format!("Polynomial ring of rank {rank} over {b}\n{o}\nVariables: {}", vars.join(", "))
+                let b = self.format_flat(&base.clone(), Level::Minimal)?;
+                let mut lines = vec![format!("Polynomial ring of rank {rank} over {b}")];
+                if !minimal {
+                    let o = match order {
+                        MonomialOrder::Lex => "Lexicographical",
+                        MonomialOrder::DegLex => "Graded Lexicographical",
+                        MonomialOrder::DegRevLex => "Graded Reverse Lexicographical",
+                    };
+                    let vars: Vec<String> = (1..=*rank).map(|i| r.gen_name(i)).collect();
+                    lines.push(format!("Order: {o}"));
+                    lines.push(format!("Variables: {}", vars.join(", ")));
+                }
+                lines
             }
-            RingKind::Complex(d) => format!("Complex field of precision {d}"),
+            RingKind::Complex(d) => vec![format!("Complex field of precision {d}")],
         })
     }
 

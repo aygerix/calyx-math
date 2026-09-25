@@ -1,0 +1,170 @@
+
+>> T, q := Sort(S);
+        ^
+Runtime error in :=: Expected to assign 2 value(s) but only computed 1 value(s)
+
+>> 0^p;
+    ^
+Runtime error in '^': Cannot apply permutation to this object
+
+
+>> 6^p;
+    ^
+Runtime error in '^': Cannot apply permutation to this object
+
+
+>> (-1)^p;
+       ^
+Runtime error in '^': Cannot apply permutation to this object
+
+
+>> p^(1/2);
+    ^
+Runtime error in '^': Bad argument types
+Argument types given: GrpPermElt, FldRatElt
+
+
+>> p * 2;
+     ^
+Runtime error in '*': Bad argument types
+Argument types given: GrpPermElt, RngIntElt
+
+
+>> 2 * p;
+     ^
+Runtime error in '*': Bad argument types
+Argument types given: RngIntElt, GrpPermElt
+
+
+>> p + p;
+     ^
+Runtime error in '+': Bad argument types
+Argument types given: GrpPermElt, GrpPermElt
+
+
+>> -p;
+   ^
+Runtime error in '-': Bad argument types
+Argument types given: GrpPermElt
+
+
+>> p lt p^2;
+     ^
+Runtime error in 'lt': No comparison algorithm exists for given objects
+
+
+>> p(1);
+    ^
+Runtime error in '@': Bad argument types
+Argument types given: RngIntElt, GrpPermElt
+
+
+>> 1 @ p;
+     ^
+Runtime error in '@': Bad argument types
+Argument types given: RngIntElt, GrpPermElt
+
+
+>> x(1);
+    ^
+Runtime error in '@': Bad argument types
+Argument types given: RngIntElt, RngIntElt
+
+
+>> p * a;
+     ^
+Runtime error in '*': Arguments are not compatible
+Argument types given: GrpPermElt, GrpPermElt
+
+
+>> p^a;
+    ^
+Runtime error in '^': Arguments are not compatible
+Argument types given: GrpPermElt, GrpPermElt
+
+
+>> p eq a;
+     ^
+Runtime error in 'eq': Arguments are not compatible
+Argument types given: GrpPermElt, GrpPermElt
+
+
+>> a in Sym(4);
+     ^
+Runtime error in 'in': Arguments have no covering structure
+
+
+>> Sym(0);
+      ^
+Runtime error in 'Sym': Argument 1 (0) should be >= 1
+
+
+>> Sym(-2);
+      ^
+Runtime error in 'Sym': Argument 1 (-2) should be >= 1
+
+
+>> SymmetricGroup(0);
+                 ^
+Runtime error in 'SymmetricGroup': Argument 1 (0) should be >= 1
+
+
+>> K.3;
+    ^
+Runtime error in '.': Argument 2 (3) should be in the range [-2 .. 2]
+
+
+>> Sym(2).2;
+         ^
+Runtime error in '.': Argument 2 (2) should be in the range [-1 .. 1]
+
+
+>> Sym(1).1;
+         ^
+Runtime error in '.': Argument 2 (1) should be in the range [0 .. 0]
+
+
+>> K![2, 1];
+    ^
+Runtime error in '!': Illegal coercion
+LHS: GrpPerm
+RHS: [RngIntElt]
+
+>> K![1, 1, 2];
+    ^
+Runtime error in '!': Illegal coercion
+LHS: GrpPerm
+RHS: [RngIntElt]
+
+>> K!2;
+    ^
+Runtime error in '!': Illegal coercion
+LHS: GrpPerm
+RHS: RngIntElt
+
+>> K!p;
+    ^
+Runtime error in '!': Could not find a covering group
+LHS: GrpPerm
+RHS: GrpPermElt
+
+>> K eq Sym(5);
+     ^
+Runtime error in 'eq': Could not find a covering group
+
+
+>> Cycle(a, 4);
+        ^
+Runtime error in 'Cycle': Argument 2 not in support of group
+
+
+>> Cycle(a, 0);
+        ^
+Runtime error in 'Cycle': Argument 2 not in support of group
+
+
+>> Sort([K!1]);
+       ^
+Runtime error in 'Sort': No comparison algorithm for sequence elts
+
+

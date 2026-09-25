@@ -98,7 +98,9 @@ fn is_odd(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
 fn is_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     let n = a.int(0)?;
     let proof = a.param("Proof").map(|v| matches!(v, Value::Bool(true))).unwrap_or(true);
-    boolv(n.sign() > 0 && if proof { n.is_prime() } else { n.is_probable_prime() })
+    // Negatives of primes are prime elements of the integers too.
+    let n = n.abs();
+    boolv(if proof { n.is_prime() } else { n.is_probable_prime() })
 }
 
 fn is_probable_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
@@ -458,16 +460,39 @@ fn seqint(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     intv(n)
 }
 
+/// Maximum and Minimum of two values are not defined on ring elements, even
+/// where `lt` is.
+fn check_max_args(it: &Interp, x: &Value, y: &Value) -> RResult<()> {
+    if matches!(x, Value::Elt(_)) || matches!(y, Value::Elt(_)) {
+        return Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}, {}", it.type_name_ext(x), it.type_name_ext(y))));
+    }
+    Ok(())
+}
+
 fn max2(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     let (x, y) = (a.args[0].clone(), a.args[1].clone());
+    check_max_args(it, &x, &y)?;
     let o = it.compare_for_sort(&x, &y)?;
-    one(if o == std::cmp::Ordering::Less { y } else { x })
+    let r = if o == std::cmp::Ordering::Less { y.clone() } else { x.clone() };
+    one(in_common_structure(it, &x, &y, r)?)
+}
+
+/// `r` (one of x and y) in the structure containing both, as Maximum and
+/// Minimum return it (so `Max(1.5, 2)` is a real).
+fn in_common_structure(it: &mut Interp, x: &Value, y: &Value, r: Value) -> RResult<Value> {
+    let (px, py) = (it.parent_of(x)?, it.parent_of(y)?);
+    match it.common_universe(&px, &py) {
+        Some(u) => Ok(it.try_coerce(&u, &r)?.unwrap_or(r)),
+        None => Ok(r),
+    }
 }
 
 fn min2(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     let (x, y) = (a.args[0].clone(), a.args[1].clone());
+    check_max_args(it, &x, &y)?;
     let o = it.compare_for_sort(&x, &y)?;
-    one(if o == std::cmp::Ordering::Greater { y } else { x })
+    let r = if o == std::cmp::Ordering::Greater { y.clone() } else { x.clone() };
+    one(in_common_structure(it, &x, &y, r)?)
 }
 
 fn valuation(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {

@@ -10,6 +10,7 @@ use super::{boolv, intv, none, one};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
 use crate::rings::{Ring, RingKind, make_elt};
+use crate::rings::props::{RingProps, ring_props};
 use crate::value::*;
 
 /// The ring and its structure from argument `i`.
@@ -32,13 +33,20 @@ fn elt_arg(a: &CallArgs, i: usize) -> RResult<Rc<crate::rings::Elt>> {
 
 // ----- residue class rings ---------------------------------------------------
 
+/// `GF(p)` with the reduction map from the integers.
+fn residue_class_field(it: &mut Interp, p: Integer) -> RResult<Vec<Value>> {
+    let f = it.finite_field(&p, 1)?;
+    let map = Value::Map(Rc::new(MapObj { kind: MapKind::Map, domain: Value::integers(), codomain: f.clone(), imp: MapImpl::Reduction(p) }));
+    Ok(vec![f, map])
+}
+
 fn residue_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     let m = a.int(0)?.clone();
     if m.sign() <= 0 {
         return Err(RuntimeError::runtime("Argument 1 must be positive"));
     }
     let r = it.residue_ring(&m);
-    let map = Value::Map(Rc::new(MapObj { kind: MapKind::Hom, domain: Value::integers(), codomain: r.clone(), imp: MapImpl::Coercion }));
+    let map = Value::Map(Rc::new(MapObj { kind: MapKind::Map, domain: Value::integers(), codomain: r.clone(), imp: MapImpl::Reduction(m) }));
     Ok(vec![r, map])
 }
 
@@ -299,55 +307,106 @@ fn assign_names(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     none()
 }
 
+fn props(a: &CallArgs) -> RResult<RingProps> {
+    ring_props(&a.args[0]).ok_or_else(|| RuntimeError::runtime("Bad argument types"))
+}
+
 fn characteristic(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    fn of(v: &Value) -> Option<Integer> {
-        Some(match v.as_struct()? {
-            StructKind::Integers | StructKind::Rationals | StructKind::Reals(_) => Integer::zero(),
-            StructKind::Ring(r) => match &r.kind {
-                RingKind::Residue(m) => m.clone(),
-                RingKind::Finite(f) => f.p.clone(),
-                RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. } => of(base)?,
-                RingKind::Complex(_) => Integer::zero(),
-            },
-            _ => return None,
-        })
-    }
-    match of(&a.args[0]) {
-        Some(c) => intv(c),
-        None => Err(RuntimeError::runtime("Bad argument types")),
+    intv(props(a)?.characteristic)
+}
+
+/// `IsFinite(R)`: also the cardinality of a finite ring.
+fn is_finite(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    match props(a)?.cardinality {
+        Some(n) => Ok(vec![Value::Bool(true), Value::Int(n)]),
+        None => boolv(false),
     }
 }
 
-fn ring_predicate(a: &CallArgs, f: impl Fn(&Ring) -> bool) -> RResult<Vec<Value>> {
-    let (_, r) = ring_arg(a, 0)?;
-    boolv(f(&r))
+fn is_true(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+    boolv(true)
 }
 
 fn is_field(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    ring_predicate(a, |r| match &r.kind {
-        RingKind::Residue(m) => m.is_prime(),
-        RingKind::Finite(_) | RingKind::Complex(_) => true,
-        _ => false,
-    })
-}
-
-fn is_finite(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    ring_predicate(a, |r| matches!(r.kind, RingKind::Residue(_) | RingKind::Finite(_)))
-}
-
-fn is_domain(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    ring_predicate(a, |r| match &r.kind {
-        RingKind::Residue(m) => m.is_prime(),
-        _ => true,
-    })
-}
-
-fn is_commutative(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    ring_predicate(a, |_| true)
+    boolv(props(a)?.field)
 }
 
 fn is_ordered(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    ring_predicate(a, |_| false)
+    boolv(props(a)?.ordered)
+}
+
+fn is_domain(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    boolv(props(a)?.domain)
+}
+
+fn is_ufd(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    boolv(props(a)?.ufd)
+}
+
+fn has_gcd(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    boolv(props(a)?.has_gcd)
+}
+
+fn is_magma_euclidean(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    boolv(props(a)?.magma_euclidean)
+}
+
+/// A property Magma cannot always decide; `algorithm` names it in the error.
+fn undecided(v: Option<bool>, algorithm: &str) -> RResult<Vec<Value>> {
+    match v {
+        Some(b) => boolv(b),
+        None => Err(RuntimeError::runtime(format!("Algorithm for '{algorithm}' not available for this object"))),
+    }
+}
+
+fn is_euclidean_domain(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    undecided(props(a)?.euclidean, "IsEuclideanDomain")
+}
+
+fn is_euclidean_ring(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    let p = props(a)?;
+    // Residue class rings are Euclidean rings even when not domains.
+    let v = if p.cardinality.is_some() && !p.field && p.magma_euclidean { Some(true) } else { p.euclidean };
+    undecided(v, "IsEuclideanRing")
+}
+
+fn is_pid(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    undecided(props(a)?.pid, "IsPrincipalIdealDomain")
+}
+
+fn is_pir(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    let p = props(a)?;
+    let v = if p.cardinality.is_some() && !p.field && p.magma_euclidean { Some(true) } else { p.pid };
+    undecided(v, "IsPrincipalIdealRing")
+}
+
+/// The smallest subring containing 1 (the prime field of a field).
+fn prime_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    fn of(it: &mut Interp, v: &Value) -> RResult<Value> {
+        Ok(match v.as_struct() {
+            Some(StructKind::Integers) => Value::integers(),
+            Some(StructKind::Rationals | StructKind::Reals(_)) => Value::rationals(),
+            Some(StructKind::Ring(r)) => match &r.kind {
+                RingKind::Complex(_) => Value::rationals(),
+                RingKind::Residue(_) => v.clone(),
+                RingKind::Finite(f) => {
+                    let p = f.p.clone();
+                    it.finite_field(&p, 1)?
+                }
+                RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. } => {
+                    let base = base.clone();
+                    of(it, &base)?
+                }
+            },
+            _ => return Err(RuntimeError::runtime("Bad argument types")),
+        })
+    }
+    let r = of(it, &a.args[0])?;
+    one(r)
+}
+
+fn centre(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    one(a.args[0].clone())
 }
 
 // ----- elements ----------------------------------------------------------------
@@ -369,8 +428,33 @@ fn is_minus_one(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     elt_pred(a, Elem::is_neg_one)
 }
 
-fn is_unit(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    elt_pred(a, Elem::is_invertible)
+fn is_unit(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    let e = elt_arg(a, 0)?;
+    boolv(elt_is_unit(it, &e.ring_rc(), &e.x))
+}
+
+/// Units: non-zero complex numbers, and constant polynomials whose constant
+/// is a unit of the coefficient ring.
+fn elt_is_unit(it: &mut Interp, ring: &Ring, x: &Elem) -> bool {
+    let base_unit = |it: &mut Interp, base: &Value, c: Elem| match it.elem_to_value(base, c) {
+        Value::Int(n) => n.is_one() || (-&n).is_one(),
+        Value::Rat(q) => q.sign() != 0,
+        Value::Real(r) => r.x.sign() != 0,
+        Value::Elt(e) => elt_is_unit(it, &e.ring_rc(), &e.x),
+        _ => false,
+    };
+    match &ring.kind {
+        RingKind::Complex(_) => x.is_zero() != Truth::True,
+        RingKind::UPoly { base, .. } => x.poly_len() == 1 && base_unit(it, base, x.poly_coeff(0)),
+        RingKind::MPoly { base, .. } => {
+            if x.mpoly_len() != 1 {
+                return false;
+            }
+            let (c, exps) = x.mpoly_term(0);
+            exps.iter().all(|&k| k == 0) && base_unit(it, base, c)
+        }
+        _ => x.is_invertible() == Truth::True,
+    }
 }
 
 fn multiplicative_order(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
@@ -430,9 +514,14 @@ pub fn register(it: &mut Interp) {
         if !p.is_prime() {
             return Err(RuntimeError::runtime("Argument must be prime"));
         }
-        let f = it.finite_field(&p, 1)?;
-        let map = Value::Map(Rc::new(MapObj { kind: MapKind::Hom, domain: Value::integers(), codomain: f.clone(), imp: MapImpl::Coercion }));
-        Ok(vec![f, map])
+        residue_class_field(it, p)
+    });
+    it.def("ResidueClassField", "I::RngInt -> FldFin, Map", "The residue class field of the maximal ideal I of the integers.", |it, a| {
+        let p = crate::rings::ideals::int_ideal_gen(&a.args[0]).unwrap_or_default();
+        if !p.is_prime() {
+            return Err(RuntimeError::runtime("Ideal is not maximal"));
+        }
+        residue_class_field(it, p)
     });
     it.def("Degree", "F::FldFin -> RngIntElt", "The degree of F over its prime field.", degree_ff);
     it.def("PrimeField", "F::Fld -> Fld", "The prime field of F.", prime_field);
@@ -465,19 +554,45 @@ pub fn register(it: &mut Interp) {
     it.def_params("ComplexField", "p::RngIntElt -> FldCom", &[("Bits", Value::Bool(false))], "The complex field with p decimal digits of precision.", complex_field);
     it.def("ComplexField", "R::FldRe -> FldCom", "The complex field containing R.", complex_field);
 
-    for t in ["RngIntRes", "FldFin", "RngUPol", "RngMPol", "FldCom"] {
+    for t in ["FldFin", "RngUPol", "RngMPol", "FldCom"] {
         it.def("Ngens", &format!("R::{t} -> RngIntElt"), "The number of generators of R.", ngens);
         it.def(".", &format!("R::{t}, i::RngIntElt -> RngElt"), "The i-th generator of R.", generator);
         it.def("Name", &format!("R::{t}, i::RngIntElt -> RngElt"), "The i-th generator of R.", generator);
         it.def("AssignNames", &format!("~R::{t}, N::[MonStgElt]"), "Set the names used to print the generators of R.", assign_names);
-        it.def("IsField", &format!("R::{t} -> BoolElt"), "Whether R is a field.", is_field);
-        it.def("IsFinite", &format!("R::{t} -> BoolElt"), "Whether R is finite.", is_finite);
-        it.def("IsDomain", &format!("R::{t} -> BoolElt"), "Whether R is an integral domain.", is_domain);
-        it.def("IsIntegralDomain", &format!("R::{t} -> BoolElt"), "Whether R is an integral domain.", is_domain);
-        it.def("IsCommutative", &format!("R::{t} -> BoolElt"), "Whether R is commutative.", is_commutative);
-        it.def("IsOrdered", &format!("R::{t} -> BoolElt"), "Whether R is ordered.", is_ordered);
     }
+    it.def("Ngens", "R::RngIntRes -> RngIntElt", "The number of generators of R.", ngens);
+    for t in ["RngUPol", "RngMPol"] {
+        it.def("Rank", &format!("R::{t} -> RngIntElt"), "The number of variables of R.", ngens);
+    }
+
+    // Properties of any ring.
     it.def("Characteristic", "R::Rng -> RngIntElt", "The characteristic of R.", characteristic);
+    it.def("IsFinite", "R::Rng -> BoolElt, RngIntElt", "Whether R is finite, and if so its cardinality.", is_finite);
+    for name in ["IsCommutative", "IsUnitary"] {
+        it.def(name, "R::Rng -> BoolElt", "True for the rings of this kind.", is_true);
+    }
+    it.def("IsOrdered", "R::Rng -> BoolElt", "Whether R is ordered.", is_ordered);
+    for name in ["IsField", "IsDivisionRing"] {
+        it.def(name, "R::Rng -> BoolElt", "Whether R is a field.", is_field);
+    }
+    it.def("IsEuclideanDomain", "R::Rng -> BoolElt", "Whether R is a Euclidean domain.", is_euclidean_domain);
+    it.def("IsEuclideanRing", "R::Rng -> BoolElt", "Whether R is a Euclidean ring.", is_euclidean_ring);
+    it.def("IsMagmaEuclideanRing", "R::Rng -> BoolElt", "Whether Magma's Euclidean algorithms (div, mod, Gcd) apply to R.", is_magma_euclidean);
+    for name in ["IsPID", "IsPrincipalIdealDomain"] {
+        it.def(name, "R::Rng -> BoolElt", "Whether R is a principal ideal domain.", is_pid);
+    }
+    for name in ["IsPIR", "IsPrincipalIdealRing"] {
+        it.def(name, "R::Rng -> BoolElt", "Whether R is a principal ideal ring.", is_pir);
+    }
+    it.def("IsUFD", "R::Rng -> BoolElt", "Whether R is a unique factorization domain.", is_ufd);
+    for name in ["IsDomain", "IsIntegralDomain"] {
+        it.def(name, "R::Rng -> BoolElt", "Whether R is an integral domain.", is_domain);
+    }
+    it.def("HasGCD", "R::Rng -> BoolElt", "Whether greatest common divisors can be computed in R.", has_gcd);
+    it.def("PrimeRing", "R::Rng -> Rng", "The prime ring of R (its prime field if R is a field).", prime_ring);
+    for name in ["Centre", "Center"] {
+        it.def(name, "R::Rng -> Rng", "The centre of R (R itself: these rings are commutative).", centre);
+    }
 
     for t in ["RngIntResElt", "FldFinElt", "RngUPolElt", "RngMPolElt", "FldComElt"] {
         it.def("IsZero", &format!("x::{t} -> BoolElt"), "Whether x is zero.", is_zero);

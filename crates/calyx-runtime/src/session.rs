@@ -319,10 +319,27 @@ impl Interp {
 
     /// `Name< ... | ... >` constructors other than the built-in ones.
     pub fn constructor(&mut self, name: Sym, left: Vec<Value>, right: Option<Vec<Value>>) -> RResult<Value> {
+        let mut vals = self.constructor_multi(name, left, right)?;
+        Ok(vals.swap_remove(0))
+    }
+
+    /// A constructor with all its return values (`ideal< >` and `quo< >`
+    /// also return a map).
+    pub fn constructor_multi(&mut self, name: Sym, left: Vec<Value>, right: Option<Vec<Value>>) -> RResult<Vec<Value>> {
+        let rhs = right.clone().unwrap_or_default();
+        let built_in = match (&*name.as_rc(), left.first()) {
+            ("ideal", Some(base)) => self.ideal_constructor(base, &rhs)?,
+            ("quo", Some(base)) => self.quo_constructor(base, &rhs)?,
+            ("ext", Some(_)) => self.ext_constructor(&left, &rhs)?,
+            _ => None,
+        };
+        if let Some(vals) = built_in {
+            return Ok(vals);
+        }
         match &*name.as_rc() {
             "__real_literal" => {
                 let Some(Value::Str(s)) = left.first() else { unreachable!() };
-                crate::intrinsics::reals::real_literal(s)
+                Ok(vec![crate::intrinsics::reals::real_literal(s)?])
             }
             "sub" | "quo" | "ext" | "ideal" | "lideal" | "rideal" | "ncl" => {
                 let ctor = match &*name.as_rc() {
@@ -337,9 +354,9 @@ impl Interp {
                 let rest = Value::tuple(right.unwrap_or_default());
                 let sym = Sym::new(ctor);
                 if self.intrinsics.contains(sym) {
-                    return self.call_intrinsic_named(sym, vec![base, rest]);
+                    return Ok(vec![self.call_intrinsic_named(sym, vec![base, rest])?]);
                 }
-                Err(RuntimeError::runtime(format!("{name}< > is not supported for objects of type {}", self.type_name(&base))))
+                Err(RuntimeError::runtime("No constructor provided for this type of object"))
             }
             _ => Err(RuntimeError::runtime(format!("Unknown constructor '{name}< >'"))),
         }

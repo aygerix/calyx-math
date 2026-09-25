@@ -1,0 +1,24 @@
+// Infinity, which #R returns for infinite rings.
+I := Infinity();
+I; -I; Type(I); Parent(I);
+I : Magma; -I : Magma; I : Minimal;
+#Integers(); #Rationals() eq I; #Integers(6);
+I - 1; 1 - I; I + I; -I + -I; I * -1; -2 * I; I / 2; 1 / I; I^2; (-I)^3;
+I div 2;
+I - I;
+I * 0;
+I mod 2;
+I eq 5; I ne 5; 5 lt I; -I lt -10^100; I lt 1/2; I gt RealField()!2;
+I eq -I; I cmpeq 1; I eq Infinity();
+Max(I, 3); Min(-I, 3);
+Maximum([3, I]);
+Sort([I, 1, -I, 1/2]);
+[I, -I]; {I}; <I, 1>; I, 1;
+Universe([I]);
+Universe([3, I]);
+Universe([1/2, I]);
+ExtendedReals();
+I in Integers();
+Integers()!I;
+Hash(I) eq Hash(Infinity());
+Abs(-I); Sign(-I); IsFinite(I);

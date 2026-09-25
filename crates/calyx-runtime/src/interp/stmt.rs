@@ -93,7 +93,7 @@ impl Interp {
                     }
                 }
             }
-            St::Assign(targets, value) => {
+            St::Assign(targets, value, at) => {
                 if targets.len() == 1 {
                     let v = self.eval(value, f)?;
                     if v.is_undef() {
@@ -103,12 +103,8 @@ impl Interp {
                 } else {
                     let vals = self.eval_multi(value, f, targets.len())?;
                     if vals.len() < targets.len() {
-                        return Err(RuntimeError::runtime(format!(
-                            "Expression returned {} value{} but {} are required",
-                            vals.len(),
-                            if vals.len() == 1 { "" } else { "s" },
-                            targets.len()
-                        )));
+                        let msg = format!("Expected to assign {} value(s) but only computed {} value(s)", targets.len(), vals.len());
+                        return Err(RuntimeError::statement(":=", msg).at(*at));
                     }
                     for (t, v) in targets.iter().zip(vals) {
                         if v.is_undef() {

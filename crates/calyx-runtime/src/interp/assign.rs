@@ -190,11 +190,18 @@ impl Interp {
     }
 
     pub fn put_place(&mut self, p: Place, v: Value, f: &mut Frame) {
-        if let Value::Struct(st) = &v {
-            if matches!(st.kind, StructKind::RecFormat(_) | StructKind::Coproduct(_) | StructKind::Cartesian(_)) && st.name.borrow().is_none() {
-                *st.name.borrow_mut() = Some(p.name());
+        // A structure or aggregate is known by the first name it is
+        // assigned to.
+        if let Some(cell) = v.name_cell() {
+            if cell.borrow().is_none() {
+                *cell.borrow_mut() = Some(p.name());
             }
         }
+        self.store_place(p, v, f);
+    }
+
+    /// Store a value without naming it.
+    pub fn store_place(&mut self, p: Place, v: Value, f: &mut Frame) {
         match p {
             Place::Local(s, _) => f.slots[s as usize] = v,
             Place::Global(n) => self.set_global(n, v),
@@ -762,7 +769,7 @@ impl Interp {
                         let k = seq_index(k, "Indexed set").map_err(|e| e.in_context(ctx))?;
                         out.insert(s.elems.get_index(k - 1).cloned().ok_or_else(|| RuntimeError::runtime(format!("Index {k} is out of range")).in_context(ctx))?);
                     }
-                    return Ok(Value::ISet(Rc::new(SetIndx { universe: s.universe.clone(), elems: out })));
+                    return Ok(Value::ISet(Rc::new(SetIndx { universe: s.universe.clone(), elems: out, name: Default::default() })));
                 }
                 let k = seq_index(i, "Indexed set").map_err(|e| e.in_context(ctx))?;
                 s.elems.get_index(k - 1).cloned().ok_or_else(|| RuntimeError::runtime(format!("Index {k} is out of range")).in_context(ctx))

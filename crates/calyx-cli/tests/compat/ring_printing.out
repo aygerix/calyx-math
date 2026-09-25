@@ -1,0 +1,137 @@
+Integer Ring
+Integer Ring
+IntegerRing()
+Rational Field
+Rational Field
+RationalField()
+Real field of precision 30
+R
+RealField(30)
+Real field of precision 20
+R
+RealField(20)
+Complex field of precision 30
+R
+ComplexField(30)
+Complex field of precision 20
+R
+ComplexField(20)
+Residue class ring of integers modulo 6
+IntegerRing(6)
+IntegerRing(6)
+Finite field of size 7
+GF(7)
+GF(7)
+Finite field of size 3^2
+GF(3^2)
+GF(3, 2)
+Finite field of size 2^30
+GF(2^30)
+GF(2, 30)
+Univariate Polynomial Ring over Rational Field
+Univariate Polynomial Ring over Rational Field
+PolynomialRing(RationalField())
+Univariate Polynomial Ring over IntegerRing(6)
+Univariate Polynomial Ring over IntegerRing(6)
+PolynomialRing(IntegerRing(6))
+Univariate Polynomial Ring over GF(3^2)
+Univariate Polynomial Ring over GF(3^2)
+PolynomialRing(GF(3, 2))
+Univariate Polynomial Ring over GF(7)
+Univariate Polynomial Ring over GF(7)
+PolynomialRing(GF(7))
+Univariate Polynomial Ring over Real field of precision 30
+Univariate Polynomial Ring over Real field of precision 30
+PolynomialRing(RealField(30))
+Univariate Polynomial Ring over Complex field of precision 30
+Univariate Polynomial Ring over Complex field of precision 30
+PolynomialRing(ComplexField(30))
+Univariate Polynomial Ring over Univariate Polynomial Ring over Rational Field
+Univariate Polynomial Ring over Univariate Polynomial Ring over Rational Field
+PolynomialRing(PolynomialRing(RationalField()))
+Polynomial ring of rank 2 over Integer Ring
+Order: Lexicographical
+Variables: $.1, $.2
+Polynomial ring of rank 2 over Integer Ring
+PolynomialRing(IntegerRing(), 2)
+Polynomial ring of rank 3 over Rational Field
+Order: Graded Reverse Lexicographical
+Variables: $.1, $.2, $.3
+Polynomial ring of rank 3 over Rational Field
+PolynomialRing(RationalField(), 3, "grevlex")
+Polynomial ring of rank 3 over Rational Field
+Order: Graded Lexicographical
+Variables: $.1, $.2, $.3
+Polynomial ring of rank 3 over Rational Field
+PolynomialRing(RationalField(), 3, "glex")
+Polynomial ring of rank 2 over GF(3^2)
+Order: Lexicographical
+Variables: $.1, $.2
+Polynomial ring of rank 2 over GF(3^2)
+PolynomialRing(GF(3, 2), 2)
+Polynomial ring of rank 2 over Univariate Polynomial Ring over Rational Field
+Order: Lexicographical
+Variables: $.1, $.2
+Polynomial ring of rank 2 over Univariate Polynomial Ring over Rational Field
+PolynomialRing(PolynomialRing(RationalField()), 2)
+Polynomial ring of rank 2 over Polynomial ring of rank 2 over Rational Field
+Order: Lexicographical
+Variables: $.1, $.2
+Polynomial ring of rank 2 over Polynomial ring of rank 2 over Rational Field
+PolynomialRing(PolynomialRing(RationalField(), 2), 2)
+[
+    Univariate Polynomial Ring over IntegerRing(6)
+]
+[
+    Polynomial ring of rank 2 over Rational Field
+    Order: Lexicographical
+    Variables: $.1, $.2,
+    Polynomial ring of rank 2 over Rational Field
+    Order: Lexicographical
+    Variables: $.1, $.2
+]
+<Polynomial ring of rank 2 over GF(5)
+Order: Lexicographical
+Variables: $.1, $.2, 1>
+Polynomial ring of rank 2 over GF(5)
+Order: Lexicographical
+Variables: $.1, $.2
+1
+F.1
+F.1^7
+F.1
+F.1
+G.1
+P.1
+P.1^2 + 1
+P.1
+Univariate Polynomial Ring over Rational Field
+$.1
+Polynomial ring of rank 2 over Rational Field
+Order: Lexicographical
+Variables: $.1, $.2
+$.1
+z
+z
+r
+r
+Univariate Polynomial Ring over IntegerRing(6)
+S.1^2 + 1
+Mapping from: Integer Ring to Integer Ring given by a rule [no inverse]
+Mapping from: RngInt: Z to RngInt: Z given by a rule [no inverse]
+Mapping from: RngInt: Z to RngInt: Z given by a rule [no inverse]
+Mapping from: FldRat: Q to FldRat: Q given by a rule [no inverse]
+Mapping from: FldRe: R to FldRe: R given by a rule [no inverse]
+Mapping from: FldRe: R2 to FldRe: R2 given by a rule [no inverse]
+Mapping from: Bool: B to Bool: B given by a rule [no inverse]
+Mapping from: MonStg: St to MonStg: St given by a rule [no inverse]
+Mapping from: PowSetEnum: PS to PowSetEnum: PS given by a rule [no inverse]
+Mapping from: RngIntRes: Z6 to RngIntRes: Z6 given by a rule [no inverse]
+Mapping from: FldFin: F to FldFin: F given by a rule [no inverse]
+Mapping from: FldCom: C to FldCom: C given by a rule [no inverse]
+Mapping from: RngMPol: M to RngMPol: M given by a rule [no inverse]
+Mapping from: RngUPol: P to RngUPol: P given by a rule [no inverse]
+Mapping from: GF(7) to GF(7) given by a rule [no inverse]
+Mapping from: Polynomial ring of rank 2 over Rational Field to FldRat: Q given
+by a rule [no inverse]
+

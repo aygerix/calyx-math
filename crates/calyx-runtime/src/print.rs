@@ -140,7 +140,7 @@ impl Printer {
 /// Whether an element prints on one line inside an aggregate.
 fn is_simple(v: &Value) -> bool {
     match v {
-        Value::Int(_) | Value::Rat(_) | Value::Real(_) | Value::Bool(_) | Value::Str(_) | Value::Cat(_) | Value::ECat(_) | Value::Undef | Value::Intr(_) => true,
+        Value::Int(_) | Value::Rat(_) | Value::Real(_) | Value::Bool(_) | Value::Str(_) | Value::Cat(_) | Value::ECat(_) | Value::Undef | Value::Intr(_) | Value::Infinity(_) => true,
         Value::Tuple(t) => t.elems.iter().all(is_simple),
         Value::List(_) => true,
         Value::CopElt(c) => is_simple(&c.value),
@@ -161,12 +161,18 @@ fn elt_is_compound(e: &crate::rings::Elt) -> bool {
     }
 }
 
+/// The name a structure was assigned to, or `$`.
+fn group_name(s: &Struct) -> String {
+    s.name.borrow().map(|n| n.to_string()).unwrap_or_else(|| "$".to_string())
+}
+
 /// Whether the next value in a print list goes on a new line after `v`
 /// (rather than after a space).
 fn needs_newline(v: &Value) -> bool {
     match v {
         Value::Seq(_) | Value::Set(_) | Value::ISet(_) | Value::MSet(_) | Value::Struct(_) | Value::Rec(_) => true,
         Value::Elt(e) => elt_is_compound(e),
+        Value::Perm(_) => true,
         Value::Tuple(t) => t.elems.iter().any(needs_newline),
         _ => false,
     }
@@ -420,9 +426,9 @@ impl Interp {
                 // Domain and codomain print briefly (named structures by name).
                 let saved = p.level;
                 p.level = Level::Minimal;
-                self.fmt(p, &m.domain, indent)?;
+                self.fmt_map_end(p, &m.domain, indent)?;
                 p.write(" to ");
-                self.fmt(p, &m.codomain, indent)?;
+                self.fmt_map_end(p, &m.codomain, indent)?;
                 p.level = saved;
                 match &m.imp {
                     MapImpl::Rule { inv, .. } => {
@@ -445,6 +451,10 @@ impl Interp {
                     MapImpl::Compose(ms) => {
                         p.newline(indent);
                         p.write(&format!("Composition of {} maps", ms.len()));
+                    }
+                    MapImpl::Reduction(m) => {
+                        p.newline(indent);
+                        p.write(&format!("modulo {m}"));
                     }
                     _ => {}
                 }
@@ -478,8 +488,40 @@ impl Interp {
                 p.write(&s);
                 p.cont = saved;
             }
+            Value::Infinity(pos) => p.write(match (p.level == Level::Magma, *pos) {
+                (false, true) => "Infinity",
+                (false, false) => "-Infinity",
+                (true, true) => "Infinity()",
+                (true, false) => "MinusInfinity()",
+            }),
+            Value::Perm(pm) => {
+                if p.level == Level::Magma {
+                    let images = Value::int_seq(pm.images.iter().map(|&x| calyx_flint::Integer::from_u64(x as u64 + 1)));
+                    return self.fmt(p, &images, indent);
+                }
+                let text = match pm.cycle_notation() {
+                    Some(c) => c,
+                    None => format!("Id({})", group_name(&pm.group)),
+                };
+                // Continuation lines of long cycles are indented further.
+                let saved = p.cont;
+                p.cont += 4;
+                p.write(&text);
+                p.cont = saved;
+            }
         }
         Ok(())
+    }
+
+    /// The domain or codomain of a map: a named structure or aggregate by
+    /// its category and name.
+    fn fmt_map_end(&mut self, p: &mut Printer, v: &Value, indent: usize) -> RResult<()> {
+        if let Some(n) = v.name_cell().and_then(|c| *c.borrow()) {
+            let t = self.types.name(v.type_id());
+            p.write(&format!("{t}: {n}"));
+            return Ok(());
+        }
+        self.fmt(p, v, indent)
     }
 
     /// Print an aggregate horizontally if all elements are simple,
@@ -614,6 +656,8 @@ impl Interp {
         match &s.kind {
             StructKind::Integers => p.write("Integer Ring"),
             StructKind::Rationals => p.write("Rational Field"),
+            // Real and complex fields print their name at the minimal level.
+            StructKind::Reals(_) if p.level == Level::Minimal && s.name.borrow().is_some() => p.write(&group_name(s)),
             StructKind::Reals(d) => p.write(&format!("Real field of precision {d}")),
             StructKind::Booleans => p.write("Boolean Structure"),
             StructKind::Strings => p.write("String structure"),
@@ -677,9 +721,43 @@ impl Interp {
                 self.fmt(p, c, indent)?;
             }
             StructKind::PowerStructure(t) => p.write(&format!("Power Structure of {}", self.types.name(*t))),
+            StructKind::Ring(r) if p.level == Level::Minimal && matches!(r.kind, crate::rings::RingKind::Complex(_)) && s.name.borrow().is_some() => p.write(&group_name(s)),
             StructKind::Ring(r) => {
-                let text = self.format_ring(r, p.level)?;
-                p.write(&text);
+                let lines = self.format_ring(r, p.level)?;
+                // A multivariate ring's first line continues further indented.
+                let saved = p.cont;
+                if matches!(r.kind, crate::rings::RingKind::MPoly { .. }) {
+                    p.cont += 4;
+                }
+                for (i, line) in lines.iter().enumerate() {
+                    if i > 0 {
+                        p.cont = saved;
+                        p.newline(indent);
+                    }
+                    p.write(line);
+                }
+                p.cont = saved;
+            }
+            StructKind::IntIdeal(n) => p.write(&if p.level == Level::Magma { format!("ideal<IntegerRing() | {n}>") } else { format!("Ideal of Integer Ring generated by {n}") }),
+            StructKind::ExtendedReals => p.write(if p.level == Level::Magma { "ExtendedReals()" } else { "Extended Reals" }),
+            StructKind::SymGroup(n) => {
+                let n = *n as usize;
+                let name = group_name(s);
+                let fact = crate::perms::factorial_factorization(n);
+                match p.level {
+                    Level::Magma => p.write(&format!("Sym({n})")),
+                    Level::Minimal => p.write(&format!("GrpPerm: {name}, Degree {n}, Order {fact}")),
+                    _ => {
+                        let named = s.name.borrow().map(|n| format!("{n} ")).unwrap_or_default();
+                        p.write(&format!("Symmetric group {named}acting on a set of cardinality {n}"));
+                        p.newline(indent);
+                        let order = calyx_flint::Integer::factorial(n as u64).to_string();
+                        p.write(&format!("Order = {order}"));
+                        if fact != order {
+                            p.write(&format!(" = {fact}"));
+                        }
+                    }
+                }
             }
         }
         Ok(())

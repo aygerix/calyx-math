@@ -35,9 +35,11 @@ Development follows the order of the Magma handbook. Currently implemented:
 - **Part II, Sets, Sequences, and Mappings**: enumerated, indexed and
   multi-sets, sequences, tuples and Cartesian products, lists, associative
   arrays, coproducts, records, and maps.
-- Enough of the integers, rationals and reals (Part III) to support the above,
-  and the start of Part III: residue class rings, finite fields, polynomial
-  rings and the complex field (see the roadmap).
+- **Part III, Basic Rings** (in progress): residue class rings, finite
+  fields, polynomial rings and the complex field, and the generic ring
+  functions of the chapter "Introduction to Rings" (ring properties,
+  element predicates, ideals of the integers). The other chapters follow
+  (see the roadmap).
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for a detailed checklist and what
 comes next.

@@ -239,7 +239,8 @@ pub enum St {
     Printf(Vec<E>),
     Fprintf(E, Vec<E>),
     Vprint(Sym, Option<E>, Vec<E>, bool),
-    Assign(Vec<LV>, E),
+    /// The targets, the value, and the span of `:=`.
+    Assign(Vec<LV>, E, Span),
     OpAssign(LV, BinOp, E),
     GenAssign(LV, GenNamesEx, E),
     If(Vec<(E, Vec<S>)>, Option<Vec<S>>),

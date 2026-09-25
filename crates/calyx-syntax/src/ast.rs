@@ -407,7 +407,8 @@ pub enum StmtKind {
     Fprintf(Expr, Vec<Expr>),
     Vprint(Name, Option<Expr>, Vec<Expr>),
     Vprintf(Name, Option<Expr>, Vec<Expr>),
-    Assign(Vec<LValue>, Expr),
+    /// The targets, the value, and the span of `:=`.
+    Assign(Vec<LValue>, Expr, Span),
     OpAssign(LValue, BinOp, Expr),
     GenAssign(LValue, GenNames, Expr),
     If(Vec<(Expr, Vec<Stmt>)>, Option<Vec<Stmt>>),

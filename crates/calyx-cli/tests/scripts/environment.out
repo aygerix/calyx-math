@@ -46,11 +46,17 @@ Gcd(<FldRatElt> x, <RngIntElt> y) -> FldRatElt
 GreatestCommonDivisor(<FldRatElt> x, <FldRatElt> y) -> FldRatElt
 GreatestCommonDivisor(<RngIntElt> x, <FldRatElt> y) -> FldRatElt
 GreatestCommonDivisor(<FldRatElt> x, <RngIntElt> y) -> FldRatElt
+IsIdempotent(<RngElt> x) -> BoolElt
 IsIntegral(<FldRatElt> x) -> BoolElt
+IsIrreducible(<RngElt> x) -> BoolElt
 IsMinusOne(<FldRatElt> x) -> BoolElt
+IsNilpotent(<RngElt> x) -> BoolElt, RngIntElt
 IsOne(<FldRatElt> x) -> BoolElt
+IsPrime(<RngElt> x) -> BoolElt
 IsSquare(<FldRatElt> x) -> BoolElt, FldRatElt
+IsUnit(<FldRatElt> x) -> BoolElt
 IsZero(<FldRatElt> x) -> BoolElt
+IsZeroDivisor(<RngElt> x) -> BoolElt
 Numerator(<FldRatElt> x) -> RngIntElt
 Round(<FldRatElt> x) -> RngIntElt
 Sign(<FldRatElt> x) -> RngIntElt

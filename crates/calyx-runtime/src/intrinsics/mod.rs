@@ -4,9 +4,12 @@
 pub mod aggregates;
 pub mod core;
 pub mod env;
+pub mod ideals;
 pub mod ints;
 pub mod io;
 pub mod maps;
+pub mod perms;
+pub mod ring_elts;
 pub mod reals;
 pub mod rings;
 pub mod strings;
@@ -325,6 +328,9 @@ pub fn register_all(it: &mut Interp) {
     aggregates::register(it);
     maps::register(it);
     rings::register(it);
+    perms::register(it);
+    ring_elts::register(it);
+    ideals::register(it);
     io::register(it);
     env::register(it);
 }

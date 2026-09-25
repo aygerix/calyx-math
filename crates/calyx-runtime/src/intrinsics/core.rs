@@ -212,7 +212,8 @@ fn one_of(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
 fn random_elt(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     let s = a.args[0].clone();
     match &s {
-        Value::Struct(st) if matches!(st.kind, StructKind::Integers) => Err(RuntimeError::runtime("Cannot choose a random element of an infinite structure")),
+        // Infinite rings have no Random.
+        _ if crate::rings::props::ring_props(&s).is_some_and(|p| p.cardinality.is_none()) => Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}", it.type_name_ext(&s)))),
         Value::Formal(_) => Err(RuntimeError::runtime("Cannot choose a random element of a formal set")),
         _ => {
             let (_, x) = it.random_element_indexed(&s)?;

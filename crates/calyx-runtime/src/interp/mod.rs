@@ -117,6 +117,8 @@ pub struct Interp {
     pub read_line_hook: Option<Box<dyn FnMut(&str) -> Option<String>>>,
     /// Canonical rings (residue class rings, finite fields, ...).
     pub rings: crate::rings::RingCache,
+    /// The symmetric groups, one per degree.
+    pub groups: crate::perms::GroupCache,
     /// The identifier a function is being called through.
     pub pending_call_name: Option<String>,
 }
@@ -163,6 +165,7 @@ impl Interp {
             input_lines: VecDeque::new(),
             read_line_hook: None,
             rings: Default::default(),
+            groups: Default::default(),
             pending_call_name: None,
         };
         crate::intrinsics::register_all(&mut it);

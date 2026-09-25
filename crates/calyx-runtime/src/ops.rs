@@ -60,6 +60,74 @@ fn real_value(x: calyx_flint::Real, digits: u32, fixed: Option<u32>) -> Value {
     Value::Real(Rc::new(RealV { x, digits, fixed }))
 }
 
+/// The sign of a number or infinity, if `v` is one.
+fn extended_sign(v: &Value) -> Option<i32> {
+    Some(match v {
+        Value::Int(i) => i.sign(),
+        Value::Rat(q) => q.sign(),
+        Value::Real(r) => r.x.sign(),
+        Value::Infinity(pos) => {
+            if *pos {
+                1
+            } else {
+                -1
+            }
+        }
+        _ => return None,
+    })
+}
+
+/// Arithmetic with an infinite operand (the other being a number or
+/// infinity).
+fn infinity_binop(op: BinOp, a: &Value, b: &Value) -> RResult<Option<Value>> {
+    use BinOp::*;
+    let (Some(sa), Some(sb)) = (extended_sign(a), extended_sign(b)) else { return Ok(None) };
+    let (ia, ib) = (matches!(a, Value::Infinity(_)), matches!(b, Value::Infinity(_)));
+    let undefined = || Err(RuntimeError::runtime("Result of computation is not well defined").in_context(op.intrinsic_name()));
+    let inf = |s: i32| Ok(Some(Value::Infinity(s > 0)));
+    match op {
+        Add | Sub => {
+            let sb = if op == Sub { -sb } else { sb };
+            match (ia, ib) {
+                (true, true) if sa != sb => undefined(),
+                (true, _) => inf(sa),
+                _ => inf(sb),
+            }
+        }
+        Mul => {
+            if sa == 0 || sb == 0 {
+                return undefined();
+            }
+            inf(sa * sb)
+        }
+        Div | IntDiv => match (ia, ib) {
+            (true, true) => undefined(),
+            (false, true) => Ok(Some(Value::int(0))),
+            _ if sb == 0 => Err(div_by_zero().in_context(op.intrinsic_name())),
+            _ => inf(sa * sb),
+        },
+        Mod => Err(RuntimeError::runtime("Bad argument types\nArgument types given: ExtReElt, ExtReElt").in_context("mod")),
+        Pow if ia => match b {
+            Value::Int(k) if k.sign() > 0 => inf(if sa < 0 && k.is_odd() { -1 } else { 1 }),
+            Value::Int(k) if k.sign() < 0 => Ok(Some(Value::int(0))),
+            Value::Int(_) => Ok(Some(Value::int(1))),
+            _ => Ok(None),
+        },
+        Eq | Cmpeq => Ok(Some(Value::Bool(a == b))),
+        Ne | Cmpne => Ok(Some(Value::Bool(a != b))),
+        Lt | Le | Gt | Ge => {
+            let o = natural_cmp(a, b).unwrap_or(std::cmp::Ordering::Equal);
+            Ok(Some(Value::Bool(match op {
+                Lt => o.is_lt(),
+                Le => o.is_le(),
+                Gt => o.is_gt(),
+                _ => o.is_ge(),
+            })))
+        }
+        _ => Ok(None),
+    }
+}
+
 pub fn div_by_zero() -> RuntimeError {
     RuntimeError::runtime("Division by zero")
 }
@@ -88,7 +156,15 @@ impl Interp {
                 _ => {}
             }
         }
-        let ring_result = if matches!(a, Value::Elt(_)) || matches!(b, Value::Elt(_)) { self.ring_binop(op, &a, &b)? } else { None };
+        let ring_result = if matches!(a, Value::Elt(_)) || matches!(b, Value::Elt(_)) {
+            self.ring_binop(op, &a, &b)?
+        } else if matches!(a, Value::Perm(_)) || matches!(b, Value::Perm(_)) {
+            self.perm_binop(op, &a, &b)?
+        } else if matches!((&a, &b), (Value::Struct(_), Value::Struct(_))) {
+            self.ideal_binop(op, &a, &b)?
+        } else {
+            None
+        };
         let builtin = match ring_result {
             Some(v) => Some(v),
             None => self.builtin_binop(op, &a, &b)?,
@@ -165,6 +241,11 @@ impl Interp {
     fn builtin_binop(&mut self, op: BinOp, a: &Value, b: &Value) -> RResult<Option<Value>> {
         use BinOp::*;
         use Value::{Bool, Int, List, Seq, Str};
+        if matches!(a, Value::Infinity(_)) || matches!(b, Value::Infinity(_)) {
+            if let Some(v) = infinity_binop(op, a, b)? {
+                return Ok(Some(v));
+            }
+        }
         Ok(Some(match op {
             Add | Sub | Mul | Div if is_real_mix(a, b) => {
                 let (x, y, d, fx) = reals_of(a, b);
@@ -260,7 +341,12 @@ impl Interp {
             },
             Join | Meet | Diff | Sdiff => return self.set_op(op, a, b),
             Eq | Ne => {
-                let e = self.compare_eq(a, b, true)?;
+                let e = self.compare_eq(a, b, true).map_err(|mut e| {
+                    if op == Ne && e.context.as_deref() == Some("eq") {
+                        e.context = Some("ne".into());
+                    }
+                    e
+                })?;
                 match e {
                     Some(e) => Bool(if op == Eq { e } else { !e }),
                     None => return Ok(None),
@@ -338,6 +424,7 @@ impl Interp {
 
     pub fn negate(&mut self, v: Value) -> RResult<Value> {
         match v {
+            Value::Infinity(pos) => Ok(Value::Infinity(!pos)),
             Value::Int(i) => Ok(Value::Int(-i)),
             Value::Rat(q) => Ok(Value::rat(-&*q)),
             Value::Real(r) => Ok(Value::Real(Rc::new(RealV { x: r.x.neg(), digits: r.digits, fixed: r.fixed }))),
@@ -381,6 +468,13 @@ impl Interp {
                 // For a coproduct, # gives the number of constituents.
                 StructKind::Coproduct(parts) => parts.len(),
                 StructKind::RecFormat(r) => r.names.len(),
+                StructKind::SymGroup(n) => return Ok(Value::Int(Integer::factorial(*n as u64))),
+                _ if crate::rings::props::ring_props(v).is_some() => {
+                    return Ok(match crate::rings::props::ring_props(v).unwrap().cardinality {
+                        Some(n) => Value::Int(n),
+                        None => Value::Infinity(true),
+                    });
+                }
                 _ => {
                     if let Some(r) = self.dispatch_user_operator("#", vec![v.clone()])? {
                         return Ok(r);
@@ -419,6 +513,49 @@ impl Interp {
             if matches!(x.kind, StructKind::RecFormat(_)) && matches!(y.kind, StructKind::RecFormat(_)) {
                 return Ok(None);
             }
+            if let (StructKind::SymGroup(m), StructKind::SymGroup(n)) = (&x.kind, &y.kind) {
+                if m != n {
+                    return incompatible("Could not find a covering group");
+                }
+            }
+            if !Rc::ptr_eq(x, y) {
+                if let (Some(_), Some(_)) = (crate::rings::props::ring_props(a), crate::rings::props::ring_props(b)) {
+                    use crate::rings::RingKind;
+                    let types = format!("Argument types given: {}, {}", self.type_name_ext(a), self.type_name_ext(b));
+                    let kind = |s: &crate::value::Struct| match &s.kind {
+                        StructKind::Ring(r) => match &r.kind {
+                            RingKind::UPoly { base, .. } => (1, Some(base.clone())),
+                            RingKind::MPoly { .. } => (2, None),
+                            _ => (0, None),
+                        },
+                        _ => (0, None),
+                    };
+                    // The integers and rationals compare; other rings of
+                    // different kinds cannot.
+                    if a.type_id() != b.type_id() {
+                        if matches!((&x.kind, &y.kind), (StructKind::Integers, StructKind::Rationals) | (StructKind::Rationals, StructKind::Integers)) {
+                            return Ok(Some(false));
+                        }
+                        return incompatible(&format!("Bad argument types\n{types}"));
+                    }
+                    match (kind(x), kind(y)) {
+                        ((1, Some(p)), (1, Some(q))) if p != q => return incompatible(&format!("Arguments are not compatible\n{types}")),
+                        ((2, _), (2, _)) => return incompatible(&format!("Arguments are not compatible\n{types}")),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        if matches!(a, Value::Infinity(_)) || matches!(b, Value::Infinity(_)) {
+            if extended_sign(a).is_some() && extended_sign(b).is_some() {
+                return Ok(Some(a == b));
+            }
+        }
+        if let (Value::Perm(x), Value::Perm(y)) = (a, b) {
+            if x.degree() != y.degree() {
+                return incompatible("Arguments are not compatible\nArgument types given: GrpPermElt, GrpPermElt");
+            }
+            return Ok(Some(x.images == y.images));
         }
         Ok(Some(match (a, b) {
             (Int(x), Int(y)) => x == y,
@@ -542,6 +679,11 @@ impl Interp {
             }
             (Str(x), Str(y)) => x.cmp(y),
             (Bool(x), Bool(y)) => x.cmp(y),
+            (Infinity(_), _) | (_, Infinity(_)) => return Ok(natural_cmp(a, b)),
+            (Elt(x), Elt(y)) if x.ring().id == y.ring().id => {
+                let ring = x.ring_rc();
+                return self.ring_elt_cmp(&ring, &x.x, &y.x);
+            }
             (Seq(x), Seq(y)) => {
                 for (p, q) in x.elems.iter().zip(&y.elems) {
                     match self.compare_ord(p, q)? {
@@ -643,7 +785,7 @@ impl Interp {
                         v
                     }
                 };
-                Ok(Some(Value::ISet(Rc::new(SetIndx { universe: u, elems: out }))))
+                Ok(Some(Value::ISet(Rc::new(SetIndx { universe: u, elems: out, name: Default::default() }))))
             }
             (Value::MSet(x), Value::MSet(y)) => {
                 let u = univ(self, &x.universe, &y.universe)?;
@@ -696,7 +838,7 @@ impl Interp {
                         }
                     }
                 }
-                Ok(Some(Value::MSet(Rc::new(SetMulti { universe: u, elems: out }))))
+                Ok(Some(Value::MSet(Rc::new(SetMulti { universe: u, elems: out, name: Default::default() }))))
             }
             _ => Ok(None),
         }
@@ -785,8 +927,8 @@ impl Interp {
                 BinOp::Join => Ok(match universe {
                     Some(Value::Struct(st)) => match &st.kind {
                         StructKind::PowerSet(u) => Value::Set(Rc::new(SetEnum::new(u.clone(), VSet::default()))),
-                        StructKind::PowerISet(u) => Value::ISet(Rc::new(SetIndx { universe: u.clone(), elems: VSet::default() })),
-                        StructKind::PowerMSet(u) => Value::MSet(Rc::new(SetMulti { universe: u.clone(), elems: VMap::default() })),
+                        StructKind::PowerISet(u) => Value::ISet(Rc::new(SetIndx { universe: u.clone(), elems: VSet::default(), name: Default::default() })),
+                        StructKind::PowerMSet(u) => Value::MSet(Rc::new(SetMulti { universe: u.clone(), elems: VMap::default(), name: Default::default() })),
                         _ => Value::Set(Rc::new(SetEnum::new(None, VSet::default()))),
                     },
                     _ => Value::Set(Rc::new(SetEnum::new(None, VSet::default()))),
@@ -825,7 +967,7 @@ impl Interp {
     pub fn apply_map(&mut self, m: &Rc<MapObj>, x: &Value) -> RResult<Value> {
         let x = match self.try_coerce(&m.domain, x)? {
             Ok(v) => v,
-            Err(_) => return Err(RuntimeError::runtime("Element is not in the domain of the map").in_context("@")),
+            Err(_) => return Err(RuntimeError::runtime("Element is not in the domain of the map").in_context("map application")),
         };
         let y = match &m.imp {
             MapImpl::Rule { f, .. } => {
@@ -834,7 +976,7 @@ impl Interp {
             }
             MapImpl::Graph(g) => match g.get(&x) {
                 Some(y) => y.clone(),
-                None => return Err(RuntimeError::runtime("Application of map failed").in_context("@")),
+                None => return Err(RuntimeError::runtime("Application of map failed").in_context("map application")),
             },
             MapImpl::Compose(ms) => {
                 let mut v = x;
@@ -843,7 +985,7 @@ impl Interp {
                 }
                 return Ok(v);
             }
-            MapImpl::Coercion => x,
+            MapImpl::Coercion | MapImpl::Reduction(_) => x,
             MapImpl::Injection(i) => {
                 let Value::Struct(st) = &m.codomain else { unreachable!() };
                 Value::CopElt(Rc::new(CopElt { cop: st.clone(), index: *i, value: x }))
@@ -853,8 +995,8 @@ impl Interp {
                 return self.map_preimage(&inner, &x);
             }
         };
-        if matches!(m.imp, MapImpl::Rule { .. }) {
-            return self.coerce(&m.codomain, &y).map_err(|_| RuntimeError::runtime("Image of the element is not in the codomain of the map").in_context("@"));
+        if matches!(m.imp, MapImpl::Rule { .. } | MapImpl::Coercion | MapImpl::Reduction(_)) {
+            return self.coerce(&m.codomain, &y).map_err(|_| RuntimeError::runtime("Element is not in the codomain of the map").in_context("map application"));
         }
         Ok(y)
     }
@@ -879,7 +1021,7 @@ impl Interp {
                 }
                 Ok(v)
             }
-            MapImpl::Coercion => self.coerce(&m.domain, &y),
+            MapImpl::Coercion | MapImpl::Reduction(_) => self.coerce(&m.domain, &y),
             MapImpl::Injection(i) => match &y {
                 Value::CopElt(c) if c.index == *i => Ok(c.value.clone()),
                 _ => Err(RuntimeError::runtime("Element has no preimage under the injection").in_context("@@")),

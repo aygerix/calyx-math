@@ -683,10 +683,11 @@ impl<'a> Parser<'a> {
         // Try an l-value list followed by := or o:=.
         let save = self.pos;
         if let Some(lvs) = self.try_lvalue_list() {
+            let at = self.span();
             if self.eat(&Tok::Assign) {
                 let value = self.expr()?;
                 self.semi()?;
-                return Ok(StmtKind::Assign(lvs, value));
+                return Ok(StmtKind::Assign(lvs, value, at));
             }
             if lvs.len() == 1 {
                 if let Tok::OpAssign(op) = self.peek().clone() {
@@ -1007,10 +1008,10 @@ impl<'a> Parser<'a> {
                     lhs = Self::mk_at(ExprKind::AttrDyn(Box::new(lhs), Box::new(e)), sp, op);
                 }
                 Tok::Dot if BP_DOT >= min_bp => {
-                    self.bump();
+                    let op = self.bump().span;
                     let rhs = self.expr_bp(BP_DOT + 1)?;
                     let sp = lhs.span.to(rhs.span);
-                    lhs = Self::mk(ExprKind::Dot(Box::new(lhs), Box::new(rhs)), sp);
+                    lhs = Self::mk_at(ExprKind::Dot(Box::new(lhs), Box::new(rhs)), sp, op);
                 }
                 Tok::At | Tok::AtAt if BP_AT >= min_bp => {
                     let op = self.bump().span;
@@ -1439,8 +1440,9 @@ impl<'a> Parser<'a> {
             }
         };
         let end = self.expect(&Tok::Gt)?;
-        // Errors in a map constructor are reported at its bracket.
-        if matches!(kind, ExprKind::Map(..)) {
+        // Errors in a map constructor, or in constructors such as ideal< >
+        // and quo< >, are reported at the bracket.
+        if matches!(kind, ExprKind::Map(..) | ExprKind::Constructor(..)) {
             return Ok(Self::mk_at(kind, start.to(end), open));
         }
         Ok(Self::mk(kind, start.to(end)))

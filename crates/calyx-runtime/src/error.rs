@@ -154,7 +154,7 @@ pub fn user_err<T>(msg: impl Into<String>) -> RResult<T> {
 /// quoted; constructions of the language are not.
 pub fn context_style(ctx: &str) -> (&str, bool, bool) {
     match ctx {
-        "@" => ("map application", false, true),
+        "map application" => ("map application", false, true),
         "map< >" => ("map< ... >", false, true),
         "rec< >" => ("rec< ... >", false, true),
         "`" => ("`", false, true),
@@ -163,6 +163,7 @@ pub fn context_style(ctx: &str) -> (&str, bool, bool) {
         "{@ @}" => ("{@ ... @}", false, true),
         "{* *}" => ("{* ... *}", false, true),
         "sequence construction" => ("sequence construction", false, false),
+        "ideal< ... >" | "quo< ... >" | "ext< ... >" | "sub< ... >" => (ctx, false, true),
         "[]:=" => (":=", false, false),
         _ => (ctx, true, true),
     }

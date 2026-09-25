@@ -66,7 +66,37 @@ fn precision(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     }
 }
 
+fn extended_reals(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+    one(Value::extended_reals())
+}
+
+fn infinity(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+    one(Value::Infinity(true))
+}
+
+fn minus_infinity(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+    one(Value::Infinity(false))
+}
+
+fn infinity_abs(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+    one(Value::Infinity(true))
+}
+
+fn infinity_sign(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    one(Value::int(if matches!(a.args[0], Value::Infinity(true)) { 1 } else { -1 }))
+}
+
+fn infinity_is_finite(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+    one(Value::Bool(false))
+}
+
 pub fn register(it: &mut Interp) {
+    it.def("Infinity", "-> Infty", "Positive infinity.", infinity);
+    it.def("ExtendedReals", "-> ExtRe", "The real numbers together with plus and minus infinity.", extended_reals);
+    it.def("MinusInfinity", "-> Infty", "Negative infinity.", minus_infinity);
+    it.def("Abs", "x::Infty -> Infty", "Positive infinity.", infinity_abs);
+    it.def("Sign", "x::Infty -> RngIntElt", "The sign of x.", infinity_sign);
+    it.def("IsFinite", "x::Infty -> BoolElt", "False: x is infinite.", infinity_is_finite);
     it.def("RealField", "-> FldRe", "The real field of default precision (30 digits).", real_field);
     it.def("RealField", "p::RngIntElt -> FldRe", "The real field with p decimal digits of precision.", real_field);
     for t in ["RngIntElt", "FldRatElt", "FldReElt"] {

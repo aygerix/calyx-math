@@ -14,6 +14,7 @@ use indexmap::{IndexMap, IndexSet};
 use rustc_hash::{FxHashMap, FxHasher};
 
 use crate::ir::FuncCode;
+use crate::perms::Perm;
 use crate::rings::{Elt, Ring};
 use crate::sym::Sym;
 use crate::types::{TypeId, TypeVal, t};
@@ -55,6 +56,10 @@ pub enum Value {
     /// An element of a ring built on FLINT (residue class rings, finite
     /// fields, polynomial rings, the complex field, ...).
     Elt(Rc<Elt>),
+    /// A permutation, an element of `Sym(n)`.
+    Perm(Rc<Perm>),
+    /// `Infinity()` (`true`) or `-Infinity()` (`false`).
+    Infinity(bool),
 }
 
 /// A real number with the decimal precision of its real field.
@@ -75,6 +80,18 @@ impl RealV {
 
 // ----- aggregates -----------------------------------------------------------
 
+/// The identifier an aggregate was first assigned to, which maps print as
+/// its name (`SetEnum: T`). A copy, made when a shared aggregate is
+/// modified, starts without one.
+#[derive(Default)]
+pub struct NameCell(pub RefCell<Option<Sym>>);
+
+impl Clone for NameCell {
+    fn clone(&self) -> NameCell {
+        NameCell::default()
+    }
+}
+
 /// An enumerated sequence. Holes are stored as `Value::Undef`.
 #[derive(Clone, Default)]
 pub struct SeqEnum {
@@ -84,11 +101,12 @@ pub struct SeqEnum {
     /// Built as an arithmetic progression `[a..b by c]`; it prints that way
     /// while its elements still form a progression.
     pub range_hint: bool,
+    pub name: NameCell,
 }
 
 impl SeqEnum {
     pub fn new(universe: Option<Value>, elems: Vec<Value>) -> SeqEnum {
-        SeqEnum { universe, elems, range_hint: false }
+        SeqEnum { universe, elems, range_hint: false, name: NameCell::default() }
     }
 
     /// `(first, last, step)` if this prints as an arithmetic progression.
@@ -121,6 +139,7 @@ impl SeqEnum {
 pub struct SetEnum {
     pub universe: Option<Value>,
     pub repr: SetRepr,
+    pub name: NameCell,
 }
 
 #[derive(Clone)]
@@ -132,7 +151,7 @@ pub enum SetRepr {
 
 impl SetEnum {
     pub fn new(universe: Option<Value>, elems: VSet) -> SetEnum {
-        SetEnum { universe, repr: SetRepr::Elems(elems) }
+        SetEnum { universe, repr: SetRepr::Elems(elems), name: NameCell::default() }
     }
 
     pub fn range(lo: Integer, hi: &Integer, step: Integer) -> SetEnum {
@@ -140,9 +159,9 @@ impl SetEnum {
         // A set does not remember direction: store it ascending.
         if step.sign() < 0 && len > 0 {
             let last = &lo + &(&step * &Integer::from_u64(len - 1));
-            return SetEnum { universe: Some(Value::integers()), repr: SetRepr::Range { lo: last, step: -step, len } };
+            return SetEnum { universe: Some(Value::integers()), repr: SetRepr::Range { lo: last, step: -step, len }, name: NameCell::default() };
         }
-        SetEnum { universe: Some(Value::integers()), repr: SetRepr::Range { lo, step, len } }
+        SetEnum { universe: Some(Value::integers()), repr: SetRepr::Range { lo, step, len }, name: NameCell::default() }
     }
 
     pub fn len(&self) -> usize {
@@ -220,12 +239,14 @@ pub fn range_len(lo: &Integer, hi: &Integer, step: &Integer) -> u64 {
 pub struct SetIndx {
     pub universe: Option<Value>,
     pub elems: VSet,
+    pub name: NameCell,
 }
 
 #[derive(Clone, Default)]
 pub struct SetMulti {
     pub universe: Option<Value>,
     pub elems: VMap<u64>,
+    pub name: NameCell,
 }
 
 impl SetMulti {
@@ -302,6 +323,9 @@ pub enum MapImpl {
     Compose(Vec<Rc<MapObj>>),
     /// The coercion map from domain to codomain.
     Coercion,
+    /// Reduction of the integers modulo m (a coercion that prints its
+    /// modulus).
+    Reduction(Integer),
     /// The i-th injection into a coproduct (codomain).
     Injection(usize),
     /// The inverse of another map.
@@ -340,6 +364,14 @@ pub enum StructKind {
     PowerStructure(TypeId),
     /// A ring whose elements are `Value::Elt`.
     Ring(Rc<Ring>),
+    /// The symmetric group of the given degree.
+    SymGroup(u32),
+    /// The reals with the two infinities (the universe of numbers mixed
+    /// with `Infinity()`).
+    ExtendedReals,
+    /// The ideal `nZ` of the integers (`n = 0` or `n > 1`), itself of type
+    /// `RngInt`.
+    IntIdeal(Integer),
 }
 
 #[derive(Clone)]
@@ -367,6 +399,9 @@ thread_local! {
     static RATIONALS: Rc<Struct> = Struct::new(StructKind::Rationals);
     static BOOLEANS: Rc<Struct> = Struct::new(StructKind::Booleans);
     static STRINGS: Rc<Struct> = Struct::new(StructKind::Strings);
+    static EXTENDED_REALS: Rc<Struct> = Struct::new(StructKind::ExtendedReals);
+    /// One real field per precision.
+    static REALS: RefCell<FxHashMap<u32, Rc<Struct>>> = RefCell::default();
 }
 
 pub fn next_object_id() -> u64 {
@@ -416,8 +451,12 @@ impl Value {
         RATIONALS.with(|s| Value::Struct(s.clone()))
     }
 
+    pub fn extended_reals() -> Value {
+        EXTENDED_REALS.with(|s| Value::Struct(s.clone()))
+    }
+
     pub fn reals(digits: u32) -> Value {
-        Value::structure(StructKind::Reals(digits))
+        REALS.with(|m| Value::Struct(m.borrow_mut().entry(digits).or_insert_with(|| Struct::new(StructKind::Reals(digits))).clone()))
     }
 
     pub fn real(x: Real, digits: u32) -> Value {
@@ -464,6 +503,19 @@ impl Value {
 
     pub fn list(elems: Vec<Value>) -> Value {
         Value::List(Rc::new(elems))
+    }
+
+    /// Where the name of a value that assignment names is kept: structures
+    /// and enumerated aggregates.
+    pub fn name_cell(&self) -> Option<&RefCell<Option<Sym>>> {
+        match self {
+            Value::Struct(s) => Some(&s.name),
+            Value::Seq(s) => Some(&s.name.0),
+            Value::Set(s) => Some(&s.name.0),
+            Value::ISet(s) => Some(&s.name.0),
+            Value::MSet(s) => Some(&s.name.0),
+            _ => None,
+        }
     }
 
     pub fn is_undef(&self) -> bool {
@@ -528,6 +580,9 @@ impl Value {
                 StructKind::Coproduct(_) => t::COP,
                 StructKind::PowerStructure(_) => t::POW_STR,
                 StructKind::Ring(r) => r.type_id(),
+                StructKind::SymGroup(_) => t::GRP_PERM,
+                StructKind::ExtendedReals => t::EXT_RE,
+                StructKind::IntIdeal(_) => t::RNG_INT,
             },
             Value::Cat(_) => t::CAT,
             Value::ECat(_) => t::ECAT,
@@ -536,6 +591,8 @@ impl Value {
             Value::CopElt(_) => t::COP_ELT,
             Value::Io(_) => t::IO,
             Value::Elt(e) => e.ring().elt_type(),
+            Value::Perm(_) => t::GRP_PERM_ELT,
+            Value::Infinity(_) => t::INFTY,
         }
     }
 
@@ -628,6 +685,11 @@ impl Hash for Value {
             Value::Formal(f) => (Rc::as_ptr(f) as usize).hash(state),
             Value::Io(f) => (Rc::as_ptr(f) as usize).hash(state),
             Value::Elt(e) => state.write_u64(e.hash_u64()),
+            Value::Perm(p) => {
+                state.write_u8(18);
+                p.images.hash(state);
+            }
+            Value::Infinity(pos) => state.write_u8(if *pos { 19 } else { 20 }),
         }
     }
 }
@@ -665,6 +727,15 @@ fn struct_hash<H: Hasher>(s: &Struct, state: &mut H) {
         }
         StructKind::PowerStructure(t) => t.hash(state),
         StructKind::Ring(r) => r.id.hash(state),
+        StructKind::SymGroup(n) => {
+            state.write_u8(10);
+            n.hash(state);
+        }
+        StructKind::ExtendedReals => state.write_u8(11),
+        StructKind::IntIdeal(n) => {
+            state.write_u8(12);
+            n.hash(state);
+        }
     }
 }
 
@@ -700,6 +771,8 @@ impl PartialEq for Value {
             (Formal(a), Formal(b)) => Rc::ptr_eq(a, b),
             (Io(a), Io(b)) => Rc::ptr_eq(a, b),
             (Elt(a), Elt(b)) => a.same_as(b),
+            (Perm(a), Perm(b)) => a.images == b.images,
+            (Infinity(a), Infinity(b)) => a == b,
             _ => false,
         }
     }
@@ -721,6 +794,9 @@ pub fn struct_eq(a: &Rc<Struct>, b: &Rc<Struct>) -> bool {
         (Maps(a1, b1), Maps(a2, b2)) => a1 == a2 && b1 == b2,
         (PowerStructure(x), PowerStructure(y)) => x == y,
         (Ring(x), Ring(y)) => x.id == y.id,
+        (SymGroup(x), SymGroup(y)) => x == y,
+        (ExtendedReals, ExtendedReals) => true,
+        (IntIdeal(m), IntIdeal(n)) => m == n,
         _ => false,
     }
 }
@@ -738,6 +814,9 @@ pub fn natural_cmp(a: &Value, b: &Value) -> Option<Ordering> {
         (Real(x), Real(y)) => x.x.cmp(&y.x),
         (Str(x), Str(y)) => x.cmp(y),
         (Bool(x), Bool(y)) => x.cmp(y),
+        (Infinity(x), Infinity(y)) => x.cmp(y),
+        (Infinity(x), Int(_) | Rat(_) | Real(_)) => if *x { Ordering::Greater } else { Ordering::Less },
+        (Int(_) | Rat(_) | Real(_), Infinity(y)) => if *y { Ordering::Less } else { Ordering::Greater },
         (Elt(x), Elt(y)) => x.natural_cmp(y)?,
         (Seq(x), Seq(y)) => seq_cmp(&x.elems, &y.elems)?,
         (Tuple(x), Tuple(y)) => seq_cmp(&x.elems, &y.elems)?,

@@ -8,7 +8,9 @@
 
 mod arith;
 mod coerce;
+pub mod ideals;
 mod print;
+pub mod props;
 
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
@@ -262,6 +264,8 @@ pub struct RingCache {
     finite: FxHashMap<(Integer, u64), Value>,
     upoly: FxHashMap<String, Value>,
     complex: FxHashMap<u32, Value>,
+    /// Ideals of the integers by generator.
+    pub(crate) ideals: FxHashMap<Integer, Value>,
     reals: FxHashMap<u32, Rc<Ctx>>,
 }
 

@@ -119,7 +119,7 @@ fn statements() {
     "#;
     let prog = parse_program(src, FileId(0)).unwrap_or_else(|e| panic!("{}", e.message));
     assert_eq!(prog.len(), 25);
-    assert!(matches!(prog[3].kind, StmtKind::Assign(ref l, _) if l.len() == 3));
+    assert!(matches!(prog[3].kind, StmtKind::Assign(ref l, _, _) if l.len() == 3));
     assert!(matches!(prog[6].kind, StmtKind::OpAssign(_, BinOp::IntDiv, _)));
     assert!(matches!(prog[7].kind, StmtKind::GenAssign(..)));
     let StmtKind::For { body, .. } = &prog[9].kind else { panic!() };

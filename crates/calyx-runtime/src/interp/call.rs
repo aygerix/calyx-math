@@ -143,7 +143,15 @@ impl Interp {
                 // Objects of user types may be made callable via '()'? Not supported.
                 Err(RuntimeError::runtime(format!("An object of type {} is not callable", self.type_name(func))))
             }
-            other => Err(RuntimeError::runtime(format!("An object of type {} is not callable", self.type_name(other)))),
+            // Magma reads `f(x)` as `x @ f`.
+            other if args.len() == 1 && params.is_empty() => {
+                let e = RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}, {}", self.type_name_ext(&args[0]), self.type_name_ext(other)));
+                Err(if stmt { e.in_context("@") } else { e })
+            }
+            _ => {
+                let msg = "Attempting to call something that is not callable";
+                Err(if stmt { RuntimeError::statement("procedure call", msg) } else { RuntimeError::runtime(msg) })
+            }
         }
     }
 

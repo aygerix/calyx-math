@@ -8,6 +8,7 @@ pub mod intrinsics;
 pub mod ir;
 pub mod ops;
 pub mod output;
+pub mod perms;
 pub mod print;
 pub mod random;
 pub mod rings;
@@ -51,5 +52,7 @@ pub fn value_kind(v: &Value) -> &'static str {
         Value::CopElt(_) => "CopElt",
         Value::Io(_) => "IO",
         Value::Elt(_) => "RngElt",
+        Value::Perm(_) => "GrpPermElt",
+        Value::Infinity(_) => "Infty",
     }
 }

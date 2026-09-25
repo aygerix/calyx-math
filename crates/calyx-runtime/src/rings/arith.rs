@@ -1,15 +1,26 @@
 //! Arithmetic and comparison of ring elements.
 
+use std::cmp::Ordering;
 use std::rc::Rc;
 
-use calyx_flint::gr::{CtxKind, Elem, GrError, Truth};
+use calyx_flint::gr::{CtxKind, Elem, GrError, MonomialOrder, Truth};
 use calyx_syntax::ast::BinOp;
 
-use super::{Elt, RingKind, make_elt};
+use super::{Elt, Ring, RingKind, make_elt};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::Interp;
 use crate::ops::div_by_zero;
 use crate::value::{StructKind, Value};
+
+/// Compare exponent vectors in a monomial order.
+fn monomial_cmp(order: MonomialOrder, a: &[u64], b: &[u64]) -> Ordering {
+    let deg = |e: &[u64]| e.iter().sum::<u64>();
+    match order {
+        MonomialOrder::Lex => a.cmp(b),
+        MonomialOrder::DegLex => deg(a).cmp(&deg(b)).then_with(|| a.cmp(b)),
+        MonomialOrder::DegRevLex => deg(a).cmp(&deg(b)).then_with(|| b.iter().rev().cmp(a.iter().rev())),
+    }
+}
 
 fn arith_err(e: GrError, op: &str) -> RuntimeError {
     match e {
@@ -98,17 +109,70 @@ impl Interp {
                 return Ok(Some(Value::Bool(if matches!(op, Eq | Cmpeq) { e } else { !e })));
             }
             Lt | Le | Gt | Ge => {
-                let c = x.cmp(&y).map_err(|_| RuntimeError::runtime("The ring is not ordered").in_context(name))?;
+                let Some(c) = self.ring_elt_cmp(ring, &x, &y)? else {
+                    return Err(RuntimeError::runtime("No comparison algorithm exists for given objects").in_context(name));
+                };
                 return Ok(Some(Value::Bool(match op {
-                    Lt => c < 0,
-                    Le => c <= 0,
-                    Gt => c > 0,
-                    _ => c >= 0,
+                    Lt => c == Ordering::Less,
+                    Le => c != Ordering::Greater,
+                    Gt => c == Ordering::Greater,
+                    _ => c != Ordering::Less,
                 })));
             }
             _ => unreachable!(),
         };
         Ok(Some(make_elt(st, v)))
+    }
+
+    /// Magma's order on the elements of a ring, where it has one: residues
+    /// and prime field elements by value, other finite field elements by
+    /// their representation (powers of the primitive element, or
+    /// coordinates), polynomials by degree and then coefficients from the
+    /// top, multivariate polynomials term by term in the monomial order.
+    pub fn ring_elt_cmp(&mut self, ring: &Ring, x: &Elem, y: &Elem) -> RResult<Option<Ordering>> {
+        Ok(Some(match &ring.kind {
+            RingKind::Residue(_) => x.to_integer().ok().cmp(&y.to_integer().ok()),
+            RingKind::Finite(f) if f.degree == 1 => x.fq_prime_value().cmp(&y.fq_prime_value()),
+            RingKind::Finite(_) => match x.ctx().kind() {
+                // Zero, then the powers of the primitive element.
+                CtxKind::FqZech { .. } => x.zech_log().map(|k| k + 1).unwrap_or(0).cmp(&y.zech_log().map(|k| k + 1).unwrap_or(0)),
+                _ => x.fq_coords().iter().rev().cmp(y.fq_coords().iter().rev()),
+            },
+            RingKind::UPoly { base, .. } => {
+                let (m, n) = (x.poly_len(), y.poly_len());
+                if m != n {
+                    return Ok(Some(m.cmp(&n)));
+                }
+                for k in (0..m).rev() {
+                    let a = self.elem_to_value(base, x.poly_coeff(k));
+                    let b = self.elem_to_value(base, y.poly_coeff(k));
+                    match self.compare_ord(&a, &b)? {
+                        Some(Ordering::Equal) => {}
+                        other => return Ok(other),
+                    }
+                }
+                Ordering::Equal
+            }
+            RingKind::MPoly { base, order, .. } => {
+                let (m, n) = (x.mpoly_len(), y.mpoly_len());
+                for i in 0..m.min(n) {
+                    let (a, ea) = x.mpoly_term(i);
+                    let (b, eb) = y.mpoly_term(i);
+                    match monomial_cmp(*order, &ea, &eb) {
+                        Ordering::Equal => {}
+                        o => return Ok(Some(o)),
+                    }
+                    let a = self.elem_to_value(base, a);
+                    let b = self.elem_to_value(base, b);
+                    match self.compare_ord(&a, &b)? {
+                        Some(Ordering::Equal) => {}
+                        other => return Ok(other),
+                    }
+                }
+                m.cmp(&n)
+            }
+            RingKind::Complex(_) => return Ok(None),
+        }))
     }
 
     /// `a ^ k` for a ring element `a` and an integer `k`.

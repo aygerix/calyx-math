@@ -27,6 +27,31 @@ fn cerr<T>(span: Span, msg: impl Into<String>) -> CResult<T> {
     Err(CompileError { message: msg.into(), span })
 }
 
+/// The kind of a literal constant: 0 for numbers, 1 for strings, 2 for
+/// booleans.
+fn literal_kind(e: &Expr) -> Option<u8> {
+    match &e.kind {
+        ExprKind::Int(_) | ExprKind::Real(_) => Some(0),
+        ExprKind::Str(_) => Some(1),
+        ExprKind::Bool(_) => Some(2),
+        ExprKind::Paren(x) | ExprKind::Unary(ast::UnOp::Neg | ast::UnOp::Plus, x) => literal_kind(x).filter(|&k| k == 0),
+        ExprKind::Binary(ast::BinOp::Div, a, b) => (literal_kind(a) == Some(0) && literal_kind(b) == Some(0)).then_some(0),
+        _ => None,
+    }
+}
+
+/// A sequence of literal constants of different kinds has no universe, which
+/// Magma reports when the statement is read, at the first element that does
+/// not fit.
+fn check_literal_universe(es: &[Expr]) -> CResult<()> {
+    let kinds: Option<Vec<u8>> = es.iter().map(literal_kind).collect();
+    let Some(kinds) = kinds else { return Ok(()) };
+    if let Some(i) = kinds.iter().position(|&k| k != kinds[0]) {
+        return cerr(es[i].span, "Could not find a valid universe for the sequence");
+    }
+    Ok(())
+}
+
 #[derive(Default)]
 struct Scope {
     top: bool,
@@ -246,13 +271,13 @@ impl<'a> Compiler<'a> {
                 let lvl = lvl.as_ref().map(|e| self.expr(e)).transpose()?;
                 St::Vprint(Sym::new(flag), lvl, self.expr_list(es)?, is_printf)
             }
-            StmtKind::Assign(lvs, value) => {
+            StmtKind::Assign(lvs, value, at) => {
                 let v = self.expr(value)?;
                 let mut targets = Vec::new();
                 for lv in lvs {
                     targets.push(self.lvalue(lv)?);
                 }
-                St::Assign(targets, v)
+                St::Assign(targets, v, *at)
             }
             StmtKind::OpAssign(lv, op, value) => {
                 let v = self.expr(value)?;
@@ -332,7 +357,7 @@ impl<'a> Compiler<'a> {
                 let sym = Sym::new(name);
                 let clo = self.function(def, Some(sym))?;
                 let place = self.place(sym, span)?;
-                St::Assign(vec![LV::Var(place, span)], clo)
+                St::Assign(vec![LV::Var(place, span)], clo, span)
             }
             StmtKind::Intrinsic(def) => St::Intrinsic(self.intrinsic(def)?),
             StmtKind::Forward(names) => {
@@ -747,6 +772,9 @@ impl<'a> Compiler<'a> {
             ExprKind::Tuple(es) => Ex::Tuple(self.expr_list(es)?),
             ExprKind::TupleCompr(c) => Ex::TupleCompr(Box::new(self.comprehension(c, false)?)),
             ExprKind::Aggregate(kind, universe, body) => {
+                if let (ast::AggKind::Seq, None, AggBody::Enum(es)) = (kind, universe, body) {
+                    check_literal_universe(es)?;
+                }
                 let universe = universe.as_ref().map(|u| self.expr(u)).transpose()?;
                 let body = match body {
                     AggBody::Empty => AggBodyEx::Empty,
@@ -959,7 +987,7 @@ fn scan_stmt(s: &Stmt, out: &mut Vec<String>) {
             l.iter().for_each(|e| scan_expr(e, out));
             es.iter().for_each(|e| scan_expr(e, out));
         }
-        StmtKind::Assign(lvs, v) => {
+        StmtKind::Assign(lvs, v, _) => {
             scan_expr(v, out);
             lvs.iter().for_each(|lv| scan_lvalue(lv, out));
         }

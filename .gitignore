@@ -2,3 +2,4 @@
 *.sig
 *.lck
 .DS_Store
+/handbook

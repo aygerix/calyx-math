@@ -50,6 +50,23 @@ impl Interp {
                 _ => Err(RuntimeError::runtime("Procedure call has no return value").at(e.span)),
             },
             Ex::Previous(n) => self.previous_values(*n).ok_or_else(|| RuntimeError::user(format!("There is no previous value ${n}")).at(e.span)),
+            Ex::Constructor(name, left, right) => {
+                let mut l = Vec::new();
+                for x in left {
+                    l.push(self.eval(x, f)?);
+                }
+                let r = match right {
+                    Some(r) => {
+                        let mut v = Vec::new();
+                        for x in r {
+                            v.push(self.eval(x, f)?);
+                        }
+                        Some(v)
+                    }
+                    None => None,
+                };
+                self.constructor_multi(*name, l, r).map_err(|err| err.at(e.span))
+            }
             Ex::Cop(_) => {
                 let c = self.eval(e, f)?;
                 let inj = self.call_intrinsic_named(Sym::new("Injections"), vec![c.clone()])?;
@@ -460,7 +477,8 @@ impl Interp {
                     vals.push(self.eval(x, f)?);
                 }
                 if a.kind == AggKind::MSet {
-                    return self.build_multiset(universe, vals, mults);
+                    // Magma reports this failure from its sub< > constructor.
+                    return self.build_multiset(universe, vals, mults).map_err(|e| if e.message.starts_with("Cannot coerce argument") { e.in_context("sub< ... >") } else { e });
                 }
                 let explicit = universe.is_some();
                 self.build_aggregate(a.kind, universe, vals, false).map_err(|mut e| {
