@@ -102,11 +102,14 @@ pub struct SeqEnum {
     /// while its elements still form a progression.
     pub range_hint: bool,
     pub name: NameCell,
+    /// A factorization sequence (`RngIntEltFact`): sorted `<p, k>` pairs
+    /// of primes and positive exponents with its own arithmetic.
+    pub fact: bool,
 }
 
 impl SeqEnum {
     pub fn new(universe: Option<Value>, elems: Vec<Value>) -> SeqEnum {
-        SeqEnum { universe, elems, range_hint: false, name: NameCell::default() }
+        SeqEnum { universe, elems, range_hint: false, name: NameCell::default(), fact: false }
     }
 
     /// `(first, last, step)` if this prints as an arithmetic progression.
@@ -546,6 +549,7 @@ impl Value {
             Value::Rat(_) => t::FLD_RAT_ELT,
             Value::Real(_) => t::FLD_RE_ELT,
             Value::Str(_) => t::MON_STG_ELT,
+            Value::Seq(s) if s.fact => t::RNG_INT_ELT_FACT,
             Value::Seq(_) => t::SEQ_ENUM,
             Value::Set(_) => t::SET_ENUM,
             Value::ISet(_) => t::SET_INDX,

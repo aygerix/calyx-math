@@ -540,6 +540,58 @@ impl Integer {
         z
     }
 
+    /// Whether `self` is a strong probable prime to base `a` (`self` odd,
+    /// greater than `a`).
+    pub fn is_strong_probable_prime(&self, a: &Integer) -> bool {
+        unsafe { sys::fmpz_is_strong_probabprime(&self.raw, &a.raw) != 0 }
+    }
+
+    /// The number of partitions of `n`.
+    pub fn partitions(n: u64) -> Integer {
+        let mut z = Integer::zero();
+        unsafe { sys::arith_number_of_partitions(&mut z.raw, n as sys::ulong) };
+        z
+    }
+
+    /// The (signed) Stirling number of the first kind `s(n, k)`.
+    pub fn stirling1(n: u64, k: u64) -> Integer {
+        let mut z = Integer::zero();
+        unsafe { sys::arith_stirling_number_1(&mut z.raw, n as sys::ulong, k as sys::ulong) };
+        z
+    }
+
+    /// The Stirling number of the second kind `S(n, k)`.
+    pub fn stirling2(n: u64, k: u64) -> Integer {
+        let mut z = Integer::zero();
+        unsafe { sys::arith_stirling_number_2(&mut z.raw, n as sys::ulong, k as sys::ulong) };
+        z
+    }
+
+    /// The `n`-th Bell number.
+    pub fn bell(n: u64) -> Integer {
+        let mut z = Integer::zero();
+        unsafe { sys::arith_bell_number(&mut z.raw, n as sys::ulong) };
+        z
+    }
+
+    /// The prime factors (with exponents) found by FLINT's self-initialising
+    /// quadratic sieve, for `self > 1`.
+    pub fn qsieve(&self) -> Vec<(Integer, u64)> {
+        unsafe {
+            let mut f: sys::fmpz_factor_struct = std::mem::zeroed();
+            sys::fmpz_factor_init(&mut f);
+            sys::qsieve_factor(&mut f, &self.raw);
+            let mut out = Vec::with_capacity(f.num as usize);
+            for i in 0..f.num as usize {
+                let mut p = Integer::zero();
+                sys::fmpz_set(&mut p.raw, f.p.add(i));
+                out.push((p, *f.exp.add(i) as u64));
+            }
+            sys::fmpz_factor_clear(&mut f);
+            out
+        }
+    }
+
     /// The residue `self mod m` for `m > 0`, as a machine word.
     pub fn mod_u64(&self, m: u64) -> u64 {
         assert!(m > 0);

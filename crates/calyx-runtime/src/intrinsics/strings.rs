@@ -83,7 +83,12 @@ fn string_to_integer_sequence(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec
 
 fn integer_to_string(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     let n = a.int(0)?;
-    let base = if a.args.len() > 1 { a.int(1)?.to_u64().filter(|b| (2..=36).contains(b)).ok_or_else(|| RuntimeError::runtime("Base must be between 2 and 36"))? as u32 } else { 10 };
+    let base = if a.args.len() > 1 {
+        let b = a.int(1)?;
+        b.to_u64().filter(|b| (2..=36).contains(b)).ok_or_else(|| super::arg_range(2, b, 2, 36))? as u32
+    } else {
+        10
+    };
     one(Value::str(&n.to_string_radix(base).to_uppercase()))
 }
 

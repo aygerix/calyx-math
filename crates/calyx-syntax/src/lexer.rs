@@ -138,7 +138,7 @@ impl<'a> Lexer<'a> {
 
     fn number(&mut self) -> Tok {
         let mut s = String::new();
-        if self.peek(0) == Some('0') && matches!(self.peek(1), Some('x' | 'X')) && self.peek(2).is_some_and(|c| c.is_ascii_hexdigit()) {
+        if self.peek(0) == Some('0') && self.peek(1) == Some('x') && self.peek(2).is_some_and(|c| c.is_ascii_hexdigit()) {
             self.pos += 2;
             s.push_str("0x");
             while let Some(c) = self.peek(0).filter(|c| c.is_ascii_hexdigit()) {

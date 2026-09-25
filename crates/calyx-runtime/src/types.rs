@@ -94,7 +94,7 @@ builtin_types! {
     RNG_MPOL_ELT = "RngMPolElt": [RNG_ELT],
     FLD_COM = "FldCom": [FLD],
     FLD_COM_ELT = "FldComElt": [FLD_ELT],
-    RNG_INT_ELT_FACT = "RngIntEltFact": [ANY],
+    RNG_INT_ELT_FACT = "RngIntEltFact": [SEQ_ENUM],
     INFTY = "Infty": [ANY],
     EXT_RE = "ExtRe": [STR],
     EXT_RE_ELT = "ExtReElt": [ELT],

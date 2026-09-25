@@ -3,3 +3,4 @@
 *.lck
 .DS_Store
 /handbook
+/databases

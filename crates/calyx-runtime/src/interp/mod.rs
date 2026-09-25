@@ -81,6 +81,10 @@ pub struct Interp {
     pub previous: VecDeque<Vec<Value>>,
     pub previous_size: usize,
     pub rng: Rng,
+    /// Primes given to `StoreFactor`, tried first by `Factorization`.
+    pub stored_factors: Vec<calyx_flint::Integer>,
+    /// `RngInt`CunninghamStorageLimit`.
+    pub cunningham_storage_limit: i64,
     pub verbose: FxHashMap<Rc<str>, (i64, i64)>,
     pub assertions: i64,
     pub sources: Vec<Rc<SourceFile>>,
@@ -135,6 +139,8 @@ impl Interp {
             previous: VecDeque::new(),
             previous_size: 3,
             rng: Rng::from_time(),
+            stored_factors: Vec::new(),
+            cunningham_storage_limit: 50,
             verbose: FxHashMap::default(),
             assertions: 1,
             sources: Vec::new(),

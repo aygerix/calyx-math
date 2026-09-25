@@ -279,9 +279,9 @@ impl<'a> Compiler<'a> {
                 }
                 St::Assign(targets, v, *at)
             }
-            StmtKind::OpAssign(lv, op, value) => {
+            StmtKind::OpAssign(lv, op, value, at) => {
                 let v = self.expr(value)?;
-                St::OpAssign(self.lvalue(lv)?, *op, v)
+                St::OpAssign(self.lvalue(lv)?, *op, v, *at)
             }
             StmtKind::GenAssign(lv, names, value) => {
                 let v = self.expr(value)?;
@@ -991,7 +991,7 @@ fn scan_stmt(s: &Stmt, out: &mut Vec<String>) {
             scan_expr(v, out);
             lvs.iter().for_each(|lv| scan_lvalue(lv, out));
         }
-        StmtKind::OpAssign(lv, _, v) => {
+        StmtKind::OpAssign(lv, _, v, _) => {
             scan_expr(v, out);
             scan_lvalue(lv, out);
         }

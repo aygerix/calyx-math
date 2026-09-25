@@ -123,6 +123,8 @@ impl RuntimeError {
             ErrStyle::Normal | ErrStyle::Plain => {}
         }
         match &self.context {
+            // Errors from Magma's package intrinsics do not name them.
+            Some(c) if c.is_empty() => format!("{label}: {}", self.message),
             Some(c) => {
                 let (name, quoted, _) = context_style(c);
                 if quoted { format!("{label} in '{name}': {}", self.message) } else { format!("{label} in {name}: {}", self.message) }
@@ -163,7 +165,7 @@ pub fn context_style(ctx: &str) -> (&str, bool, bool) {
         "{@ @}" => ("{@ ... @}", false, true),
         "{* *}" => ("{* ... *}", false, true),
         "sequence construction" => ("sequence construction", false, false),
-        "ideal< ... >" | "quo< ... >" | "ext< ... >" | "sub< ... >" => (ctx, false, true),
+        "ideal< ... >" | "quo< ... >" | "ext< ... >" | "sub< ... >" | "elt< ... >" => (ctx, false, true),
         "[]:=" => (":=", false, false),
         _ => (ctx, true, true),
     }

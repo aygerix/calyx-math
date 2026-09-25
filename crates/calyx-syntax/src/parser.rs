@@ -697,7 +697,7 @@ impl<'a> Parser<'a> {
                     };
                     let value = self.expr()?;
                     self.semi()?;
-                    return Ok(StmtKind::OpAssign(lvs.into_iter().next().unwrap(), op, value));
+                    return Ok(StmtKind::OpAssign(lvs.into_iter().next().unwrap(), op, value, at));
                 }
             }
         }
@@ -740,6 +740,21 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// The indices inside `s[...]`. `s[i..j]` (and `s[i..j by k]`) indexes
+    /// by the range sequence.
+    fn index_list(&mut self) -> PResult<Vec<Expr>> {
+        let save = self.pos;
+        let first = self.expr()?;
+        if !self.eat(&Tok::DotDot) {
+            self.pos = save;
+            return self.expr_list();
+        }
+        let hi = self.expr()?;
+        let by = if self.eat_kw(Kw::By) { Some(Box::new(self.expr()?)) } else { None };
+        let sp = first.span.to(by.as_ref().map_or(hi.span, |b| b.span));
+        Ok(vec![Self::mk(ExprKind::Aggregate(AggKind::Seq, None, AggBody::Range(Box::new(first), Box::new(hi), by)), sp)])
+    }
+
     fn lvalue(&mut self) -> PResult<LValue> {
         let mut lv = match self.peek().clone() {
             Tok::Underscore => return Ok(LValue::Underscore(self.bump().span)),
@@ -753,7 +768,7 @@ impl<'a> Parser<'a> {
             match self.peek() {
                 Tok::LBrack => {
                     self.bump();
-                    let idx = self.expr_list()?;
+                    let idx = self.index_list()?;
                     let end = self.expect(&Tok::RBrack)?;
                     let sp = lv.span().to(end);
                     lv = LValue::Index(Box::new(lv), idx, sp);
@@ -990,7 +1005,7 @@ impl<'a> Parser<'a> {
                 }
                 Tok::LBrack if BP_POSTFIX >= min_bp => {
                     let open = self.bump().span;
-                    let idx = self.expr_list()?;
+                    let idx = self.index_list()?;
                     let end = self.expect(&Tok::RBrack)?;
                     let sp = lhs.span.to(end);
                     lhs = Self::mk_at(ExprKind::Index(Box::new(lhs), idx), sp, open);
@@ -1371,7 +1386,10 @@ impl<'a> Parser<'a> {
                 self.expect(&Tok::Arrow)?;
                 let cod = self.expr()?;
                 self.expect(&Tok::Pipe)?;
-                let body = if self.at_ident() && self.at_maps_to(1) {
+                let body = if self.at(&Tok::Gt) {
+                    // `hom< Z -> R | >`: the natural homomorphism.
+                    MapBody::Exprs(Vec::new())
+                } else if self.at_ident() && self.at_maps_to(1) {
                     let (x, _) = self.ident()?;
                     self.eat_maps_to()?;
                     let img = self.expr()?;
@@ -1442,7 +1460,7 @@ impl<'a> Parser<'a> {
         let end = self.expect(&Tok::Gt)?;
         // Errors in a map constructor, or in constructors such as ideal< >
         // and quo< >, are reported at the bracket.
-        if matches!(kind, ExprKind::Map(..) | ExprKind::Constructor(..)) {
+        if matches!(kind, ExprKind::Map(..) | ExprKind::Constructor(..) | ExprKind::Elt(..)) {
             return Ok(Self::mk_at(kind, start.to(end), open));
         }
         Ok(Self::mk(kind, start.to(end)))
@@ -1487,6 +1505,19 @@ impl<'a> Parser<'a> {
 /// Parse a complete program.
 pub fn parse_program(src: &str, file: FileId) -> PResult<Vec<Stmt>> {
     Parser::new(src, file).parse_program()
+}
+
+/// The statements before the first syntax error of `src`, and that error.
+pub fn parse_program_prefix(src: &str, file: FileId) -> (Vec<Stmt>, Option<ParseError>) {
+    let mut p = Parser::new(src, file);
+    let mut out = Vec::new();
+    while !p.at(&Tok::Eof) {
+        match p.stmt() {
+            Ok(s) => out.push(s),
+            Err(e) => return (out, Some(e)),
+        }
+    }
+    (out, None)
 }
 
 /// Parse a lone expression (used by `eval`).

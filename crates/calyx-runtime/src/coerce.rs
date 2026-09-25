@@ -22,6 +22,7 @@ impl Interp {
             Value::Rat(_) => Value::rationals(),
             Value::Real(r) => Value::reals(r.digits),
             Value::Str(_) => Value::strings(),
+            Value::Seq(s) if s.fact => Value::structure(StructKind::PowerStructure(t::RNG_INT_ELT_FACT)),
             Value::Seq(s) => Value::structure(StructKind::PowerSeq(s.universe.clone())),
             Value::Set(s) => Value::structure(StructKind::PowerSet(s.universe.clone())),
             Value::ISet(s) => Value::structure(StructKind::PowerISet(s.universe.clone())),
@@ -119,6 +120,9 @@ impl Interp {
                     let Value::Elt(e) = x else { unreachable!() };
                     match self.coerce_ring_elt_down(&st.kind, e) {
                         Some(v) => Ok(Ok(v)),
+                        None if matches!(st.kind, StructKind::Integers) && e.ring().finite_field().is_some() => {
+                            Ok(Err(Some("Element not from a prime field".into())))
+                        }
                         None => fail(),
                     }
                 }
@@ -126,6 +130,11 @@ impl Interp {
                     Value::Int(_) => Ok(Ok(x.clone())),
                     Value::Rat(q) if q.is_integral() => Ok(Ok(Value::Int(q.numerator()))),
                     Value::Rat(_) => Ok(Err(Some("Rational argument is not a whole integer".into()))),
+                    // Reals with an integral value.
+                    Value::Real(r) => match r.x.to_rational() {
+                        Some(q) if q.is_integral() => Ok(Ok(Value::Int(q.numerator()))),
+                        _ => fail(),
+                    },
                     Value::Str(s) => match calyx_flint::Integer::parse(s.trim()) {
                         Some(i) => Ok(Ok(Value::Int(i))),
                         None => Ok(Err(Some("String does not represent an integer".into()))),
@@ -766,6 +775,7 @@ impl Interp {
             }
         };
         Some(match v {
+            Value::Seq(s) if s.fact => tmp(&s.universe, t::RNG_INT_ELT_FACT),
             Value::Seq(s) => tmp(&s.universe, t::SEQ_ENUM),
             Value::Set(s) => tmp(&s.universe, t::SET_ENUM),
             Value::ISet(s) => tmp(&s.universe, t::SET_INDX),
@@ -787,6 +797,23 @@ impl Interp {
         })
     }
 
+    /// The extended type as Magma shows it: aggregates without a universe
+    /// have element type `Any`.
+    pub fn shown_extended_type(&self, v: &Value) -> Option<TypeVal> {
+        let tv = self.extended_type(v)?;
+        let none = match v {
+            Value::Seq(s) => !s.fact && s.universe.is_none(),
+            Value::Set(s) => s.universe.is_none(),
+            Value::ISet(s) => s.universe.is_none(),
+            Value::MSet(s) => s.universe.is_none(),
+            _ => false,
+        };
+        Some(match tv {
+            TypeVal::Cat(b) if none => TypeVal::Ext(b, Rc::from(vec![TypeArg::Type(TypeVal::Cat(t::ANY))])),
+            tv => tv,
+        })
+    }
+
     fn static_type_of_structure(&self, v: &Value) -> TypeId {
         v.type_id()
     }
@@ -801,8 +828,8 @@ impl Interp {
                 StructKind::Strings => TypeVal::Cat(t::MON_STG_ELT),
                 StructKind::PowerSeq(Some(w)) => TypeVal::Ext(t::SEQ_ENUM, Rc::from(vec![TypeArg::Type(self.static_element_type(w))])),
                 StructKind::PowerSet(Some(w)) => TypeVal::Ext(t::SET_ENUM, Rc::from(vec![TypeArg::Type(self.static_element_type(w))])),
-                StructKind::PowerSeq(None) => TypeVal::Cat(t::SEQ_ENUM),
-                StructKind::PowerSet(None) => TypeVal::Cat(t::SET_ENUM),
+                StructKind::PowerSeq(None) => TypeVal::Ext(t::SEQ_ENUM, Rc::from(vec![TypeArg::Type(TypeVal::Cat(t::ANY))])),
+                StructKind::PowerSet(None) => TypeVal::Ext(t::SET_ENUM, Rc::from(vec![TypeArg::Type(TypeVal::Cat(t::ANY))])),
                 StructKind::PowerISet(_) => TypeVal::Cat(t::SET_INDX),
                 StructKind::PowerMSet(_) => TypeVal::Cat(t::SET_MULTI),
                 StructKind::Cartesian(_) => TypeVal::Cat(t::TUP),

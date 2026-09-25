@@ -298,8 +298,17 @@ impl Interp {
                 for x in es {
                     v.push(self.eval(x, f)?);
                 }
+                // The integers take exactly one integer.
+                if matches!(p.as_struct(), Some(StructKind::Integers)) {
+                    if v.len() != 1 {
+                        return Err(RuntimeError::runtime("Wrong number of arguments to Z element constructor (should be 1)").in_context("elt< ... >"));
+                    }
+                    if !matches!(v[0], Value::Int(_)) {
+                        return Err(RuntimeError::runtime("Bad arguments").in_context("elt< ... >"));
+                    }
+                }
                 let arg = if v.len() == 1 && !matches!(p.as_struct(), Some(StructKind::Cartesian(_))) { v.pop().unwrap() } else { Value::tuple(v) };
-                self.coerce(&p, &arg).map_err(|e| e.in_context("elt"))
+                self.coerce(&p, &arg).map_err(|e| e.in_context("elt< ... >"))
             }
             Ex::Case(s, arms, d) => {
                 let v = self.eval(s, f)?;
@@ -693,6 +702,11 @@ impl Interp {
                     None => None,
                 };
                 MapImpl::Rule { f: fv, inv }
+            }
+            // The natural homomorphism from the integers: a coercion, which
+            // prints as a plain mapping.
+            MapBodyEx::Exprs(es) if es.is_empty() && kind == MapKind::Hom && matches!(domain.as_struct(), Some(StructKind::Integers)) => {
+                return Ok(Value::Map(Rc::new(MapObj { kind: MapKind::Map, domain, codomain, imp: MapImpl::Coercion })));
             }
             MapBodyEx::Exprs(es) => {
                 let mut vals = Vec::new();

@@ -22,7 +22,7 @@ implemented, what is deliberately different, and what is missing.
 | --- | --- |
 | Introduction to aggregates | Done: universes, automatic coercion to a common overstructure, power structures, nested aggregates, multi-indexing, sequences used as universes. |
 | Sets | Done: enumerated sets (with lazy arithmetic progressions), indexed sets, multisets, formal sets, all constructors, power sets, `Include`/`Exclude`/`ChangeUniverse`/..., set operators, `Subsets`, `Multisets`, `Permutations`, quantifiers `exists`/`forall`/`rep`/`random`, reductions, iteration. |
-| Sequences | Done. `Sort` gives its sorting permutation as an element of `Sym(n)`; the symmetric groups and their elements have what Part II needs (products, powers, inverses, the action `i^p`, conjugation, `Order`, `Eltseq`, `Sign`, `CycleStructure`, `Cycle`, generators, coercion from image sequences), and the rest of permutation groups comes in Part V. |
+| Sequences | Done, including indexing by ranges (`s[i..j]`, `s[i..j by k]`). `Sort` gives its sorting permutation as an element of `Sym(n)`; the symmetric groups and their elements have what Part II needs (products, powers, inverses, the action `i^p`, conjugation, `Order`, `Eltseq`, `Sign`, `CycleStructure`, `Cycle`, generators, coercion from image sequences), and the rest of permutation groups comes in Part V. |
 | Tuples and Cartesian products | Done. |
 | Lists | Done. |
 | Associative arrays | Done, including `Default` values and widening of the index universe. |
@@ -85,20 +85,90 @@ forced coercion, and caching (one `Integers(n)` per modulus, one default
 | Chapter | Status |
 | --- | --- |
 | Introduction to rings | Done: `Characteristic`, `#R` (`Infinity` for infinite rings), `IsFinite` and all the ring predicates (`IsField`, `IsEuclideanDomain`, `IsPID`, `IsUFD`, `HasGCD`, ..., with Magma's answers for every kind of ring), `PrimeRing`, `PrimeField`, `Centre`, ring equality and membership (with Magma's errors between unrelated rings), element predicates (`IsUnit`, `IsIdempotent`, `IsNilpotent`, `IsZeroDivisor`, `IsIrreducible`, `IsPrime`), Magma's order on residues, finite field elements and polynomials (`lt`, `Sort`), `Maximum`/`Minimum`, ideals of the integers (`ideal< >`, `quo< >`, ideal arithmetic, `ResidueClassField`), `ext< R \| >`, and naming of structures and aggregates by assignment (generators print as `F.1`, maps show `RngInt: Z`). **Pending:** `IsIrreducible`/`IsPrime` of polynomials (they need the polynomial factorisation of the polynomial chapters), ideals of polynomial rings, `Localization` and `Completion` (local rings come later). |
-| Ring of integers, residue class rings, rationals, finite fields, polynomials, real and complex fields, nearfields | Not yet: the chapter-specific intrinsics come next. |
+| Ring of integers | Done: creation (`Integers`, `IntegerRing`, `RingOfIntegers`, hexadecimal literals, `elt< >`, `sub< >`, the natural `hom< >`), coercion into Z, hexadecimal printing (`:Hex`), arithmetic and bit operations (`div`/`mod`, `Quotrem`, `ExactQuotient`, `ShiftLeft`, `Bitwise*`, `ModByPowerOf2`), predicates, `Isqrt`/`Iroot`/`IsPower`/`IsSquare`, `Ilog`, `Valuation`, digit sequences (`Intseq`/`Seqint`), gcds (`Xgcd` of sequences with small multipliers), random integers and primes, primality (proven with FLINT, `IsProbablePrime` with bases), `NextPrime`/`PreviousPrime`/`NthPrime`/`PrimesUpTo`, `Factorization` with its parameters and stored factors, the individual factoring methods (`TrialDivision`, `PollardRho`, `pMinus1`, `pPlus1`, `SQUFOF`, `ECM` with Suyama curves, `ECMOrder`, `MPQS`), `Divisors`, `CoprimeBasis`, `PartialFactorization`, `Cunningham`, factorization sequences (`RngIntEltFact`: arithmetic, divisor functions, predicates), arithmetic functions (`EulerPhi` and its inverse, `CarmichaelLambda`, `DivisorSigma`, `MoebiusMu`, `DickmanRho`), combinatorial functions, modular arithmetic (`Modexp`, `Modinv`, `Modsqrt`, `Modorder`, `PrimitiveRoot`, `Solution`, `CRT`), quadratic residue symbols and `NormEquation`. **Pending:** see "Left out of the Ring of Integers chapter" below. |
+| Residue class rings, rationals, finite fields, polynomials, real and complex fields, nearfields | Not yet: the chapter-specific intrinsics come next. |
 
 ## To do
 
-- **Confirm two compat scripts against Magma 2.29.** The scripts in
-  `crates/calyx-cli/tests/compat/pending/` (naming of aggregates in maps and
-  by loop variables; sequences of literals without a common universe) match
-  Magma 2.22 but were written while the public calculator was offline.
-  Record their 2.29 output and move them into the compat suite (see the
-  README there).
+- **Confirm the pending compat scripts against Magma 2.29.** The scripts in
+  `crates/calyx-cli/tests/compat/pending/` were written while the public
+  calculator was offline and checked against Magma 2.22 only. Record their
+  2.29 output and move them into the compat suite (see the README there):
+  - `aggregate_names.m`, `aggregate_universes.m`: naming of aggregates in
+    maps and by loop variables; sequences of literals without a common
+    universe.
+  - `integers_*.m`: the Ring of Integers chapter (the handbook examples,
+    creation, arithmetic, gcds, random values, arithmetic functions,
+    primes, factorization and its methods, partial factorizations,
+    factorization sequences, modular arithmetic, and tables of `Modsqrt`
+    roots and `NormEquation` solutions).
+  - `sequence_range_index.m`: `s[i..j]` indexing and `[Any]` in the
+    extended types of empty aggregates.
+  - `runtime_error_continuation.m`: statements after a runtime error on
+    the same line still run; after a syntax error, the statements before
+    it have run.
+  - `print_wrapping_per_call.m`: each `print`/`printf` wraps its output
+    from column 0, whatever is already on the line.
+  - `unassigned_targets.m`: assigning into or mutating an identifier that
+    was never assigned.
+
+  Where 2.22 and 2.29 differ (2.22 cannot prove primality without its
+  library directory, words some errors differently, and crashes on a few
+  inputs that the scripts avoid), follow 2.29.
+- **Left out of the Ring of Integers chapter**, to come back to:
+  - The Number Field Sieve (`NumberFieldSieve`, `NFSProcess` and its
+    stages, the polynomial selection tools). It is a large, file-based
+    subsystem of its own and needs the polynomial and real chapters first.
+  - `AdditiveGroup(Z)`, `MultiplicativeGroup(Z)` and `ClassGroup(Z)`. They
+    return abelian groups (`GrpAb`) and maps, so they wait for abelian
+    groups in Part V.
+  - `Cunningham(b, k, c)`, which factors b^k ± 1. Magma answers from
+    tables of known factors of these numbers (the Cunningham project
+    tables) that it ships with. calyx needs the same factors; without them,
+    algebraic splitting of b^k ± 1 plus general factorisation gives the
+    same answers but can take far longer for large k. A decoded copy of the table sits in `databases/`
+    (ignored by git); how calyx will ship the factors is still to be
+    decided.
+  - `PrimalityCertificate`, `CheckCertificate` and `OldCertificate`. These
+    need an ECPP prover that records its proof. FLINT proves primality
+    by other methods and gives no certificate. A calyx certificate would be
+    a valid proof, but not the same curves and points as Magma's, so only
+    `CheckCertificate` could be compared directly.
+- **Known differences in the Ring of Integers chapter.** Where Magma makes
+  an arbitrary choice, calyx reproduces it as far as black-box testing
+  against 2.22 shows; these are the cases that still differ:
+  - `Modsqrt(n, 2^k)` for k >= 7 can return a different one of the square
+    roots (it differs by 2^(k-1)). All other moduli tested agree.
+  - `NormEquation(d, m)` returns the same first solution as Magma for 160 of
+    161 tested pairs; for (2, 57) Magma gives (5, 4) and calyx (7, 2).
+  - `PartialFactorization`: the cofactors (a coprime base of what is left,
+    ordered by which integers they divide) always agree, and the square
+    parts agree for 840 of 841 tested pairs and most longer sequences, but
+    not for the handbook's four-integer example (Magma splits 15^2 as
+    5^2 3^2 there) or the pair [288, 108]. The order in which Magma pairs
+    up the integers is not yet understood.
+  - The factoring methods are the documented algorithms, but which factor
+    they find first, and the default bounds (`B2` for `pMinus1`, `pPlus1`
+    and `ECM`; the random curves of `ECM` and `ECMSteps`), may differ. For
+    instance `SQUFOF(360)` gives the full factorization in calyx and a
+    partial one in 2.22.
+  - `DickmanRho` is computed exactly (power series on each unit interval);
+    2.22's values differ from the true ones by about 1e-22 on [2, 3].
+  - `ECMOrder` for a singular curve reports the error without the
+    traceback into Magma's package code.
+  - `TrialDivision` follows the 2.29 handbook (the factors found, then the
+    unfactored part); 2.22 returns the factors and a list of composites.
+  - `StoreFactor` of a set stores the elements; 2.22 ignores sets.
+  - `RandomPrime(0)` and `RandomPrime(1)` report an error, as 2.22 does;
+    the handbook says they return 0. Check which 2.29 does.
+  - Integers too long for one line inside an error message wrap at a
+    space in calyx; Magma breaks them with a backslash.
+  - `SetColumns(0)` stops line wrapping in calyx, but Magma also prints
+    nested sequences without indentation then.
 
 ## Next
 
-1. The rest of Part III chapter by chapter: integers, residue class rings,
+1. The rest of Part III chapter by chapter: residue class rings,
    rationals, finite fields (including towers and embeddings), univariate
    and multivariate polynomials (factorisation via FLINT), real and complex
    fields, then nearfields.

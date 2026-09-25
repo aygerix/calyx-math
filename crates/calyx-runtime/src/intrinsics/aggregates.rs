@@ -273,7 +273,7 @@ fn min_max(it: &mut Interp, a: &mut CallArgs, want: Ordering) -> RResult<Vec<Val
     let with_index = matches!(v, Value::Seq(_) | Value::ISet(_));
     let mut iter = it.iter_value(&v, false)?;
     let Some((_, mut best)) = iter.next_item() else {
-        return Err(RuntimeError::runtime("Argument is empty"));
+        return Err(super::arg_not(1, "non-empty"));
     };
     let mut best_i = 1;
     let mut i = 1;
@@ -604,7 +604,12 @@ both_forms!(remove_proc, remove_func, remove_imp);
 
 fn reverse_imp(_it: &mut Interp, a: &mut CallArgs) -> RResult<()> {
     match &mut a.args[0] {
-        Value::Seq(s) => Rc::make_mut(s).elems.reverse(),
+        Value::Seq(s) => {
+            let s = Rc::make_mut(s);
+            s.elems.reverse();
+            // A reversed factorization is no longer one.
+            s.fact = false;
+        }
         Value::List(l) => Rc::make_mut(l).reverse(),
         _ => unreachable!(),
     }
@@ -1136,7 +1141,13 @@ fn partition(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     let mut pos = 0;
     for n in sizes {
         // Parts of a range still print as ranges.
-        out.push(Value::Seq(Rc::new(SeqEnum { universe: s.universe.clone(), elems: s.elems[pos..pos + n].to_vec(), range_hint: s.range_hint, name: Default::default() })));
+        out.push(Value::Seq(Rc::new(SeqEnum {
+            universe: s.universe.clone(),
+            elems: s.elems[pos..pos + n].to_vec(),
+            range_hint: s.range_hint,
+            name: Default::default(),
+            fact: false,
+        })));
         pos += n;
     }
     one(Value::seq(Some(Value::structure(StructKind::PowerSeq(s.universe.clone()))), out))

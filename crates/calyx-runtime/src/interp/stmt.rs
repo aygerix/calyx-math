@@ -62,7 +62,7 @@ impl Interp {
                     vals.push(self.eval(e, f)?);
                 }
                 let text = self.sprintf(&vals)?;
-                let text = crate::print::wrap_text_output(&text, self.out.col(), self.out.columns);
+                let text = crate::print::wrap_text_output(&text, 0, self.out.columns);
                 self.out.write(&text);
             }
             St::Fprintf(file, es) => {
@@ -86,7 +86,7 @@ impl Interp {
                     }
                     if *is_printf {
                         let text = self.sprintf(&vals)?;
-                        let text = crate::print::wrap_text_output(&text, self.out.col(), self.out.columns);
+                        let text = crate::print::wrap_text_output(&text, 0, self.out.columns);
                         self.out.write(&text);
                     } else {
                         self.print_values(&vals, Level::Default)?;
@@ -115,9 +115,9 @@ impl Interp {
                     }
                 }
             }
-            St::OpAssign(target, op, value) => {
+            St::OpAssign(target, op, value, at) => {
                 let rhs = self.eval(value, f)?;
-                self.op_assign(target, *op, rhs, f)?;
+                self.op_assign(target, *op, rhs, f, *at)?;
             }
             St::GenAssign(target, names, value) => {
                 let v = self.eval(value, f)?;

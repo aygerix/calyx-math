@@ -8,6 +8,7 @@ use calyx_syntax::ast::BinOp;
 
 use crate::error::{RResult, RuntimeError};
 use crate::interp::Interp;
+use crate::intrinsics::factseq;
 use crate::value::*;
 
 fn rat_of(v: &Value) -> Option<Rational> {
@@ -81,7 +82,9 @@ fn extended_sign(v: &Value) -> Option<i32> {
 /// infinity).
 fn infinity_binop(op: BinOp, a: &Value, b: &Value) -> RResult<Option<Value>> {
     use BinOp::*;
-    let (Some(sa), Some(sb)) = (extended_sign(a), extended_sign(b)) else { return Ok(None) };
+    let (Some(sa), Some(sb)) = (extended_sign(a), extended_sign(b)) else {
+        return Ok(None);
+    };
     let (ia, ib) = (matches!(a, Value::Infinity(_)), matches!(b, Value::Infinity(_)));
     let undefined = || Err(RuntimeError::runtime("Result of computation is not well defined").in_context(op.intrinsic_name()));
     let inf = |s: i32| Ok(Some(Value::Infinity(s > 0)));
@@ -162,6 +165,12 @@ impl Interp {
             self.perm_binop(op, &a, &b)?
         } else if matches!((&a, &b), (Value::Struct(_), Value::Struct(_))) {
             self.ideal_binop(op, &a, &b)?
+        } else if factseq::is_fact(&a) || factseq::is_fact(&b) {
+            // Factorization sequences compare only with sequences.
+            if matches!(op, BinOp::Eq | BinOp::Ne) && !(matches!(a, Value::Seq(_)) && matches!(b, Value::Seq(_))) {
+                return Err(self.bad_types(op, &a, &b));
+            }
+            self.fact_binop(op, &a, &b)?
         } else {
             None
         };
@@ -296,7 +305,8 @@ impl Interp {
             },
             IntDiv | Mod => match (a, b) {
                 (Int(x), Int(y)) => {
-                    let (q, r) = x.div_rem_euclid(y).ok_or_else(|| div_by_zero().in_context(op.intrinsic_name()))?;
+                    // The remainder takes the sign of the divisor.
+                    let (q, r) = x.fdiv_qr(y).ok_or_else(|| div_by_zero().in_context(op.intrinsic_name()))?;
                     Int(if op == IntDiv { q } else { r })
                 }
                 _ if is_num(a) && is_num(b) => {
@@ -305,7 +315,7 @@ impl Interp {
                     if !x.is_integral() || !y.is_integral() {
                         return Ok(None);
                     }
-                    let (q, r) = x.numerator().div_rem_euclid(&y.numerator()).ok_or_else(|| div_by_zero().in_context(op.intrinsic_name()))?;
+                    let (q, r) = x.numerator().fdiv_qr(&y.numerator()).ok_or_else(|| div_by_zero().in_context(op.intrinsic_name()))?;
                     Int(if op == IntDiv { q } else { r })
                 }
                 _ => return Ok(None),
@@ -405,6 +415,9 @@ impl Interp {
                     }
                     Value::Int(x.pow(e))
                 } else {
+                    if x.is_zero() {
+                        return Err(RuntimeError::runtime("Illegal negative power of zero element").in_context("^"));
+                    }
                     let q = Rational::from_integer(x);
                     let e = e.to_i64().ok_or_else(|| RuntimeError::runtime("Exponent is too large").in_context("^"))?;
                     Value::rat(q.pow(e).ok_or_else(|| div_by_zero().in_context("^"))?)

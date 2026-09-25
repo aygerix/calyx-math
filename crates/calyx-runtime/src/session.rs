@@ -38,43 +38,72 @@ impl Interp {
     /// With `allow_incomplete`, a truncated statement yields `Incomplete`
     /// instead of an error (for the REPL).
     pub fn execute(&mut self, src: &str, name: &str, allow_incomplete: bool) -> RResult<ExecOutcome> {
+        self.execute_with(src, name, allow_incomplete, None)
+    }
+
+    /// Like `execute`, but an error in one statement is passed to `report`
+    /// and the following statements still run, as at Magma's prompt (a
+    /// syntax error still discards all of the text).
+    pub fn execute_continuing(
+        &mut self,
+        src: &str,
+        name: &str,
+        allow_incomplete: bool,
+        report: &mut dyn FnMut(&mut Interp, &RuntimeError),
+    ) -> RResult<ExecOutcome> {
+        self.execute_with(src, name, allow_incomplete, Some(report))
+    }
+
+    fn execute_with(
+        &mut self,
+        src: &str,
+        name: &str,
+        allow_incomplete: bool,
+        mut report: Option<&mut dyn FnMut(&mut Interp, &RuntimeError)>,
+    ) -> RResult<ExecOutcome> {
         let file = self.add_source(name, src);
-        let stmts = match calyx_syntax::parse_program(src, file) {
-            Ok(s) => s,
+        let (stmts, failed) = match calyx_syntax::parse_program(src, file) {
+            Ok(s) => (s, None),
             Err(e) if e.incomplete && allow_incomplete => {
                 self.sources.pop();
                 return Ok(ExecOutcome::Incomplete);
             }
+            // At top level the statements before a syntax error still run.
+            Err(e) if report.is_some() => (calyx_syntax::parse_program_prefix(src, file).0, Some(e)),
             Err(e) => return Err(syntax_error(&e)),
         };
         for s in &stmts {
             self.check_package_updates()?;
-            let code = {
-                let forwards = self.forwards.clone();
-                let compiler = Compiler::new(&forwards, src, UnitOptions::default());
-                compiler.compile_unit(std::slice::from_ref(s), s.span).map_err(|e| RuntimeError {
-                    kind: ErrKind::User,
-                    span: Some(e.span),
-                    ..RuntimeError::user(e.message)
-                })?
-            };
-            self.trace.clear();
-            self.depth = 0;
-            match self.run_unit(&code) {
-                Ok(_) => {}
-                Err(e) => {
-                    if let Some(c) = self.quit {
-                        let _ = e;
-                        return Ok(ExecOutcome::Quit(c));
-                    }
-                    return Err(e);
-                }
-            }
+            let r = self.run_top_statement(src, s);
             if let Some(c) = self.quit {
                 return Ok(ExecOutcome::Quit(c));
             }
+            if let Err(e) = r {
+                match report.as_mut() {
+                    Some(f) if !self.quit_on_error && e.kind != ErrKind::Interrupt => f(self, &e),
+                    _ => return Err(e),
+                }
+            }
+        }
+        if let Some(e) = failed {
+            return Err(syntax_error(&e));
         }
         Ok(ExecOutcome::Done)
+    }
+
+    fn run_top_statement(&mut self, src: &str, s: &calyx_syntax::ast::Stmt) -> RResult<()> {
+        let code = {
+            let forwards = self.forwards.clone();
+            let compiler = Compiler::new(&forwards, src, UnitOptions::default());
+            compiler.compile_unit(std::slice::from_ref(s), s.span).map_err(|e| RuntimeError {
+                kind: ErrKind::User,
+                span: Some(e.span),
+                ..RuntimeError::user(e.message)
+            })?
+        };
+        self.trace.clear();
+        self.depth = 0;
+        self.run_unit(&code).map(|_| ())
     }
 
     fn resolve_path(&self, name: &str) -> PathBuf {
@@ -330,6 +359,7 @@ impl Interp {
         let built_in = match (&*name.as_rc(), left.first()) {
             ("ideal", Some(base)) => self.ideal_constructor(base, &rhs)?,
             ("quo", Some(base)) => self.quo_constructor(base, &rhs)?,
+            ("sub", Some(base)) => self.sub_constructor(base, &rhs)?,
             ("ext", Some(_)) => self.ext_constructor(&left, &rhs)?,
             _ => None,
         };

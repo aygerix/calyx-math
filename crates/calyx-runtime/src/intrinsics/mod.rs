@@ -2,12 +2,16 @@
 //! signatures) and the built-in libraries.
 
 pub mod aggregates;
+pub mod combinat;
 pub mod core;
 pub mod env;
+pub mod factoring;
+pub mod factseq;
 pub mod ideals;
 pub mod ints;
 pub mod io;
 pub mod maps;
+pub mod numtheory;
 pub mod perms;
 pub mod ring_elts;
 pub mod reals;
@@ -269,7 +273,56 @@ pub fn intv(i: Integer) -> RResult<Vec<Value>> {
     Ok(vec![Value::Int(i)])
 }
 
+// ----- Magma's wording for bad arguments -------------------------------------
+
+/// `Argument i (v) should be >= lo`.
+pub fn arg_ge(i: usize, v: &Integer, lo: impl std::fmt::Display) -> RuntimeError {
+    RuntimeError::runtime(format!("Argument {i} ({v}) should be >= {lo}"))
+}
+
+/// `Argument i (v) should be <= hi`.
+pub fn arg_le(i: usize, v: &Integer, hi: impl std::fmt::Display) -> RuntimeError {
+    RuntimeError::runtime(format!("Argument {i} ({v}) should be <= {hi}"))
+}
+
+/// `Argument i (v) should be in the range [lo .. hi]`.
+pub fn arg_range(i: usize, v: &Integer, lo: impl std::fmt::Display, hi: impl std::fmt::Display) -> RuntimeError {
+    RuntimeError::runtime(format!("Argument {i} ({v}) should be in the range [{lo} .. {hi}]"))
+}
+
+/// `Argument i is not <what>` (`non-zero`, `positive`, `non-negative`).
+pub fn arg_not(i: usize, what: &str) -> RuntimeError {
+    RuntimeError::runtime(format!("Argument {i} is not {what}"))
+}
+
+/// `Argument i (v) should be prime`.
+pub fn arg_prime(i: usize, v: &Integer) -> RuntimeError {
+    RuntimeError::runtime(format!("Argument {i} ({v}) should be prime"))
+}
+
+/// An error reported without naming the intrinsic, as Magma's package
+/// intrinsics report failed requirements.
+pub fn bare(e: RuntimeError) -> RuntimeError {
+    e.in_context("")
+}
+
 impl CallArgs {
+    /// Argument `i` as an integer that is at least `lo`, else Magma's
+    /// `should be >= lo` error.
+    pub fn int_ge(&self, i: usize, lo: i64) -> RResult<Integer> {
+        let n = self.int(i)?;
+        if *n < Integer::from_i64(lo) {
+            return Err(arg_ge(i + 1, n, lo));
+        }
+        Ok(n.clone())
+    }
+
+    /// Argument `i` as a machine integer that is at least `lo`.
+    pub fn small_ge(&self, i: usize, lo: i64) -> RResult<u64> {
+        let n = self.int_ge(i, lo)?;
+        n.to_u64().ok_or_else(|| RuntimeError::runtime(format!("Argument {} ({n}) is too large", i + 1)))
+    }
+
     pub fn int(&self, i: usize) -> RResult<&Integer> {
         match &self.args[i] {
             Value::Int(n) => Ok(n),
@@ -323,6 +376,10 @@ impl CallArgs {
 pub fn register_all(it: &mut Interp) {
     core::register(it);
     ints::register(it);
+    factseq::register(it);
+    numtheory::register(it);
+    combinat::register(it);
+    factoring::register(it);
     reals::register(it);
     strings::register(it);
     aggregates::register(it);

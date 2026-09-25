@@ -1,10 +1,11 @@
-//! Integer and rational number intrinsics (FLINT-backed).
+//! Integer and rational number intrinsics (FLINT-backed): arithmetic of
+//! elements, gcds, digits, predicates and random integers.
 
 use std::rc::Rc;
 
 use calyx_flint::{Integer, Rational};
 
-use super::{boolv, intv, one};
+use super::{arg_ge, arg_not, boolv, intv, one};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
 use crate::value::*;
@@ -29,18 +30,25 @@ fn int_seq(v: Vec<Integer>) -> Value {
     Value::int_seq(v)
 }
 
-fn int_pair_parent() -> Value {
-    Value::structure(StructKind::Cartesian(vec![Value::integers(), Value::integers()]))
-}
-
 /// A factorization as a sequence of `<p, e>` tuples.
 pub fn factorization_value(factors: &[(Integer, u64)]) -> Value {
-    let parent = int_pair_parent();
-    let elems = factors
-        .iter()
-        .map(|(p, e)| Value::Tuple(Rc::new(Tuple { elems: vec![Value::Int(p.clone()), Value::Int(Integer::from_u64(*e))], parent: Some(parent.clone()) })))
-        .collect();
-    Value::seq(Some(parent), elems)
+    super::factseq::fact_value(factors)
+}
+
+/// The integers of a sequence or set argument.
+pub fn ints_of(v: &Value) -> RResult<Vec<Integer>> {
+    let elems: Vec<Value> = match v {
+        Value::Seq(s) => s.elems.clone(),
+        Value::Set(s) => s.iter().collect(),
+        _ => return Err(RuntimeError::runtime("Bad argument types")),
+    };
+    elems
+        .into_iter()
+        .map(|e| match e {
+            Value::Int(n) => Ok(n),
+            _ => Err(RuntimeError::runtime("Bad argument types")),
+        })
+        .collect()
 }
 
 fn abs(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
@@ -95,114 +103,94 @@ fn is_odd(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     boolv(a.int(0)?.is_odd())
 }
 
-fn is_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_regular(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    boolv(!a.int(0)?.is_zero())
+}
+
+fn is_single_precision(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    boolv(a.int(0)?.abs() < Integer::from_i64(1 << 30))
+}
+
+/// The ring-theoretic functions that are the identity (or absolute value)
+/// on the integers.
+fn identity(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    one(a.args[0].clone())
+}
+
+fn minimal_polynomial(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    let n = a.int(0)?.clone();
+    let px = it.poly_ring(&Value::integers(), true)?;
+    one(it.coerce(&px, &Value::int_seq([-n, Integer::one()]))?)
+}
+
+fn eltseq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    one(int_seq(vec![a.int(0)?.clone()]))
+}
+
+// ----- division -----------------------------------------------------------------
+
+fn quotrem(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    let (q, r) = a.int(0)?.fdiv_qr(a.int(1)?).ok_or_else(|| RuntimeError::runtime("Division by zero"))?;
+    Ok(vec![Value::Int(q), Value::Int(r)])
+}
+
+fn exact_quotient(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    let (n, d) = (a.int(0)?, a.int(1)?);
+    if d.is_zero() {
+        return Err(RuntimeError::runtime("Division by zero"));
+    }
+    if !n.is_divisible_by(d) {
+        return Err(RuntimeError::runtime("Argument 1 is not exactly divisible by argument 2"));
+    }
+    intv(n.divexact(d))
+}
+
+fn is_divisible_by(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    let (n, d) = (a.int(0)?, a.int(1)?);
+    if d.is_zero() {
+        return Err(RuntimeError::runtime("Division by zero"));
+    }
+    let yes = n.is_divisible_by(d);
+    // The quotient is returned only when asked for.
+    if a.nresults < 2 {
+        return boolv(yes);
+    }
+    Ok(vec![Value::Bool(yes), if yes { Value::Int(n.divexact(d)) } else { Value::Undef }])
+}
+
+fn shift_left(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    let b = a.small_ge(1, 0)?;
+    intv(a.int(0)?.mul_2exp(b))
+}
+
+fn shift_right(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    let b = a.small_ge(1, 0)?;
+    intv(a.int(0)?.fdiv_2exp(b))
+}
+
+fn mod_by_power_of_2(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    let b = a.small_ge(1, 0)?;
     let n = a.int(0)?;
-    let proof = a.param("Proof").map(|v| matches!(v, Value::Bool(true))).unwrap_or(true);
-    // Negatives of primes are prime elements of the integers too.
-    let n = n.abs();
-    boolv(if proof { n.is_prime() } else { n.is_probable_prime() })
+    intv(n - &n.fdiv_2exp(b).mul_2exp(b))
 }
 
-fn is_probable_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let n = a.int(0)?;
-    boolv(n.sign() > 0 && n.is_probable_prime())
+fn bitwise_not(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    intv(a.int(0)?.bitnot())
 }
 
-fn next_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    intv(a.int(0)?.next_prime())
+fn bitwise_and(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    intv(a.int(0)?.bitand(a.int(1)?))
 }
 
-fn previous_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    match a.int(0)?.previous_prime() {
-        Some(p) => intv(p),
-        None => Err(RuntimeError::runtime("There is no prime smaller than the argument")),
-    }
+fn bitwise_or(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    intv(a.int(0)?.bitor(a.int(1)?))
 }
 
-fn nth_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let n = a.usize(0)?;
-    if n == 0 {
-        return Err(RuntimeError::runtime("Argument must be positive"));
-    }
-    let mut p = Integer::from_i64(2);
-    for _ in 1..n {
-        p = p.next_prime();
-    }
-    intv(p)
+fn bitwise_xor(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    intv(a.int(0)?.bitxor(a.int(1)?))
 }
 
-fn factorization(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let n = a.int(0)?;
-    let Some(f) = n.factor() else {
-        return Err(RuntimeError::runtime("Cannot factorize zero"));
-    };
-    // The sign is an optional second result, not shown when printing.
-    if a.nresults >= 2 {
-        return Ok(vec![factorization_value(&f.factors), Value::int(f.sign as i64)]);
-    }
-    one(factorization_value(&f.factors))
-}
-
-fn prime_divisors(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let n = a.int(0)?;
-    let Some(f) = n.factor() else {
-        return Err(RuntimeError::runtime("Argument must be non-zero"));
-    };
-    one(int_seq(f.factors.into_iter().map(|(p, _)| p).collect()))
-}
-
-fn divisor_list(n: &Integer) -> RResult<Vec<Integer>> {
-    let Some(f) = n.factor() else {
-        return Err(RuntimeError::runtime("Argument must be non-zero"));
-    };
-    let mut divs = vec![Integer::one()];
-    for (p, e) in &f.factors {
-        let mut next = Vec::with_capacity(divs.len() * (*e as usize + 1));
-        for d in &divs {
-            let mut pk = Integer::one();
-            for _ in 0..=*e {
-                next.push(d * &pk);
-                pk = &pk * p;
-            }
-        }
-        divs = next;
-    }
-    divs.sort();
-    Ok(divs)
-}
-
-fn divisors(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    one(int_seq(divisor_list(a.int(0)?)?))
-}
-
-fn number_of_divisors(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    intv(a.int(0)?.abs().divisor_sigma(0))
-}
-
-fn sum_of_divisors(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    intv(a.int(0)?.abs().divisor_sigma(1))
-}
-
-fn divisor_sigma(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let k = a.usize(0)? as u64;
-    intv(a.int(1)?.abs().divisor_sigma(k))
-}
-
-fn euler_phi(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let n = a.int(0)?;
-    if n.sign() <= 0 {
-        return Err(RuntimeError::runtime("Argument must be positive"));
-    }
-    intv(n.euler_phi())
-}
-
-fn moebius_mu(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let n = a.int(0)?;
-    if n.sign() <= 0 {
-        return Err(RuntimeError::runtime("Argument must be positive"));
-    }
-    one(Value::int(n.moebius_mu() as i64))
-}
+// ----- gcd and lcm ----------------------------------------------------------------
 
 fn gcd(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     let (x, y) = (rat_arg(a, 0)?, rat_arg(a, 1)?);
@@ -215,16 +203,16 @@ fn gcd(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(Value::rat(Rational::new(&n, &d).unwrap()))
 }
 
+fn null_seq() -> RuntimeError {
+    RuntimeError::runtime("Illegal null set/sequence")
+}
+
 fn gcd_seq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let s = a.seq(0)?;
-    let mut g = Integer::zero();
-    for v in &s.elems {
-        match v {
-            Value::Int(n) => g = g.gcd(n),
-            _ => return Err(RuntimeError::runtime("Sequence must contain integers")),
-        }
+    let s = ints_of(&a.args[0])?;
+    if s.is_empty() {
+        return Err(null_seq());
     }
-    intv(g)
+    intv(s.iter().fold(Integer::zero(), |g, n| g.gcd(n)))
 }
 
 fn lcm(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
@@ -232,15 +220,11 @@ fn lcm(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
 }
 
 fn lcm_seq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let s = a.seq(0)?;
-    let mut l = Integer::one();
-    for v in &s.elems {
-        match v {
-            Value::Int(n) => l = l.lcm(n),
-            _ => return Err(RuntimeError::runtime("Sequence must contain integers")),
-        }
+    let s = ints_of(&a.args[0])?;
+    if s.is_empty() {
+        return Err(null_seq());
     }
-    intv(l)
+    intv(s.iter().fold(Integer::one(), |l, n| l.lcm(n)))
 }
 
 fn xgcd(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
@@ -248,42 +232,106 @@ fn xgcd(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     Ok(vec![Value::Int(g), Value::Int(s), Value::Int(t)])
 }
 
-fn quotrem(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let (q, r) = a.int(0)?.div_rem_euclid(a.int(1)?).ok_or_else(|| RuntimeError::runtime("Division by zero"))?;
-    Ok(vec![Value::Int(q), Value::Int(r)])
+/// `x / y` rounded to the nearest integer (halves upwards).
+fn round_div(x: &Integer, y: &Integer) -> Integer {
+    let two = Integer::from_i64(2);
+    let (q, _) = (&(&two * x) + y).fdiv_qr(&(&two * y)).unwrap();
+    q
 }
 
-fn modexp(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let m = a.int(2)?;
-    if m.sign() <= 0 {
-        return Err(RuntimeError::runtime("Modulus must be positive"));
+/// The extended gcd of a sequence: the gcd and small multipliers, found by
+/// lattice reduction of the identity basis weighted by the integers
+/// (Havas, Majewski and Matthews).
+pub fn xgcd_seq_of(a: &[Integer]) -> (Integer, Vec<Integer>) {
+    let m = a.len();
+    if a.iter().all(|x| x.is_zero()) {
+        return (Integer::zero(), vec![Integer::zero(); m]);
     }
-    match a.int(0)?.powm(a.int(1)?, m) {
-        Some(r) => intv(r),
-        None => Err(RuntimeError::runtime("Base is not invertible modulo the modulus")),
+    let mut a = a.to_vec();
+    let mut b: Vec<Vec<Integer>> = (0..m).map(|i| (0..m).map(|j| Integer::from_i64((i == j) as i64)).collect()).collect();
+    let mut lam = vec![vec![Integer::zero(); m]; m];
+    let mut d = vec![Integer::one(); m + 1];
+    // Indices below are 1-based as in the published algorithm.
+    let reduce = |k: usize, i: usize, a: &mut Vec<Integer>, b: &mut Vec<Vec<Integer>>, lam: &mut Vec<Vec<Integer>>, d: &Vec<Integer>| {
+        let q = if !a[i - 1].is_zero() {
+            round_div(&a[k - 1], &a[i - 1])
+        } else if &Integer::from_i64(2) * &lam[k - 1][i - 1].abs() > d[i] {
+            round_div(&lam[k - 1][i - 1], &d[i])
+        } else {
+            Integer::zero()
+        };
+        if !q.is_zero() {
+            let bi = b[i - 1].clone();
+            for (x, y) in b[k - 1].iter_mut().zip(&bi) {
+                *x = &*x - &(&q * y);
+            }
+            a[k - 1] = &a[k - 1] - &(&q * &a[i - 1]);
+            lam[k - 1][i - 1] = &lam[k - 1][i - 1] - &(&q * &d[i]);
+            for j in 1..i {
+                lam[k - 1][j - 1] = &lam[k - 1][j - 1] - &(&q * &lam[i - 1][j - 1]);
+            }
+        }
+    };
+    let mut k = 2;
+    while k <= m {
+        reduce(k, k - 1, &mut a, &mut b, &mut lam, &d);
+        let swap = !a[k - 2].is_zero()
+            || (a[k - 1].is_zero()
+                && &Integer::from_i64(4) * &(&(&d[k - 2] * &d[k]) + &(&lam[k - 1][k - 2] * &lam[k - 1][k - 2]))
+                    < &Integer::from_i64(3) * &(&d[k - 1] * &d[k - 1]));
+        if swap {
+            a.swap(k - 1, k - 2);
+            b.swap(k - 1, k - 2);
+            for j in 1..k - 1 {
+                let t = lam[k - 1][j - 1].clone();
+                lam[k - 1][j - 1] = std::mem::replace(&mut lam[k - 2][j - 1], t);
+            }
+            let l = lam[k - 1][k - 2].clone();
+            let bb = (&(&d[k - 2] * &d[k]) + &(&l * &l)).divexact(&d[k - 1]);
+            for i in k + 1..=m {
+                let t = lam[i - 1][k - 1].clone();
+                lam[i - 1][k - 1] = (&(&d[k] * &lam[i - 1][k - 2]) - &(&l * &t)).divexact(&d[k - 1]);
+                lam[i - 1][k - 2] = (&(&bb * &t) + &(&l * &lam[i - 1][k - 1])).divexact(&d[k]);
+            }
+            d[k - 1] = bb;
+            if k > 2 {
+                k -= 1;
+            }
+        } else {
+            for i in (1..=k - 2).rev() {
+                reduce(k, i, &mut a, &mut b, &mut lam, &d);
+            }
+            k += 1;
+        }
     }
+    let mut g = a[m - 1].clone();
+    let mut x = b[m - 1].clone();
+    if g.sign() < 0 {
+        g = -g;
+        x = x.into_iter().map(|v| -v).collect();
+    }
+    (g, x)
 }
 
-fn modinv(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    match a.int(0)?.invmod(a.int(1)?) {
-        Some(r) => intv(r),
-        None => Err(RuntimeError::runtime("Argument is not invertible modulo the modulus")),
-    }
+fn xgcd_seq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    let s = ints_of(&a.args[0])?;
+    let (g, x) = xgcd_seq_of(&s);
+    Ok(vec![Value::Int(g), int_seq(x)])
 }
+
+// ----- roots, powers and logarithms ---------------------------------------------
 
 fn isqrt(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     match a.int(0)?.isqrt() {
         Some(r) => intv(r),
-        None => Err(RuntimeError::runtime("Argument must be non-negative")),
+        None => Err(arg_not(1, "non-negative")),
     }
 }
 
 fn iroot(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let k = a.usize(1)? as u64;
-    match a.int(0)?.root(k) {
-        Some((r, _)) => intv(r),
-        None => Err(RuntimeError::runtime("No real root exists")),
-    }
+    let n = a.int_ge(0, 1)?;
+    let k = a.small_ge(1, 2)?;
+    intv(n.root(k).unwrap().0)
 }
 
 fn is_square(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
@@ -308,77 +356,163 @@ fn is_square(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
 }
 
 fn is_power(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let n = a.int(0)?;
     if a.args.len() == 2 {
-        let k = a.usize(1)? as u64;
-        return match n.root(k) {
-            Some((r, true)) => Ok(vec![Value::Bool(true), Value::Int(r)]),
-            _ => Ok(vec![Value::Bool(false), Value::Undef]),
+        let n = a.int(0)?.clone();
+        let no = Ok(vec![Value::Bool(false), Value::Undef]);
+        let k = a.int(1)?;
+        if k.sign() <= 0 {
+            return no;
+        }
+        let Some(k) = k.to_u64() else { return no };
+        if n.sign() < 0 && k % 2 == 0 {
+            return no;
+        }
+        return match n.abs().root(k) {
+            Some((r, true)) => Ok(vec![Value::Bool(true), Value::Int(if n.sign() < 0 { -r } else { r })]),
+            _ => no,
         };
     }
+    let n = a.int_ge(0, 2)?;
     match n.perfect_power() {
         Some((b, e)) => Ok(vec![Value::Bool(true), Value::Int(b), Value::Int(Integer::from_u64(e))]),
         None => Ok(vec![Value::Bool(false), Value::Undef, Value::Undef]),
     }
 }
 
-fn is_prime_power(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_squarefree(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     let n = a.int(0)?;
-    if n.sign() <= 0 || n.is_one() {
-        return Ok(vec![Value::Bool(false), Value::Undef, Value::Undef]);
+    if n.is_zero() {
+        return Err(arg_not(1, "non-zero"));
     }
-    let f = n.factor().unwrap();
-    if f.factors.len() == 1 {
-        let (p, e) = &f.factors[0];
-        return Ok(vec![Value::Bool(true), Value::Int(p.clone()), Value::Int(Integer::from_u64(*e))]);
-    }
-    Ok(vec![Value::Bool(false), Value::Undef, Value::Undef])
+    boolv(super::factseq::factor(n).iter().all(|(_, e)| *e == 1))
 }
 
-fn factorial(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn squarefree_factorization(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     let n = a.int(0)?;
-    if n.sign() < 0 {
-        return Err(RuntimeError::runtime("Argument must be non-negative"));
+    if n.is_zero() {
+        return Err(arg_not(1, "non-zero"));
     }
-    let n = n.to_u64().filter(|&n| n < 100_000_000).ok_or_else(|| RuntimeError::runtime("Argument is too large"))?;
-    intv(Integer::factorial(n))
+    let (x, y) = super::factseq::squarefree_split(&super::factseq::factor(n));
+    let x = super::factseq::fact_int(&x);
+    Ok(vec![Value::Int(if n.sign() < 0 { -x } else { x }), Value::Int(super::factseq::fact_int(&y))])
 }
 
-fn binomial(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let (n, k) = (a.int(0)?.clone(), a.int(1)?.clone());
-    if k.sign() < 0 {
-        return intv(Integer::zero());
+fn valuation(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    let (n, p) = (a.int(0)?.clone(), a.int(1)?.clone());
+    if p.sign() <= 0 {
+        return Err(arg_not(2, "positive"));
     }
-    let k = k.to_u64().ok_or_else(|| RuntimeError::runtime("Argument 2 is too large"))?;
-    if let Some(nn) = n.to_u64() {
-        if n.sign() >= 0 {
-            return intv(if k > nn { Integer::zero() } else { Integer::binomial_u64(nn, k) });
+    if !p.is_prime() {
+        return Err(super::arg_prime(2, &p));
+    }
+    if n.is_zero() {
+        return Ok(vec![Value::Infinity(true)]);
+    }
+    let (v, rest) = n.remove(&p);
+    // The cofactor is returned only when asked for.
+    if a.nresults < 2 {
+        return intv(Integer::from_u64(v));
+    }
+    Ok(vec![Value::Int(Integer::from_u64(v)), Value::Int(rest)])
+}
+
+fn ilog(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    let b = a.int_ge(0, 2)?;
+    let n = a.int_ge(1, 1)?;
+    // Count the divisions by b that stay above 1.
+    if let Some(b) = b.to_u64() {
+        return intv(Integer::from_u64(n.ilog(b).unwrap()));
+    }
+    let mut k = 0u64;
+    let mut p = b.clone();
+    while p <= n {
+        p = &p * &b;
+        k += 1;
+    }
+    intv(Integer::from_u64(k))
+}
+
+fn ilog2(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    let n = a.int_ge(0, 1)?;
+    intv(Integer::from_u64(n.bits() - 1))
+}
+
+// ----- digits -------------------------------------------------------------------
+
+fn intseq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    let n = a.int_ge(0, 0)?;
+    let b = if a.args.len() > 1 { a.int_ge(1, 2)? } else { Integer::from_i64(10) };
+    let mut digits = Vec::new();
+    let mut m = n;
+    while !m.is_zero() {
+        let (q, r) = m.fdiv_qr(&b).unwrap();
+        digits.push(r);
+        m = q;
+    }
+    if a.args.len() > 2 {
+        // Pad with zeros to length k; a smaller k is ignored.
+        let k = a.int(2)?.to_u64().unwrap_or(0) as usize;
+        if digits.len() < k {
+            digits.resize(k, Integer::zero());
         }
     }
-    // General n: product formula.
-    let mut num = Integer::one();
-    for i in 0..k {
-        num = &num * &(&n - &Integer::from_u64(i));
-    }
-    intv(num.divexact(&Integer::factorial(k)))
+    one(int_seq(digits))
 }
 
-fn fibonacci(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let n = a.i64(0)?;
-    if n >= 0 {
-        return intv(Integer::fibonacci(n as u64));
+fn seqint(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    let s = a.seq(0)?.clone();
+    let b = if a.args.len() > 1 { a.int_ge(1, 2)? } else { Integer::from_i64(10) };
+    let mut n = Integer::zero();
+    for (i, v) in s.elems.iter().enumerate().rev() {
+        let Value::Int(d) = v else {
+            return Err(RuntimeError::runtime("Bad argument types"));
+        };
+        if d.sign() < 0 || *d >= b {
+            return Err(RuntimeError::runtime(format!("Sequence digit {} should be >= 0 and < {b}", i + 1)));
+        }
+        n = &(&n * &b) + d;
     }
-    let f = Integer::fibonacci((-n) as u64);
-    intv(if n % 2 == 0 { -f } else { f })
+    intv(n)
 }
 
-fn lucas(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let n = a.usize(0)? as u64;
-    if n == 0 {
-        return intv(Integer::from_i64(2));
+// ----- maxima -------------------------------------------------------------------
+
+/// Maximum and Minimum of two values are not defined on ring elements, even
+/// where `lt` is.
+fn check_max_args(it: &Interp, x: &Value, y: &Value) -> RResult<()> {
+    if matches!(x, Value::Elt(_)) || matches!(y, Value::Elt(_)) {
+        return Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}, {}", it.type_name_ext(x), it.type_name_ext(y))));
     }
-    intv(&Integer::fibonacci(n - 1) + &Integer::fibonacci(n + 1))
+    Ok(())
 }
+
+fn max2(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    let (x, y) = (a.args[0].clone(), a.args[1].clone());
+    check_max_args(it, &x, &y)?;
+    let o = it.compare_for_sort(&x, &y)?;
+    let r = if o == std::cmp::Ordering::Less { y.clone() } else { x.clone() };
+    one(in_common_structure(it, &x, &y, r)?)
+}
+
+/// `r` (one of x and y) in the structure containing both, as Maximum and
+/// Minimum return it (so `Max(1.5, 2)` is a real).
+fn in_common_structure(it: &mut Interp, x: &Value, y: &Value, r: Value) -> RResult<Value> {
+    let (px, py) = (it.parent_of(x)?, it.parent_of(y)?);
+    match it.common_universe(&px, &py) {
+        Some(u) => Ok(it.try_coerce(&u, &r)?.unwrap_or(r)),
+        None => Ok(r),
+    }
+}
+
+fn min2(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    let (x, y) = (a.args[0].clone(), a.args[1].clone());
+    check_max_args(it, &x, &y)?;
+    let o = it.compare_for_sort(&x, &y)?;
+    let r = if o == std::cmp::Ordering::Greater { y.clone() } else { x.clone() };
+    one(in_common_structure(it, &x, &y, r)?)
+}
+
+// ----- rationals ----------------------------------------------------------------
 
 fn numerator(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     intv(rat_arg(a, 0)?.numerator())
@@ -424,137 +558,6 @@ fn truncate(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     })
 }
 
-fn intseq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let n = a.int(0)?.clone();
-    let b = a.int(1)?.clone();
-    if n.sign() < 0 || b.to_i64().is_none_or(|b| b < 2) {
-        return Err(RuntimeError::runtime("Arguments must be a non-negative integer and a base of at least 2"));
-    }
-    let mut digits = Vec::new();
-    let mut m = n;
-    while !m.is_zero() {
-        let (q, r) = m.div_rem_euclid(&b).unwrap();
-        digits.push(r);
-        m = q;
-    }
-    if a.args.len() > 2 {
-        let k = a.usize(2)?;
-        if digits.len() > k {
-            return Err(RuntimeError::runtime("The number has more digits than requested"));
-        }
-        digits.resize(k, Integer::zero());
-    }
-    one(int_seq(digits))
-}
-
-fn seqint(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let s = a.seq(0)?.clone();
-    let b = if a.args.len() > 1 { a.int(1)?.clone() } else { Integer::from_i64(2) };
-    let mut n = Integer::zero();
-    for v in s.elems.iter().rev() {
-        let Value::Int(d) = v else {
-            return Err(RuntimeError::runtime("Sequence must contain integers"));
-        };
-        n = &(&n * &b) + d;
-    }
-    intv(n)
-}
-
-/// Maximum and Minimum of two values are not defined on ring elements, even
-/// where `lt` is.
-fn check_max_args(it: &Interp, x: &Value, y: &Value) -> RResult<()> {
-    if matches!(x, Value::Elt(_)) || matches!(y, Value::Elt(_)) {
-        return Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}, {}", it.type_name_ext(x), it.type_name_ext(y))));
-    }
-    Ok(())
-}
-
-fn max2(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let (x, y) = (a.args[0].clone(), a.args[1].clone());
-    check_max_args(it, &x, &y)?;
-    let o = it.compare_for_sort(&x, &y)?;
-    let r = if o == std::cmp::Ordering::Less { y.clone() } else { x.clone() };
-    one(in_common_structure(it, &x, &y, r)?)
-}
-
-/// `r` (one of x and y) in the structure containing both, as Maximum and
-/// Minimum return it (so `Max(1.5, 2)` is a real).
-fn in_common_structure(it: &mut Interp, x: &Value, y: &Value, r: Value) -> RResult<Value> {
-    let (px, py) = (it.parent_of(x)?, it.parent_of(y)?);
-    match it.common_universe(&px, &py) {
-        Some(u) => Ok(it.try_coerce(&u, &r)?.unwrap_or(r)),
-        None => Ok(r),
-    }
-}
-
-fn min2(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let (x, y) = (a.args[0].clone(), a.args[1].clone());
-    check_max_args(it, &x, &y)?;
-    let o = it.compare_for_sort(&x, &y)?;
-    let r = if o == std::cmp::Ordering::Greater { y.clone() } else { x.clone() };
-    one(in_common_structure(it, &x, &y, r)?)
-}
-
-fn valuation(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let (n, p) = (a.int(0)?, a.int(1)?);
-    if n.is_zero() {
-        return Err(RuntimeError::runtime("The valuation of zero is infinite"));
-    }
-    if p.cmp_abs(&Integer::one()) != std::cmp::Ordering::Greater {
-        return Err(RuntimeError::runtime("Argument 2 must have absolute value at least 2"));
-    }
-    let (v, rest) = n.remove(p);
-    Ok(vec![Value::Int(Integer::from_u64(v)), Value::Int(rest)])
-}
-
-fn ilog(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let b = a.int(0)?.to_u64().filter(|&b| b >= 2).ok_or_else(|| RuntimeError::runtime("Base must be at least 2"))?;
-    match a.int(1)?.ilog(b) {
-        Some(k) => intv(Integer::from_u64(k)),
-        None => Err(RuntimeError::runtime("Argument must be positive")),
-    }
-}
-
-fn ilog2(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let n = a.int(0)?;
-    if n.sign() <= 0 {
-        return Err(RuntimeError::runtime("Argument must be positive"));
-    }
-    intv(Integer::from_u64(n.bits() - 1))
-}
-
-fn is_divisible_by(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let (n, d) = (a.int(0)?, a.int(1)?);
-    if d.is_zero() {
-        return Err(RuntimeError::runtime("Division by zero"));
-    }
-    if n.is_divisible_by(d) { Ok(vec![Value::Bool(true), Value::Int(n.divexact(d))]) } else { Ok(vec![Value::Bool(false), Value::Undef]) }
-}
-
-fn crt(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let (xs, ms) = (a.seq(0)?.clone(), a.seq(1)?.clone());
-    if xs.elems.len() != ms.elems.len() {
-        return Err(RuntimeError::runtime("Sequences must have the same length"));
-    }
-    let mut x = Integer::zero();
-    let mut m = Integer::one();
-    for (xv, mv) in xs.elems.iter().zip(&ms.elems) {
-        let (Value::Int(xi), Value::Int(mi)) = (xv, mv) else {
-            return Err(RuntimeError::runtime("Sequences must contain integers"));
-        };
-        let (g, s, _) = m.xgcd(mi);
-        let diff = xi - &x;
-        if !diff.is_divisible_by(&g) {
-            return Err(RuntimeError::runtime("The congruences are inconsistent"));
-        }
-        let l = m.lcm(mi);
-        let step = &(&m * &s) * &diff.divexact(&g);
-        x = (&x + &step).div_rem_euclid(&l).unwrap().1;
-        m = l;
-    }
-    intv(x)
-}
-
 fn is_integral(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     boolv(match &a.args[0] {
         Value::Int(_) => true,
@@ -563,24 +566,124 @@ fn is_integral(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     })
 }
 
-fn legendre(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    one(Value::int(a.int(0)?.kronecker(a.int(1)?) as i64))
+// ----- random integers -------------------------------------------------------------
+
+fn random_range(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    let (lo, hi) = (a.int(0)?.clone(), a.int(1)?.clone());
+    if lo > hi {
+        return Err(RuntimeError::runtime(format!("Argument 2 ({hi}) should be >= argument 1 ({lo})")));
+    }
+    intv(it.rng.range(&lo, &hi))
 }
 
-fn primes_up_to(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let n = a.int(0)?.clone();
-    let mut out = Vec::new();
-    let mut p = Integer::from_i64(2);
-    while p <= n {
-        out.push(p.clone());
-        p = p.next_prime();
+fn random_upto(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    let hi = a.int_ge(0, 0)?;
+    intv(it.rng.range(&Integer::zero(), &hi))
+}
+
+/// A random integer with `n` bits (below 2^n).
+fn random_bits_of(it: &mut Interp, n: u64) -> Integer {
+    if n == 0 {
+        return Integer::zero();
     }
-    one(int_seq(out))
+    it.rng.below(&Integer::one().mul_2exp(n))
+}
+
+fn random_bits(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    let n = a.int(0)?;
+    if n.sign() < 0 {
+        // Magma numbers this argument 0.
+        return Err(arg_ge(0, n, 0));
+    }
+    let n = a.small_ge(0, 0)?;
+    intv(random_bits_of(it, n))
+}
+
+fn random_prime(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    let n = a.small_ge(0, 2)?;
+    let bound = Integer::one().mul_2exp(n);
+    if a.args.len() == 1 {
+        loop {
+            let p = it.rng.below(&bound);
+            if p.is_probable_prime() && p.is_prime() {
+                return intv(p);
+            }
+        }
+    }
+    let (r, m, tries) = (a.int(1)?.clone(), a.int(2)?.clone(), a.int(3)?.clone());
+    if r >= m || m.sign() <= 0 || r.sign() < 0 {
+        return Err(RuntimeError::runtime("a must be less than b"));
+    }
+    let tries = tries.to_u64().unwrap_or(0);
+    // Primes below 2^n congruent to r mod m: r + m*k with k < (2^n - r)/m.
+    let count = (&bound - &r).cdiv_q(&m).unwrap_or_else(Integer::zero);
+    if count.sign() > 0 {
+        for _ in 0..tries {
+            let p = &r + &(&m * &it.rng.below(&count));
+            if p.is_probable_prime() && p.is_prime() {
+                return Ok(vec![Value::Bool(true), Value::Int(p)]);
+            }
+        }
+    }
+    Ok(vec![Value::Bool(false), Value::Undef])
+}
+
+fn random_consecutive_bits(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+    let n = a.int(0)?.clone();
+    if n.sign() <= 0 {
+        return Err(arg_ge(1, &n, 0));
+    }
+    let n = a.small_ge(0, 1)?;
+    let lo = a.int(1)?.clone();
+    let hi = a.int(2)?.clone();
+    if lo.sign() < 0 || lo > hi {
+        return Err(super::arg_range(2, &lo, 0, &hi));
+    }
+    let (lo, hi) = (lo.to_u64().unwrap_or(0), hi.to_u64().unwrap_or(u64::MAX).min(n));
+    // Runs of ones and zeros, alternating from a random start, each of a
+    // random length in [lo .. hi].
+    let mut bit = it.rng.below_u64(2) == 1;
+    let mut x = Integer::zero();
+    let mut len = 0u64;
+    while len < n {
+        let run = (lo + it.rng.below_u64(hi - lo + 1)).max(1).min(n - len);
+        if bit {
+            let ones = &Integer::one().mul_2exp(run) - &Integer::one();
+            x = &x + &ones.mul_2exp(len);
+        }
+        len += run;
+        bit = !bit;
+    }
+    intv(x)
+}
+
+fn integers(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+    one(Value::integers())
+}
+
+fn identity_z(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+    intv(Integer::one())
+}
+
+fn field_of_fractions(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+    one(Value::rationals())
+}
+
+fn signature(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+    Ok(vec![Value::int(1), Value::int(0)])
 }
 
 pub fn register(it: &mut Interp) {
+    it.def("RingOfIntegers", "-> RngInt", "The ring of integers.", integers);
+    for name in ["IntegerRing", "Integers", "RingOfIntegers"] {
+        it.def(name, "Q::FldRat -> RngInt", "The ring of integers of the rational field.", integers);
+    }
+    it.def("Identity", "Z::RngInt -> RngIntElt", "The identity 1 of Z.", identity_z);
+    it.def("FieldOfFractions", "Z::RngInt -> FldRat", "The field of fractions of Z, the rational field.", field_of_fractions);
+    it.def("Signature", "Z::RngInt -> RngIntElt, RngIntElt", "The signature 1, 0 of Z as an order of the rationals.", signature);
     for t in ["RngIntElt", "FldRatElt", "FldReElt"] {
         it.def("Abs", &format!("x::{t} -> {t}"), "The absolute value of x.", abs);
+        it.def("AbsoluteValue", &format!("x::{t} -> {t}"), "The absolute value of x.", abs);
         it.def("Sign", &format!("x::{t} -> RngIntElt"), "The sign of x (-1, 0 or 1).", sign);
         it.def("IsZero", &format!("x::{t} -> BoolElt"), "Whether x is zero.", is_zero);
         it.def("Floor", &format!("x::{t} -> RngIntElt"), "The largest integer not exceeding x.", floor);
@@ -598,69 +701,98 @@ pub fn register(it: &mut Interp) {
     }
     it.def("IsEven", "n::RngIntElt -> BoolElt", "Whether n is even.", is_even);
     it.def("IsOdd", "n::RngIntElt -> BoolElt", "Whether n is odd.", is_odd);
-    it.def_params("IsPrime", "n::RngIntElt -> BoolElt", &[("Proof", Value::Bool(true))], "Whether n is a prime number.", is_prime);
-    it.def("IsProbablePrime", "n::RngIntElt -> BoolElt", "Whether n passes a strong probable-prime test.", is_probable_prime);
-    it.def("IsProbablyPrime", "n::RngIntElt -> BoolElt", "Whether n passes a strong probable-prime test.", is_probable_prime);
-    it.def_params("NextPrime", "n::RngIntElt -> RngIntElt", &[("Proof", Value::Bool(true))], "The least prime greater than n.", next_prime);
-    it.def_params("PreviousPrime", "n::RngIntElt -> RngIntElt", &[("Proof", Value::Bool(true))], "The greatest prime less than n.", previous_prime);
-    it.def("NthPrime", "n::RngIntElt -> RngIntElt", "The n-th prime.", nth_prime);
-    it.def("PrimesUpTo", "n::RngIntElt -> [RngIntElt]", "The primes up to n.", primes_up_to);
-    for name in ["Factorization", "Factorisation", "Factorisation"] {
-        it.def(name, "n::RngIntElt -> SeqEnum, RngIntElt", "The prime factorization of n as a sequence of <p, e> pairs, and the sign of n.", factorization);
+    it.def("IsRegular", "n::RngIntElt -> BoolElt", "Whether n is not a zero divisor (is non-zero).", is_regular);
+    it.def("IsSinglePrecision", "n::RngIntElt -> BoolElt", "Whether |n| < 2^30.", is_single_precision);
+    for name in ["ComplexConjugate", "Conjugate", "Norm", "Trace"] {
+        it.def(name, "n::RngIntElt -> RngIntElt", "n itself (the integers are their own conjugates, norms and traces).", identity);
     }
-    it.def("PrimeDivisors", "n::RngIntElt -> [RngIntElt]", "The prime divisors of n.", prime_divisors);
-    it.def("PrimeFactors", "n::RngIntElt -> [RngIntElt]", "The prime divisors of n.", prime_divisors);
-    it.def("Divisors", "n::RngIntElt -> [RngIntElt]", "The positive divisors of n.", divisors);
-    it.def("NumberOfDivisors", "n::RngIntElt -> RngIntElt", "The number of positive divisors of n.", number_of_divisors);
-    it.def("NumberOfDivisors", "n::RngIntElt -> RngIntElt", "The number of positive divisors of n.", number_of_divisors);
-    it.def("SumOfDivisors", "n::RngIntElt -> RngIntElt", "The sum of the positive divisors of n.", sum_of_divisors);
-    it.def("DivisorSigma", "k::RngIntElt, n::RngIntElt -> RngIntElt", "The sum of the k-th powers of the divisors of n.", divisor_sigma);
-    it.def("EulerPhi", "n::RngIntElt -> RngIntElt", "Euler's totient of n.", euler_phi);
-    it.def("MoebiusMu", "n::RngIntElt -> RngIntElt", "The Moebius function of n.", moebius_mu);
+    it.def("EuclideanNorm", "n::RngIntElt -> RngIntElt", "The Euclidean norm |n| of n.", abs);
+    it.def("MinimalPolynomial", "n::RngIntElt -> RngUPolElt", "The minimal polynomial x - n of n over the integers.", minimal_polynomial);
+    for name in ["Eltseq", "ElementToSequence"] {
+        it.def(name, "n::RngIntElt -> [RngIntElt]", "The sequence [n].", eltseq);
+    }
+
+    it.def(
+        "Quotrem",
+        "a::RngIntElt, b::RngIntElt -> RngIntElt, RngIntElt",
+        "The quotient q = a div b and remainder r = a mod b (with the sign of b).",
+        quotrem,
+    );
+    it.def("ExactQuotient", "a::RngIntElt, b::RngIntElt -> RngIntElt", "The quotient a/b, where b divides a.", exact_quotient);
+    it.def("IsDivisibleBy", "n::RngIntElt, d::RngIntElt -> BoolElt, RngIntElt", "Whether d divides n, and the quotient.", is_divisible_by);
+    it.def("ShiftLeft", "n::RngIntElt, b::RngIntElt -> RngIntElt", "n * 2^b.", shift_left);
+    it.def("ShiftRight", "n::RngIntElt, b::RngIntElt -> RngIntElt", "n div 2^b.", shift_right);
+    it.def("ModByPowerOf2", "n::RngIntElt, b::RngIntElt -> RngIntElt", "n mod 2^b.", mod_by_power_of_2);
+    it.def("BitwiseNot", "n::RngIntElt -> RngIntElt", "The bitwise complement of n (two's complement).", bitwise_not);
+    it.def("BitwiseAnd", "m::RngIntElt, n::RngIntElt -> RngIntElt", "The bitwise and of m and n (two's complement).", bitwise_and);
+    it.def("BitwiseOr", "m::RngIntElt, n::RngIntElt -> RngIntElt", "The bitwise or of m and n (two's complement).", bitwise_or);
+    it.def("BitwiseXor", "m::RngIntElt, n::RngIntElt -> RngIntElt", "The bitwise exclusive or of m and n (two's complement).", bitwise_xor);
+
     for name in ["Gcd", "GCD", "GreatestCommonDivisor"] {
         it.def(name, "x::RngIntElt, y::RngIntElt -> RngIntElt", "The greatest common divisor of x and y.", gcd);
         it.def(name, "x::FldRatElt, y::FldRatElt -> FldRatElt", "The greatest common divisor of x and y.", gcd);
         it.def(name, "x::RngIntElt, y::FldRatElt -> FldRatElt", "The greatest common divisor of x and y.", gcd);
         it.def(name, "x::FldRatElt, y::RngIntElt -> FldRatElt", "The greatest common divisor of x and y.", gcd);
         it.def(name, "S::[RngIntElt] -> RngIntElt", "The greatest common divisor of the integers in S.", gcd_seq);
+        it.def(name, "S::{RngIntElt} -> RngIntElt", "The greatest common divisor of the integers in S.", gcd_seq);
     }
     for name in ["Lcm", "LCM", "LeastCommonMultiple"] {
         it.def(name, "x::RngIntElt, y::RngIntElt -> RngIntElt", "The least common multiple of x and y.", lcm);
         it.def(name, "S::[RngIntElt] -> RngIntElt", "The least common multiple of the integers in S.", lcm_seq);
+        it.def(name, "S::{RngIntElt} -> RngIntElt", "The least common multiple of the integers in S.", lcm_seq);
     }
     for name in ["Xgcd", "XGCD", "ExtendedGreatestCommonDivisor"] {
         it.def(name, "x::RngIntElt, y::RngIntElt -> RngIntElt, RngIntElt, RngIntElt", "The gcd d of x and y, with a and b such that d = a*x + b*y.", xgcd);
+        it.def(name, "S::[RngIntElt] -> RngIntElt, [RngIntElt]", "The gcd g of the integers in S and small multipliers X with g = &+[X[i]*S[i]].", xgcd_seq);
     }
-    it.def("Quotrem", "a::RngIntElt, b::RngIntElt -> RngIntElt, RngIntElt", "The quotient and remainder of a on division by b (0 <= r < |b|).", quotrem);
-    it.def("Modexp", "a::RngIntElt, e::RngIntElt, n::RngIntElt -> RngIntElt", "a^e mod n.", modexp);
-    it.def("Modinv", "a::RngIntElt, n::RngIntElt -> RngIntElt", "The inverse of a modulo n.", modinv);
-    it.def("InverseMod", "a::RngIntElt, n::RngIntElt -> RngIntElt", "The inverse of a modulo n.", modinv);
+
     it.def("Isqrt", "n::RngIntElt -> RngIntElt", "The integer part of the square root of n.", isqrt);
     it.def("Iroot", "n::RngIntElt, k::RngIntElt -> RngIntElt", "The integer part of the k-th root of n.", iroot);
-    it.def("IsPower", "n::RngIntElt -> BoolElt, RngIntElt, RngIntElt", "Whether n is a perfect power b^e with e > 1, and b and e.", is_power);
+    it.def("IsPower", "n::RngIntElt -> BoolElt, RngIntElt, RngIntElt", "Whether n is a perfect power b^e with e > 1, and b and e (e largest).", is_power);
     it.def("IsPower", "n::RngIntElt, k::RngIntElt -> BoolElt, RngIntElt", "Whether n is a k-th power, and a k-th root.", is_power);
-    it.def("IsPrimePower", "n::RngIntElt -> BoolElt, RngIntElt, RngIntElt", "Whether n is a prime power p^k, and p and k.", is_prime_power);
-    it.def("Factorial", "n::RngIntElt -> RngIntElt", "n factorial.", factorial);
-    it.def("Binomial", "n::RngIntElt, k::RngIntElt -> RngIntElt", "The binomial coefficient n choose k.", binomial);
-    it.def("Fibonacci", "n::RngIntElt -> RngIntElt", "The n-th Fibonacci number.", fibonacci);
-    it.def("Lucas", "n::RngIntElt -> RngIntElt", "The n-th Lucas number.", lucas);
-    it.def("Intseq", "n::RngIntElt, b::RngIntElt -> [RngIntElt]", "The base b digits of n, least significant first.", intseq);
-    it.def("Intseq", "n::RngIntElt, b::RngIntElt, k::RngIntElt -> [RngIntElt]", "The base b digits of n padded to length k.", intseq);
-    it.def("Seqint", "s::[RngIntElt] -> RngIntElt", "The integer with base 2 digits s.", seqint);
-    it.def("Seqint", "s::[RngIntElt], b::RngIntElt -> RngIntElt", "The integer with base b digits s (least significant first).", seqint);
+    it.def("IsSquarefree", "n::RngIntElt -> BoolElt", "Whether n is not divisible by the square of a prime.", is_squarefree);
+    it.def(
+        "SquarefreeFactorization",
+        "n::RngIntElt -> RngIntElt, RngIntElt",
+        "Integers x (squarefree, with the sign of n) and y > 0 with n = x*y^2.",
+        squarefree_factorization,
+    );
+    it.def("Valuation", "n::RngIntElt, p::RngIntElt -> RngIntElt, RngIntElt", "The largest k with p^k dividing n, and n/p^k.", valuation);
+    it.def("Ilog", "b::RngIntElt, n::RngIntElt -> RngIntElt", "The integer part of the logarithm of n to base b.", ilog);
+    it.def("Ilog2", "n::RngIntElt -> RngIntElt", "The integer part of the base 2 logarithm of n.", ilog2);
+
+    for name in ["Intseq", "IntegerToSequence"] {
+        it.def(name, "n::RngIntElt -> [RngIntElt]", "The decimal digits of n, least significant first.", intseq);
+        it.def(name, "n::RngIntElt, b::RngIntElt -> [RngIntElt]", "The base b digits of n, least significant first.", intseq);
+        it.def(name, "n::RngIntElt, b::RngIntElt, k::RngIntElt -> [RngIntElt]", "The base b digits of n, padded with zeros to length k.", intseq);
+    }
+    for name in ["Seqint", "SequenceToInteger"] {
+        it.def(name, "s::[RngIntElt] -> RngIntElt", "The integer with decimal digits s (least significant first).", seqint);
+        it.def(name, "s::[RngIntElt], b::RngIntElt -> RngIntElt", "The integer with base b digits s (least significant first).", seqint);
+    }
+
     it.def("Max", "x::., y::. -> .", "The larger of x and y.", max2);
     it.def("Min", "x::., y::. -> .", "The smaller of x and y.", min2);
     it.def("Maximum", "x::., y::. -> .", "The larger of x and y.", max2);
     it.def("Minimum", "x::., y::. -> .", "The smaller of x and y.", min2);
-    it.def("Valuation", "n::RngIntElt, p::RngIntElt -> RngIntElt, RngIntElt", "The largest k with p^k dividing n, and n/p^k.", valuation);
-    it.def("Ilog", "b::RngIntElt, n::RngIntElt -> RngIntElt", "The integer part of the logarithm of n to base b.", ilog);
-    it.def("Ilog2", "n::RngIntElt -> RngIntElt", "The integer part of the base 2 logarithm of n.", ilog2);
-    it.def("IsDivisibleBy", "n::RngIntElt, d::RngIntElt -> BoolElt, RngIntElt", "Whether d divides n, and the quotient.", is_divisible_by);
-    it.def("CRT", "x::[RngIntElt], m::[RngIntElt] -> RngIntElt", "The solution of the congruences x[i] mod m[i].", crt);
-    it.def("ChineseRemainderTheorem", "x::[RngIntElt], m::[RngIntElt] -> RngIntElt", "The solution of the congruences x[i] mod m[i].", crt);
-    it.def("LegendreSymbol", "a::RngIntElt, p::RngIntElt -> RngIntElt", "The Legendre symbol (a/p).", legendre);
-    it.def("JacobiSymbol", "a::RngIntElt, n::RngIntElt -> RngIntElt", "The Jacobi symbol (a/n).", legendre);
-    it.def("KroneckerSymbol", "a::RngIntElt, n::RngIntElt -> RngIntElt", "The Kronecker symbol (a/n).", legendre);
+
+    it.def("Random", "a::RngIntElt, b::RngIntElt -> RngIntElt", "A random integer in the interval [a, b].", random_range);
+    it.def("Random", "b::RngIntElt -> RngIntElt", "A random integer in the interval [0, b].", random_upto);
+    it.def("RandomBits", "n::RngIntElt -> RngIntElt", "A random integer m with 0 <= m < 2^n.", random_bits);
+    it.def_params("RandomPrime", "n::RngIntElt -> RngIntElt", &[("Proof", Value::Bool(true))], "A random prime below 2^n.", random_prime);
+    it.def_params(
+        "RandomPrime",
+        "n::RngIntElt, a::RngIntElt, b::RngIntElt, x::RngIntElt -> BoolElt, RngIntElt",
+        &[("Proof", Value::Bool(true))],
+        "Try x times to find a random prime below 2^n congruent to a modulo b.",
+        random_prime,
+    );
+    it.def(
+        "RandomConsecutiveBits",
+        "n::RngIntElt, a::RngIntElt, b::RngIntElt -> RngIntElt",
+        "A random integer below 2^n whose binary expansion consists of runs of zeros and ones of lengths in [a .. b].",
+        random_consecutive_bits,
+    );
 }
 
 // ----- modular helpers shared with residue class rings --------------------------

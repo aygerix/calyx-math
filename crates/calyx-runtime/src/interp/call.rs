@@ -456,7 +456,7 @@ impl Interp {
     }
 
     pub fn type_name_ext(&self, v: &Value) -> String {
-        match self.extended_type(v) {
+        match self.shown_extended_type(v) {
             Some(t) => t.display(&self.types).to_string(),
             None => self.type_name(v),
         }

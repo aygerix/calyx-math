@@ -39,7 +39,7 @@ impl Interp {
                 };
                 let mut rv = self.take_place(root, f);
                 if rv.is_undef() {
-                    return Err(RuntimeError::user(format!("Identifier '{}' has not been assigned", root.name())));
+                    return Err(self.unassigned_place(root));
                 }
                 let r = self.take_at_path(&mut rv, &path);
                 self.put_place(root, rv, f);
@@ -219,9 +219,18 @@ impl Interp {
             Place::Global(n) => self.lookup_variable(n).unwrap_or(Value::Undef),
         };
         if v.is_undef() {
-            return Err(RuntimeError::user(format!("Identifier '{}' has not been assigned", p.name())));
+            return Err(self.unassigned_place(p));
         }
         Ok(v)
+    }
+
+    /// The error for reading an unassigned variable: globals that were
+    /// never assigned have not been declared either.
+    fn unassigned_place(&self, p: Place) -> RuntimeError {
+        match p {
+            Place::Global(n) => self.unassigned_error(n),
+            _ => RuntimeError::user(format!("Identifier '{}' has not been assigned", p.name())),
+        }
     }
 
     // ----- l-values -------------------------------------------------------
@@ -265,7 +274,7 @@ impl Interp {
         };
         let mut cur = self.take_place(root, f);
         if cur.is_undef() && !path.is_empty() {
-            return Err(RuntimeError::user(format!("Identifier '{}' has not been assigned", root.name())));
+            return Err(self.unassigned_place(root).at(lv_root_span(lv)));
         }
         let r = self.set_path(&mut cur, &path, v);
         self.put_place(root, cur, f);
@@ -299,6 +308,9 @@ impl Interp {
     fn set_index(&mut self, cur: &mut Value, i: &Value, rest: &[PathElem], v: Value, last: bool) -> RResult<()> {
         match cur {
             Value::Seq(s) => {
+                if matches!(i, Value::Seq(_)) {
+                    return Err(RuntimeError::runtime("Sequence mutation failed").in_context("[]:="));
+                }
                 let k = seq_index(i, "Sequence")?;
                 if last {
                     let v = match &s.universe {
@@ -531,8 +543,17 @@ impl Interp {
                 self.check_attr_valid(v, name)?;
                 Err(RuntimeError::runtime(format!("Attribute '{name}' for this object is valid but not assigned")))
             }
+            Value::Cat(ty) => match self.category_attr(*ty, name) {
+                Some(x) => Ok(x),
+                None => Err(RuntimeError::runtime(format!("Invalid attribute '{name}' for this category")).in_context("`")),
+            },
             other => Err(RuntimeError::runtime(format!("Objects of type {} do not have attributes", self.type_name(other)))),
         }
+    }
+
+    /// Attributes of categories, such as `RngInt`CunninghamStorageLimit`.
+    pub fn category_attr(&self, ty: crate::types::TypeId, name: Sym) -> Option<Value> {
+        (ty == crate::types::t::RNG_INT && &*name.as_rc() == "CunninghamStorageLimit").then(|| Value::int(self.cunningham_storage_limit))
     }
 
     pub fn attr_assigned(&mut self, v: &Value, name: Sym) -> RResult<bool> {
@@ -619,12 +640,13 @@ impl Interp {
 
     // ----- mutation assignment --------------------------------------------
 
-    pub fn op_assign(&mut self, lv: &LV, op: BinOp, rhs: Value, f: &mut Frame) -> RResult<()> {
+    pub fn op_assign(&mut self, lv: &LV, op: BinOp, rhs: Value, f: &mut Frame, at: calyx_syntax::Span) -> RResult<()> {
         match lv {
             LV::Var(p, _) => {
                 let mut cur = self.take_place(*p, f);
                 if cur.is_undef() {
-                    return Err(RuntimeError::user(format!("Identifier '{}' has not been assigned", p.name())));
+                    let msg = format!("Argument 1 has not been initialized\nArgument types given: *nothing ~, {}", self.type_name_ext(&rhs));
+                    return Err(RuntimeError::runtime(msg).in_context(&format!("{}:=", op.intrinsic_name())).at(at));
                 }
                 let r = self.binop_assign(op, &mut cur, rhs);
                 self.put_place(*p, cur, f);
@@ -725,11 +747,15 @@ impl Interp {
             Value::Seq(s) => {
                 if let Value::Seq(ix) = i {
                     let mut out = Vec::with_capacity(ix.elems.len());
+                    let undefined = || RuntimeError::runtime("Sequence element not defined").in_context(ctx);
                     for k in &ix.elems {
+                        if matches!(k, Value::Int(n) if n.sign() <= 0) {
+                            return Err(undefined());
+                        }
                         let k = seq_index(k, "Sequence").map_err(|e| e.in_context(ctx))?;
                         match s.elems.get(k - 1) {
                             Some(v) if !v.is_undef() => out.push(v.clone()),
-                            _ => return Err(RuntimeError::runtime(format!("Sequence element {k} is not defined")).in_context(ctx)),
+                            _ => return Err(undefined()),
                         }
                     }
                     return Ok(Value::seq(s.universe.clone(), out));
@@ -775,6 +801,16 @@ impl Interp {
                 s.elems.get_index(k - 1).cloned().ok_or_else(|| RuntimeError::runtime(format!("Index {k} is out of range")).in_context(ctx))
             }
             Value::Str(s) => {
+                if let Value::Seq(ix) = i {
+                    // The characters at the given positions, as one string.
+                    let chars: Vec<char> = s.chars().collect();
+                    let mut out = String::new();
+                    for k in &ix.elems {
+                        let k = seq_index(k, "String").map_err(|e| e.in_context(ctx))?;
+                        out.push(*chars.get(k - 1).ok_or_else(|| RuntimeError::runtime(format!("String index {k} is out of range")).in_context(ctx))?);
+                    }
+                    return Ok(Value::str(&out));
+                }
                 let k = seq_index(i, "String").map_err(|e| e.in_context(ctx))?;
                 s.chars().nth(k - 1).map(|c| Value::str(&c.to_string())).ok_or_else(|| RuntimeError::runtime(format!("String index {k} is out of range")).in_context(ctx))
             }
@@ -836,4 +872,17 @@ pub fn seq_index(i: &Value, what: &str) -> RResult<usize> {
 #[allow(dead_code)]
 fn int_value(i: i64) -> Value {
     Value::Int(Integer::from_i64(i))
+}
+
+/// Where Magma reports an unassigned root of `x[i]`a := ...`: at the first
+/// operation applied to `x`.
+fn lv_root_span(lv: &LV) -> calyx_syntax::Span {
+    match lv {
+        LV::Index(b, _, s) | LV::Attr(b, _, s) | LV::AttrDyn(b, _, s) => match &**b {
+            LV::Var(_, bs) => calyx_syntax::Span { file: s.file, lo: bs.hi, hi: s.hi },
+            inner => lv_root_span(inner),
+        },
+        LV::Var(_, s) => *s,
+        LV::Discard => calyx_syntax::Span::default(),
+    }
 }

@@ -13,6 +13,8 @@ pub enum Level {
     Default,
     Maximal,
     Magma,
+    /// Integers in base 16.
+    Hex,
 }
 
 impl Level {
@@ -22,6 +24,7 @@ impl Level {
             "Default" => Level::Default,
             "Maximal" => Level::Maximal,
             "Magma" => Level::Magma,
+            "Hex" => Level::Hex,
             _ => return None,
         })
     }
@@ -32,6 +35,7 @@ impl Level {
             Level::Default => "Default",
             Level::Maximal => "Maximal",
             Level::Magma => "Magma",
+            Level::Hex => "Hex",
         }
     }
 }
@@ -197,8 +201,8 @@ pub fn quote_string(s: &str) -> String {
 impl Interp {
     /// Print values separated by spaces, followed by a newline.
     pub fn print_values(&mut self, vals: &[Value], level: Level) -> RResult<()> {
-        let col = self.out.col();
-        let mut p = Printer::new(col, self.out.columns, level);
+        // Like printf, print wraps from the start of its own output.
+        let mut p = Printer::new(0, self.out.columns, level);
         self.fmt_print_list(&mut p, vals)?;
         let text = self.apply_indent(&(p.buf + "\n"));
         self.out.write(&text);
@@ -266,6 +270,10 @@ impl Interp {
         match v {
             Value::Undef => p.write("undef"),
             Value::Bool(b) => p.write(if *b { "true" } else { "false" }),
+            Value::Int(i) if p.level == Level::Hex => {
+                let digits = i.abs().to_string_radix(16).to_uppercase();
+                p.atom(&format!("{}0x{digits}", if i.sign() < 0 { "-" } else { "" }), true)
+            }
             Value::Int(i) => p.atom(&i.to_string(), true),
             Value::Rat(q) => p.atom(&q.to_string(), true),
             Value::Real(r) => match r.fixed {
@@ -720,6 +728,7 @@ impl Interp {
                 p.write(" to ");
                 self.fmt(p, c, indent)?;
             }
+            StructKind::PowerStructure(t) if *t == crate::types::t::RNG_INT_ELT_FACT => p.write("Set of integer factorization sequences"),
             StructKind::PowerStructure(t) => p.write(&format!("Power Structure of {}", self.types.name(*t))),
             StructKind::Ring(r) if p.level == Level::Minimal && matches!(r.kind, crate::rings::RingKind::Complex(_)) && s.name.borrow().is_some() => p.write(&group_name(s)),
             StructKind::Ring(r) => {
@@ -795,7 +804,9 @@ impl Interp {
         let mut out = String::new();
         let chars: Vec<char> = fmt.chars().collect();
         let mut i = 0;
-        let col0 = self.out.col();
+        // Each printf wraps as if it started a line: Magma does not carry
+        // the column over from earlier output.
+        let col_of = |out: &str| out.rsplit('\n').next().map_or(0, |l| l.chars().count());
         while i < chars.len() {
             let c = chars[i];
             if c != '%' {
@@ -850,16 +861,16 @@ impl Interp {
             i += 1;
             let arg = args.next().ok_or_else(|| RuntimeError::runtime("Not enough arguments for the format").in_context("printf"))?.clone();
             let text = match conv {
-                'o' => self.format_with_precision(&arg, Level::Default, precision, col0 + out.chars().count())?,
+                'o' => self.format_with_precision(&arg, Level::Default, precision, col_of(&out))?,
                 'O' => {
                     let lvl = args.next().ok_or_else(|| RuntimeError::runtime("%O needs a print level argument").in_context("printf"))?;
                     let Value::Str(l) = lvl else {
                         return Err(RuntimeError::runtime("Print level must be a string").in_context("printf"));
                     };
                     let level = Level::parse(l).ok_or_else(|| RuntimeError::runtime(format!("Unknown print level '{l}'")).in_context("printf"))?;
-                    self.format_with_precision(&arg, level, precision, col0 + out.chars().count())?
+                    self.format_with_precision(&arg, level, precision, col_of(&out))?
                 }
-                'm' => self.format_with_precision(&arg, Level::Magma, precision, col0 + out.chars().count())?,
+                'm' => self.format_with_precision(&arg, Level::Magma, precision, col_of(&out))?,
                 'h' => match &arg {
                     Value::Int(n) => {
                         let s = n.abs().to_string_radix(16).to_uppercase();

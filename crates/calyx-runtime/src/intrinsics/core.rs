@@ -109,7 +109,7 @@ fn type_of(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
 
 fn extended_type_of(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     let v = a.args[0].clone();
-    let tv = it.extended_type(&v).unwrap_or(TypeVal::Cat(v.type_id()));
+    let tv = it.shown_extended_type(&v).unwrap_or(TypeVal::Cat(v.type_id()));
     one(Value::ECat(Rc::new(tv)))
 }
 
@@ -222,22 +222,6 @@ fn random_elt(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     }
 }
 
-fn random_range(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let (lo, hi) = (a.int(0)?.clone(), a.int(1)?.clone());
-    if lo > hi {
-        return Err(RuntimeError::runtime("Lower bound must not exceed upper bound"));
-    }
-    intv(it.rng.range(&lo, &hi))
-}
-
-fn random_upto(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let hi = a.int(0)?.clone();
-    if hi.sign() < 0 {
-        return Err(RuntimeError::runtime("Argument must be non-negative"));
-    }
-    intv(it.rng.range(&Integer::zero(), &hi))
-}
-
 fn random_bool(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
     boolv(it.rng.below_u64(2) == 1)
 }
@@ -327,9 +311,17 @@ fn list_attributes(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     none()
 }
 
+fn unknown_attribute(name: Sym) -> RuntimeError {
+    RuntimeError::runtime(format!("Unknown attribute \"{name}\" for this object"))
+}
+
 fn has_attribute(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     let v = a.args[0].clone();
     let name = Sym::new(a.str(1)?);
+    if let Value::Cat(ty) = v {
+        let x = it.category_attr(ty, name).ok_or_else(|| unknown_attribute(name))?;
+        return Ok(vec![Value::Bool(true), x]);
+    }
     match it.attr_assigned(&v, name) {
         Ok(true) => Ok(vec![Value::Bool(true), it.get_attr(&v, name)?]),
         _ => Ok(vec![Value::Bool(false), Value::Undef]),
@@ -345,6 +337,20 @@ fn assert_attribute(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
         }
         Value::Obj(o) => {
             o.attrs.borrow_mut().insert(name, value);
+        }
+        Value::Cat(ty) => {
+            if it.category_attr(*ty, name).is_none() {
+                return Err(unknown_attribute(name));
+            }
+            // The only one so far: RngInt`CunninghamStorageLimit, a small
+            // non-negative integer.
+            let Value::Int(n) = &value else {
+                return Err(RuntimeError::runtime(format!("Bad rhs type for attribute \"{name}\"")));
+            };
+            match n.to_i64().filter(|&n| (0..1 << 30).contains(&n)) {
+                Some(n) => it.cunningham_storage_limit = n,
+                None => return Err(super::arg_not(2, "positive")),
+            }
         }
         other => return Err(RuntimeError::runtime(format!("Objects of type {} do not have attributes", it.type_name(other)))),
     }
@@ -425,8 +431,6 @@ pub fn register(it: &mut Interp) {
     it.def("One", "S::. -> .", "The identity element of S.", one_of);
 
     it.def("Random", "S::. -> .", "A random element of the finite structure or aggregate S.", random_elt);
-    it.def("Random", "a::RngIntElt, b::RngIntElt -> RngIntElt", "A random integer in the interval [a, b].", random_range);
-    it.def("Random", "b::RngIntElt -> RngIntElt", "A random integer in the interval [0, b].", random_upto);
     it.def("Random", "B::Bool -> BoolElt", "A random Boolean.", random_bool);
     it.def("SetSeed", "s::RngIntElt", "Reset the random number generator to seed s.", set_seed);
     it.def("SetSeed", "s::RngIntElt, c::RngIntElt", "Reset the random number generator to seed s and advance it c steps.", set_seed);

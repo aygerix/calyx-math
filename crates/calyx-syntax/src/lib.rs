@@ -6,7 +6,7 @@ pub mod parser;
 pub mod span;
 pub mod token;
 
-pub use parser::{ParseError, parse_expression, parse_program};
+pub use parser::{ParseError, parse_expression, parse_program, parse_program_prefix};
 pub use span::{FileId, SourceFile, Span};
 
 #[cfg(test)]

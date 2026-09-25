@@ -212,7 +212,10 @@ fn run_stdin(it: &mut Interp) -> i32 {
             }
         }
         buf.push_str(line);
-        match it.execute(&buf, "", true) {
+        match it.execute_continuing(&buf, "", true, &mut |it, e| {
+            report(it, e);
+            it.out.ensure_newline();
+        }) {
             Ok(ExecOutcome::Incomplete) => continue,
             Ok(ExecOutcome::Quit(c)) => return c,
             Ok(ExecOutcome::Done) => buf.clear(),
@@ -324,7 +327,10 @@ fn repl(it: &mut Interp) -> i32 {
                 buf.push_str(&line);
                 buf.push('\n');
                 it.interrupt.store(false, Ordering::SeqCst);
-                match it.execute(&buf, "", true) {
+                match it.execute_continuing(&buf, "", true, &mut |it, e| {
+                    report(it, e);
+                    it.out.ensure_newline();
+                }) {
                     Ok(ExecOutcome::Incomplete) => continue,
                     Ok(ExecOutcome::Quit(c)) => break c,
                     Ok(ExecOutcome::Done) => {}

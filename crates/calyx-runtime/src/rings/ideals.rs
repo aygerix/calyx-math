@@ -46,9 +46,13 @@ impl Interp {
 
     /// Operators on ideals of the integers.
     pub fn ideal_binop(&mut self, op: BinOp, a: &Value, b: &Value) -> RResult<Option<Value>> {
-        let (Some(m), Some(n)) = (int_ideal_gen(a), int_ideal_gen(b)) else { return Ok(None) };
+        let (Some(m), Some(n)) = (int_ideal_gen(a), int_ideal_gen(b)) else {
+            return Ok(None);
+        };
         // I is contained in J when the generator of J divides that of I.
-        let contained = |m: &Integer, n: &Integer| if n.is_zero() { m.is_zero() } else { m.div_rem_euclid(n).is_some_and(|(_, r)| r.is_zero()) };
+        let contained = |m: &Integer, n: &Integer| {
+            if n.is_zero() { m.is_zero() } else { m.div_rem_euclid(n).is_some_and(|(_, r)| r.is_zero()) }
+        };
         Ok(Some(match op {
             BinOp::Add => self.int_ideal(&m.gcd(&n)),
             BinOp::Mul => self.int_ideal(&(&m * &n)),
@@ -92,6 +96,20 @@ impl Interp {
             return Ok(None);
         }
         let g = gcd_all(&self.int_generators(right, "ideal< ... >")?);
+        let ideal = self.int_ideal(&g);
+        let incl = coercion_map(ideal.clone(), base.clone());
+        Ok(Some(vec![ideal, incl]))
+    }
+
+    /// `sub<Z | ...>`: the ideal generated (subrings of the integers are
+    /// ideals) and its inclusion.
+    pub fn sub_constructor(&mut self, base: &Value, right: &[Value]) -> RResult<Option<Vec<Value>>> {
+        match base.as_struct() {
+            Some(StructKind::Integers) => {}
+            Some(StructKind::IntIdeal(_)) => return Err(RuntimeError::runtime("LHS must be all of Z, not just an ideal of it").in_context("sub< ... >")),
+            _ => return Ok(None),
+        }
+        let g = gcd_all(&self.int_generators(right, "sub< ... >")?);
         let ideal = self.int_ideal(&g);
         let incl = coercion_map(ideal.clone(), base.clone());
         Ok(Some(vec![ideal, incl]))

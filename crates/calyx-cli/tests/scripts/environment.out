@@ -34,8 +34,10 @@ UserProgram
 true
 true
 Abs(<FldRatElt> x) -> FldRatElt
+AbsoluteValue(<FldRatElt> x) -> FldRatElt
 Ceiling(<FldRatElt> x) -> RngIntElt
 Denominator(<FldRatElt> x) -> RngIntElt
+DickmanRho(<FldRatElt> u) -> FldReElt
 Floor(<FldRatElt> x) -> RngIntElt
 GCD(<FldRatElt> x, <FldRatElt> y) -> FldRatElt
 GCD(<RngIntElt> x, <FldRatElt> y) -> FldRatElt
