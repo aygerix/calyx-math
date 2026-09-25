@@ -1,0 +1,218 @@
+Integer Ring
+Rational Field
+{ 1/3, 1, 2 }
+Rational Field
+
+>> { Integers() | 1, 2, 1/3 };
+   ^
+Runtime error in { ... }: Cannot coerce argument 3 into the universe
+
+
+>> { 1, "a" };
+   ^
+Runtime error in { ... }: Cannot coerce argument 2 into the universe
+
+[ 7, 3, 1, 1, 3, 7 ]
+
+>> S := [ [ 1..10 ] | x^2+x+1 : x in { -3 .. 3 by 1 } ];
+        ^
+Runtime error in sequence construction: Cannot coerce element into the universe
+
+>> T[2] := 3/4;
+    ^
+Runtime error in :=: Sequence mutation failed
+Set of subsets of Rational Field
+{ 1/3, 1, 2 }
+{ 1, 27 }
+[
+    [ 1 ],
+    [ 1, 2, 3 ],
+    [ 2/3 ]
+]
+Set of sequences over Rational Field
+[
+    [ 1, 2 ],
+    [ 2, 3, undef, undef, 7 ]
+]
+[
+    [ 1, 2 ],
+    [ 2, 3, undef, undef, 7 ],
+    undef,
+    [ 7 ]
+]
+
+>> S[6, 1] := 7;
+    ^
+Runtime error in :=: Bad indexed assign
+[ 13, 17 ]
+17
+17
+{ 10, 13, 16 }
+Set of subsets of Rational Field
+Set of subsets of Integer Ring
+{}
+{}
+true false true
+{ <-8, 9, 6>, <-6, 9, 8>, <9, 10, 12> }
+{* 1^^3, 3, 5 *}
+{* 1/2^^3, 1^^4, 2^^5 *}
+12
+{* 0^^3, 1^^4, 2^^3 *}
+{* 1^^2, 2^^2, 3^^2 *}
+{ 1 .. 10 }
+{ 1 .. 10 by 3 }
+{ 2 .. 10 by 4 }
+{}
+{ 1 .. 5 }
+Set of subsets of { 1 .. 10 }
+true
+Set of subsets of Rational Field
+Set of subsets of { 1 .. 10 }
+Set of indexed subsets of Integer Ring
+Set of multi subsets of Rational Field
+{@
+    { 1 },
+    { 1, 2 },
+    { 1, 2, 3 },
+    { 1, 2, 3, 4 },
+    { 1, 2, 3, 4, 5 }
+@}
+5
+Set of subsets of Integer Ring
+Set of indexed subsets of Set of subsets of Integer Ring
+SetIndx
+2
+2
+Integer Ring
+{@
+    { 1 },
+    { 1, 2, 3 }
+@}
+5 9
+{ 2, 3 }
+1
+2 9
+2 2
+7
+false
+{
+    { -729, 1000 },
+    { -125, 343 },
+    { -1, 512 }
+}
+{ 1 }
+{ 1 }
+{@ 3, 1, 2 @}
+{* 1^^2 *}
+{* 1 *}
+{ 1, 2 }
+Rational Field
+false
+true { 2 }
+{@ 1, 2, 3 @}
+{ 1, 2, 3 }
+[ 3, 1, 2 ]
+{ 1, 2 }
+{* 1, 2 *}
+{* 1^^2, 2 *}
+{ 1/3, 1/2, 1, 2, 3 }
+{ 1 }
+{ 2, 3 }
+{ 1/3, 1/2 }
+{ 1/3, 1/2, 2, 3 }
+true true true false true
+true false
+true false
+{@ 1, 2, 3 @}
+{* 1^^3, 2, 3 *}
+{* 1 *}
+{* 1, 2 *}
+3 0
+[ 1, 3 ]
+{
+    {},
+    { 1 },
+    { 2 },
+    { 3 },
+    { 1, 2 },
+    { 1, 3 },
+    { 2, 3 },
+    { 1, 2, 3 }
+}
+{
+    { 1, 2 },
+    { 1, 3 },
+    { 2, 3 }
+}
+1024
+{
+    {* 1^^2 *},
+    {* 1, 2 *},
+    {* 2^^2 *}
+}
+{
+    [ 0, 0 ],
+    [ 0, 1 ],
+    [ 1, 0 ],
+    [ 1, 1 ]
+}
+{
+    [ 1, 2, 3 ],
+    [ 1, 3, 2 ],
+    [ 2, 1, 3 ],
+    [ 2, 3, 1 ],
+    [ 3, 1, 2 ],
+    [ 3, 2, 1 ]
+}
+{
+    [ 1, 2 ],
+    [ 1, 3 ],
+    [ 2, 1 ],
+    [ 2, 3 ],
+    [ 3, 1 ],
+    [ 3, 2 ]
+}
+5
+true
+<-125, 343>
+false
+true
+true
+8 64
+false
+77
+true
+11
+
+>> rep{ x : x in [10..13] | x gt 100 };
+   ^
+Runtime error in { ... }: Could not find a representative
+
+true
+{
+    { 1, 2 },
+    { 1, 3 },
+    { 1, 4 },
+    { 2, 3 },
+    { 2, 4 },
+    { 3, 4 }
+}
+6 24
+0 1
+false false
+{ 1, 2 }
+{ 2 }
+
+>> &+{ };
+   ^
+Runtime error in '&+': Illegal null set
+
+h 1
+e 1
+l 2
+o 1
+a
+a
+b
+1 p
+2 q

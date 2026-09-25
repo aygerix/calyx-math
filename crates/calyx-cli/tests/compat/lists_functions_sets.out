@@ -1,0 +1,44 @@
+[*
+    [ 1 ],
+    2
+*]
+[* 1,
+    [ 2 ],
+    3,
+    [ 4 ]
+*]
+[* 1, 2,
+    <3, [ 4 ]>
+*]
+[* *]
+[ [* 1 *] ]
+[ [*
+    [ 1 ]
+*] ]
+<[*
+    [ 1 ]
+*], 2>
+function(x) ... end function
+function(x) ... end function
+function(x) ... end function
+procedure(x) ... end procedure
+
+>> q := proc< | print 1 >;
+                ^
+User error: bad syntax
+
+>> q;
+   ^
+User error: Identifier 'q' has not been declared or assigned
+[ function(x) ... end function ]
+<function(x) ... end function, 1>
+{ 1, w, w^2, w^3, w^6, 0 }
+{
+    0,
+    1,
+    u,
+    u^2
+}
+{ 0, 1, 3, 6 }
+{ 0, 1, 3, 6, 9 }
+

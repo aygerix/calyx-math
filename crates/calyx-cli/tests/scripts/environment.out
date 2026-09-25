@@ -1,0 +1,58 @@
+[ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 
+23, 24, 25, 26, 27, 28, 29, 30 ]
+40
+1 true false
+shown
+
+>> SetVerbose("MyFlag", 3);
+             ^
+Runtime error in 'SetVerbose': Level for verbose flag MyFlag must be in the 
+range [0..2]
+
+0
+FldReElt
+true
+FldReElt
+1
+2
+2
+
+>> $2;
+   ^
+User error: There is no previous value $2
+1
+RngIntElt
+t
+v1
+v2
+v3
+x
+10000
+1/4
+UserProgram
+true
+true
+Abs(<FldRatElt> x) -> FldRatElt
+Ceiling(<FldRatElt> x) -> RngIntElt
+Denominator(<FldRatElt> x) -> RngIntElt
+Floor(<FldRatElt> x) -> RngIntElt
+GCD(<FldRatElt> x, <FldRatElt> y) -> FldRatElt
+GCD(<RngIntElt> x, <FldRatElt> y) -> FldRatElt
+GCD(<FldRatElt> x, <RngIntElt> y) -> FldRatElt
+Gcd(<FldRatElt> x, <FldRatElt> y) -> FldRatElt
+Gcd(<RngIntElt> x, <FldRatElt> y) -> FldRatElt
+Gcd(<FldRatElt> x, <RngIntElt> y) -> FldRatElt
+GreatestCommonDivisor(<FldRatElt> x, <FldRatElt> y) -> FldRatElt
+GreatestCommonDivisor(<RngIntElt> x, <FldRatElt> y) -> FldRatElt
+GreatestCommonDivisor(<FldRatElt> x, <RngIntElt> y) -> FldRatElt
+IsIntegral(<FldRatElt> x) -> BoolElt
+IsMinusOne(<FldRatElt> x) -> BoolElt
+IsOne(<FldRatElt> x) -> BoolElt
+IsSquare(<FldRatElt> x) -> BoolElt, FldRatElt
+IsZero(<FldRatElt> x) -> BoolElt
+Numerator(<FldRatElt> x) -> RngIntElt
+Round(<FldRatElt> x) -> RngIntElt
+Sign(<FldRatElt> x) -> RngIntElt
+Sqrt(<FldRatElt> x) -> FldReElt
+Truncate(<FldRatElt> x) -> RngIntElt

@@ -1,0 +1,23 @@
+[
+    <1, [ 2 ]>
+]
+[ <1, 2>, <3, 4> ]
+
+>> x := 1 +;
+           ^
+User error: bad syntax
+
+>> z := (3;
+          ^
+User error: bad syntax
+after
+
+>>   1 + ;
+         ^
+User error: bad syntax
+
+>> end if;
+   ^
+User error: bad syntax
+end
+

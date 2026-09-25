@@ -1,0 +1,17 @@
+[package]
+name = "calyx-cli"
+description = "The calyx command-line interface"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "calyx"
+path = "src/main.rs"
+
+[dependencies]
+calyx-runtime = { workspace = true }
+calyx-syntax = { workspace = true }
+rustyline = { workspace = true }
+ctrlc = { workspace = true }

@@ -1,0 +1,29 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/calyx-math/calyx-math"
+rust-version = "1.85"
+
+[workspace.dependencies]
+calyx-flint = { path = "crates/calyx-flint" }
+calyx-syntax = { path = "crates/calyx-syntax" }
+calyx-runtime = { path = "crates/calyx-runtime" }
+flint3-sys = { version = "3.6.1" }
+libc = "0.2"
+indexmap = "2"
+regex = "1"
+rustc-hash = "2"
+rustyline = "18"
+ctrlc = "3.5"
+
+[profile.release]
+debug = 1
+lto = "thin"
+
+[profile.dev.package."*"]
+opt-level = 2

@@ -1,0 +1,19 @@
+
+>> = 1; bbbbbbbbbbbbbbbbbbbbbbbbb := 2; Gcd(1, "a");
+                                           ^
+Runtime error in 'Gcd': Bad argument types
+Argument types given: RngIntElt, MonStgElt
+
+
+>> bbbbbbbbbbbb := 2; Gcd(1, "a");
+                         ^
+Runtime error in 'Gcd': Bad argument types
+Argument types given: RngIntElt, MonStgElt
+
+
+>>     Gcd(1, "a"); // xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+          ^
+Runtime error in 'Gcd': Bad argument types
+Argument types given: RngIntElt, MonStgElt
+
+

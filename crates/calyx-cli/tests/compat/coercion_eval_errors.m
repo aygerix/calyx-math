@@ -1,0 +1,11 @@
+Integers() ! (1/2);
+Integers() ! "a";
+Rationals() ! "a";
+GF(5) ! (1/5);
+Integers(6) ! GF(5)!1;
+x := 1;
+eval "x := x + 1; return x";
+eval "1 + ";
+eval "Gcd(1, \"a\")";
+f := function(n) return eval "n + \"q\""; end function;
+f(2);

@@ -1,0 +1,776 @@
+//! Runtime values.
+//!
+//! Aggregates are immutable values shared through `Rc` and copied on write
+//! (`Rc::make_mut`), which gives Magma's value semantics cheaply. Structures
+//! and objects of user-defined types have reference semantics.
+
+use std::cell::{Cell, RefCell};
+use std::cmp::Ordering;
+use std::hash::{BuildHasherDefault, Hash, Hasher};
+use std::rc::Rc;
+
+use calyx_flint::{Integer, Rational, Real};
+use indexmap::{IndexMap, IndexSet};
+use rustc_hash::{FxHashMap, FxHasher};
+
+use crate::ir::FuncCode;
+use crate::rings::{Elt, Ring};
+use crate::sym::Sym;
+use crate::types::{TypeId, TypeVal, t};
+
+pub type FxBuild = BuildHasherDefault<FxHasher>;
+pub type VSet = IndexSet<Value, FxBuild>;
+pub type VMap<V> = IndexMap<Value, V, FxBuild>;
+
+#[derive(Clone, Default)]
+pub enum Value {
+    /// An undefined entry (a hole in a sequence, or `_` in a return list).
+    #[default]
+    Undef,
+    Bool(bool),
+    Int(Integer),
+    Rat(Rc<Rational>),
+    Real(Rc<RealV>),
+    Str(Rc<str>),
+    Seq(Rc<SeqEnum>),
+    Set(Rc<SetEnum>),
+    ISet(Rc<SetIndx>),
+    MSet(Rc<SetMulti>),
+    Formal(Rc<Formal>),
+    Tuple(Rc<Tuple>),
+    List(Rc<Vec<Value>>),
+    Rec(Rc<Record>),
+    Assoc(Rc<Assoc>),
+    Func(Rc<Closure>),
+    /// An intrinsic, referred to by name (resolved at call time).
+    Intr(Sym),
+    Map(Rc<MapObj>),
+    Struct(Rc<Struct>),
+    Cat(TypeId),
+    ECat(Rc<TypeVal>),
+    Err(Rc<ErrObj>),
+    Obj(Rc<UserObj>),
+    CopElt(Rc<CopElt>),
+    Io(Rc<IoObj>),
+    /// An element of a ring built on FLINT (residue class rings, finite
+    /// fields, polynomial rings, the complex field, ...).
+    Elt(Rc<Elt>),
+}
+
+/// A real number with the decimal precision of its real field.
+#[derive(Clone)]
+pub struct RealV {
+    pub x: Real,
+    /// Decimal digits of the parent real field.
+    pub digits: u32,
+    /// Print with this many decimals instead (used for timings).
+    pub fixed: Option<u32>,
+}
+
+impl RealV {
+    pub fn new(x: Real, digits: u32) -> RealV {
+        RealV { x, digits, fixed: None }
+    }
+}
+
+// ----- aggregates -----------------------------------------------------------
+
+/// An enumerated sequence. Holes are stored as `Value::Undef`.
+#[derive(Clone, Default)]
+pub struct SeqEnum {
+    /// `None` for the null sequence `[]`.
+    pub universe: Option<Value>,
+    pub elems: Vec<Value>,
+    /// Built as an arithmetic progression `[a..b by c]`; it prints that way
+    /// while its elements still form a progression.
+    pub range_hint: bool,
+}
+
+impl SeqEnum {
+    pub fn new(universe: Option<Value>, elems: Vec<Value>) -> SeqEnum {
+        SeqEnum { universe, elems, range_hint: false }
+    }
+
+    /// `(first, last, step)` if this prints as an arithmetic progression.
+    pub fn as_progression(&self) -> Option<(Integer, Integer, Integer)> {
+        if !self.range_hint || self.elems.len() < 2 {
+            return None;
+        }
+        let ints: Option<Vec<&Integer>> = self.elems.iter().map(|v| if let Value::Int(i) = v { Some(i) } else { None }).collect();
+        let ints = ints?;
+        let step = if ints.len() >= 2 { ints[1] - ints[0] } else { Integer::one() };
+        if step.is_zero() {
+            return None;
+        }
+        for w in ints.windows(2) {
+            if &(w[1] - w[0]) != &step {
+                return None;
+            }
+        }
+        Some((ints[0].clone(), ints[ints.len() - 1].clone(), step))
+    }
+
+    pub fn is_complete(&self) -> bool {
+        !self.elems.iter().any(|v| matches!(v, Value::Undef))
+    }
+}
+
+/// An enumerated set. Arithmetic progressions of integers are stored lazily
+/// until the set is modified.
+#[derive(Clone)]
+pub struct SetEnum {
+    pub universe: Option<Value>,
+    pub repr: SetRepr,
+}
+
+#[derive(Clone)]
+pub enum SetRepr {
+    /// `{ lo .. hi by step }` with `len` elements (step never zero).
+    Range { lo: Integer, step: Integer, len: u64 },
+    Elems(VSet),
+}
+
+impl SetEnum {
+    pub fn new(universe: Option<Value>, elems: VSet) -> SetEnum {
+        SetEnum { universe, repr: SetRepr::Elems(elems) }
+    }
+
+    pub fn range(lo: Integer, hi: &Integer, step: Integer) -> SetEnum {
+        let len = range_len(&lo, hi, &step);
+        // A set does not remember direction: store it ascending.
+        if step.sign() < 0 && len > 0 {
+            let last = &lo + &(&step * &Integer::from_u64(len - 1));
+            return SetEnum { universe: Some(Value::integers()), repr: SetRepr::Range { lo: last, step: -step, len } };
+        }
+        SetEnum { universe: Some(Value::integers()), repr: SetRepr::Range { lo, step, len } }
+    }
+
+    pub fn len(&self) -> usize {
+        match &self.repr {
+            SetRepr::Range { len, .. } => *len as usize,
+            SetRepr::Elems(s) => s.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn contains(&self, v: &Value) -> bool {
+        match &self.repr {
+            SetRepr::Range { lo, step, len } => {
+                let Value::Int(x) = v else {
+                    return match v {
+                        Value::Rat(q) if q.is_integral() => self.contains(&Value::Int(q.numerator())),
+                        _ => false,
+                    };
+                };
+                let d = x - lo;
+                match d.div_rem_euclid(step) {
+                    Some((q, r)) => r.is_zero() && q.sign() >= 0 && q.to_u64().is_some_and(|q| q < *len),
+                    None => false,
+                }
+            }
+            SetRepr::Elems(s) => s.contains(v),
+        }
+    }
+
+    /// Switch to the explicit representation (needed before modification).
+    pub fn elems_mut(&mut self) -> &mut VSet {
+        if let SetRepr::Range { .. } = self.repr {
+            let s: VSet = self.iter().collect();
+            self.repr = SetRepr::Elems(s);
+        }
+        match &mut self.repr {
+            SetRepr::Elems(s) => s,
+            SetRepr::Range { .. } => unreachable!(),
+        }
+    }
+
+    pub fn iter(&self) -> Box<dyn Iterator<Item = Value> + '_> {
+        match &self.repr {
+            SetRepr::Range { lo, step, len } => {
+                let lo = lo.clone();
+                let step = step.clone();
+                Box::new((0..*len).map(move |i| Value::Int(&lo + &(&step * &Integer::from_u64(i)))))
+            }
+            SetRepr::Elems(s) => Box::new(s.iter().cloned()),
+        }
+    }
+
+    pub fn is_range(&self) -> bool {
+        matches!(self.repr, SetRepr::Range { .. })
+    }
+}
+
+/// The number of terms in `lo, lo+step, ...` not passing `hi`.
+pub fn range_len(lo: &Integer, hi: &Integer, step: &Integer) -> u64 {
+    let span = hi - lo;
+    if span.is_zero() {
+        return 1;
+    }
+    if span.sign() != step.sign() {
+        return 0;
+    }
+    let (q, _) = span.tdiv_qr(step).unwrap();
+    q.to_u64().map(|q| q + 1).unwrap_or(u64::MAX)
+}
+
+#[derive(Clone, Default)]
+pub struct SetIndx {
+    pub universe: Option<Value>,
+    pub elems: VSet,
+}
+
+#[derive(Clone, Default)]
+pub struct SetMulti {
+    pub universe: Option<Value>,
+    pub elems: VMap<u64>,
+}
+
+impl SetMulti {
+    pub fn total(&self) -> u64 {
+        self.elems.values().sum()
+    }
+
+    pub fn insert(&mut self, v: Value, n: u64) {
+        if n > 0 {
+            *self.elems.entry(v).or_insert(0) += n;
+        }
+    }
+}
+
+/// A formal set `{! x in S | P !}` or formal sequence `[! ... !]`.
+#[derive(Clone)]
+pub struct Formal {
+    pub is_seq: bool,
+    pub universe: Value,
+    /// The predicate as a one-argument function, if present.
+    pub pred: Option<Value>,
+}
+
+#[derive(Clone)]
+pub struct Tuple {
+    pub elems: Vec<Value>,
+    /// The Cartesian product this tuple belongs to, when known.
+    pub parent: Option<Value>,
+}
+
+#[derive(Clone)]
+pub struct Record {
+    pub format: Rc<Struct>,
+    pub fields: Vec<Value>,
+}
+
+#[derive(Clone, Default)]
+pub struct Assoc {
+    pub universe: Option<Value>,
+    pub map: VMap<Value>,
+    /// Value returned for keys that are not present (`Default` parameter).
+    pub default: Option<Value>,
+}
+
+// ----- programs and maps ----------------------------------------------------
+
+/// A user function or procedure value.
+pub struct Closure {
+    pub code: Rc<FuncCode>,
+    pub captures: Box<[Value]>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MapKind {
+    Map,
+    PMap,
+    Hom,
+    Iso,
+}
+
+pub struct MapObj {
+    pub kind: MapKind,
+    pub domain: Value,
+    pub codomain: Value,
+    pub imp: MapImpl,
+}
+
+pub enum MapImpl {
+    /// `x :-> e(x)` with an optional inverse rule.
+    Rule { f: Value, inv: Option<Value> },
+    /// An explicit graph (domain element to image).
+    Graph(VMap<Value>),
+    /// Apply the maps in order.
+    Compose(Vec<Rc<MapObj>>),
+    /// The coercion map from domain to codomain.
+    Coercion,
+    /// The i-th injection into a coproduct (codomain).
+    Injection(usize),
+    /// The inverse of another map.
+    Inverse(Rc<MapObj>),
+}
+
+// ----- structures -----------------------------------------------------------
+
+/// A built-in parent structure. Attributes may be attached to structures.
+pub struct Struct {
+    pub kind: StructKind,
+    pub attrs: RefCell<FxHashMap<Sym, Value>>,
+    /// The identifier the structure was first assigned to (used in printing).
+    pub name: RefCell<Option<Sym>>,
+}
+
+#[derive(Clone)]
+pub enum StructKind {
+    Integers,
+    Rationals,
+    /// The real field with the given decimal precision.
+    Reals(u32),
+    Booleans,
+    Strings,
+    PowerSet(Option<Value>),
+    PowerSeq(Option<Value>),
+    PowerISet(Option<Value>),
+    PowerMSet(Option<Value>),
+    /// `car< ... >`
+    Cartesian(Vec<Value>),
+    RecFormat(RecFormat),
+    /// The set of maps from one structure to another.
+    Maps(Value, Value),
+    Coproduct(Vec<Value>),
+    /// The parent of some category of objects without a finer parent.
+    PowerStructure(TypeId),
+    /// A ring whose elements are `Value::Elt`.
+    Ring(Rc<Ring>),
+}
+
+#[derive(Clone)]
+pub struct RecFormat {
+    pub names: Vec<Sym>,
+    /// Optional structure constraint for each field.
+    pub types: Vec<Option<Value>>,
+}
+
+impl Struct {
+    pub fn new(kind: StructKind) -> Rc<Struct> {
+        Rc::new(Struct { kind, attrs: RefCell::default(), name: RefCell::default() })
+    }
+}
+
+pub struct UserObj {
+    pub ty: TypeId,
+    pub attrs: RefCell<FxHashMap<Sym, Value>>,
+    pub id: u64,
+}
+
+thread_local! {
+    static NEXT_OBJ_ID: Cell<u64> = const { Cell::new(1) };
+    static INTEGERS: Rc<Struct> = Struct::new(StructKind::Integers);
+    static RATIONALS: Rc<Struct> = Struct::new(StructKind::Rationals);
+    static BOOLEANS: Rc<Struct> = Struct::new(StructKind::Booleans);
+    static STRINGS: Rc<Struct> = Struct::new(StructKind::Strings);
+}
+
+pub fn next_object_id() -> u64 {
+    NEXT_OBJ_ID.with(|c| {
+        let v = c.get();
+        c.set(v + 1);
+        v
+    })
+}
+
+#[derive(Clone)]
+pub struct ErrObj {
+    pub object: Value,
+    /// `"Err"` for system errors, `"ErrUser"` for user errors.
+    pub kind: Rc<str>,
+    pub position: Option<Rc<str>>,
+    pub traceback: Option<Rc<str>>,
+}
+
+pub struct CopElt {
+    pub cop: Rc<Struct>,
+    pub index: usize,
+    pub value: Value,
+}
+
+/// A file or pipe opened with `Open`/`POpen`.
+pub struct IoObj {
+    pub name: String,
+    pub mode: String,
+    pub state: RefCell<IoState>,
+}
+
+pub enum IoState {
+    Reader { data: Vec<u8>, pos: usize },
+    Writer(std::fs::File),
+    Closed,
+}
+
+// ----- constructors and accessors -------------------------------------------
+
+impl Value {
+    pub fn integers() -> Value {
+        INTEGERS.with(|s| Value::Struct(s.clone()))
+    }
+
+    pub fn rationals() -> Value {
+        RATIONALS.with(|s| Value::Struct(s.clone()))
+    }
+
+    pub fn reals(digits: u32) -> Value {
+        Value::structure(StructKind::Reals(digits))
+    }
+
+    pub fn real(x: Real, digits: u32) -> Value {
+        Value::Real(Rc::new(RealV::new(x, digits)))
+    }
+
+    pub fn booleans() -> Value {
+        BOOLEANS.with(|s| Value::Struct(s.clone()))
+    }
+
+    pub fn strings() -> Value {
+        STRINGS.with(|s| Value::Struct(s.clone()))
+    }
+
+    pub fn structure(kind: StructKind) -> Value {
+        Value::Struct(Struct::new(kind))
+    }
+
+    pub fn int(i: i64) -> Value {
+        Value::Int(Integer::from_i64(i))
+    }
+
+    pub fn str(s: &str) -> Value {
+        Value::Str(Rc::from(s))
+    }
+
+    /// A rational, normalised to an integer if it is integral... but kept as
+    /// a rational field element (Magma distinguishes `2` from `4/2`).
+    pub fn rat(q: Rational) -> Value {
+        Value::Rat(Rc::new(q))
+    }
+
+    pub fn seq(universe: Option<Value>, elems: Vec<Value>) -> Value {
+        Value::Seq(Rc::new(SeqEnum::new(universe, elems)))
+    }
+
+    pub fn int_seq(elems: impl IntoIterator<Item = Integer>) -> Value {
+        Value::seq(Some(Value::integers()), elems.into_iter().map(Value::Int).collect())
+    }
+
+    pub fn tuple(elems: Vec<Value>) -> Value {
+        Value::Tuple(Rc::new(Tuple { elems, parent: None }))
+    }
+
+    pub fn list(elems: Vec<Value>) -> Value {
+        Value::List(Rc::new(elems))
+    }
+
+    pub fn is_undef(&self) -> bool {
+        matches!(self, Value::Undef)
+    }
+
+    pub fn as_struct(&self) -> Option<&StructKind> {
+        match self {
+            Value::Struct(s) => Some(&s.kind),
+            _ => None,
+        }
+    }
+
+    pub fn is_integers(&self) -> bool {
+        matches!(self.as_struct(), Some(StructKind::Integers))
+    }
+
+    pub fn is_rationals(&self) -> bool {
+        matches!(self.as_struct(), Some(StructKind::Rationals))
+    }
+
+    /// The category of this value (not consulting user overrides).
+    pub fn type_id(&self) -> TypeId {
+        match self {
+            Value::Undef => t::ANY,
+            Value::Bool(_) => t::BOOL_ELT,
+            Value::Int(_) => t::RNG_INT_ELT,
+            Value::Rat(_) => t::FLD_RAT_ELT,
+            Value::Real(_) => t::FLD_RE_ELT,
+            Value::Str(_) => t::MON_STG_ELT,
+            Value::Seq(_) => t::SEQ_ENUM,
+            Value::Set(_) => t::SET_ENUM,
+            Value::ISet(_) => t::SET_INDX,
+            Value::MSet(_) => t::SET_MULTI,
+            Value::Formal(f) => {
+                if f.is_seq {
+                    t::SEQ_FORMAL
+                } else {
+                    t::SET_FORMAL
+                }
+            }
+            Value::Tuple(_) => t::TUP,
+            Value::List(_) => t::LIST,
+            Value::Rec(_) => t::REC,
+            Value::Assoc(_) => t::ASSOC,
+            Value::Func(_) => t::USER_PROGRAM,
+            Value::Intr(_) => t::INTRINSIC,
+            Value::Map(_) => t::MAP,
+            Value::Struct(s) => match &s.kind {
+                StructKind::Integers => t::RNG_INT,
+                StructKind::Rationals => t::FLD_RAT,
+                StructKind::Reals(_) => t::FLD_RE,
+                StructKind::Booleans => t::BOOL,
+                StructKind::Strings => t::MON_STG,
+                StructKind::PowerSet(_) => t::POW_SET_ENUM,
+                StructKind::PowerSeq(_) => t::POW_SEQ_ENUM,
+                StructKind::PowerISet(_) => t::POW_SET_INDX,
+                StructKind::PowerMSet(_) => t::POW_SET_MULTI,
+                StructKind::Cartesian(_) => t::SET_CART,
+                StructKind::RecFormat(_) => t::REC_FRMT,
+                StructKind::Maps(..) => t::POW_MAP,
+                StructKind::Coproduct(_) => t::COP,
+                StructKind::PowerStructure(_) => t::POW_STR,
+                StructKind::Ring(r) => r.type_id(),
+            },
+            Value::Cat(_) => t::CAT,
+            Value::ECat(_) => t::ECAT,
+            Value::Err(_) => t::ERR,
+            Value::Obj(o) => o.ty,
+            Value::CopElt(_) => t::COP_ELT,
+            Value::Io(_) => t::IO,
+            Value::Elt(e) => e.ring().elt_type(),
+        }
+    }
+
+    /// Whether this value can be the universe of an aggregate (a structure,
+    /// or an aggregate used as a structure).
+    pub fn is_structure_like(&self) -> bool {
+        matches!(
+            self,
+            Value::Struct(_) | Value::Seq(_) | Value::Set(_) | Value::ISet(_) | Value::MSet(_) | Value::Formal(_) | Value::Obj(_)
+        )
+    }
+}
+
+// ----- equality, hashing and ordering ---------------------------------------
+
+fn hash_one<T: Hash>(x: &T) -> u64 {
+    let mut h = FxHasher::default();
+    x.hash(&mut h);
+    h.finish()
+}
+
+impl Hash for Value {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Value::Undef => state.write_u8(0),
+            Value::Bool(b) => state.write_u8(if *b { 2 } else { 1 }),
+            // Integers and integral rationals must hash alike.
+            Value::Int(i) => state.write_u64(i.hash_u64()),
+            Value::Rat(q) => state.write_u64(q.hash_u64()),
+            Value::Real(r) => match r.x.to_rational() {
+                Some(q) => state.write_u64(q.hash_u64()),
+                None => state.write_u8(3),
+            },
+            Value::Str(s) => s.hash(state),
+            Value::Seq(s) => {
+                state.write_u8(10);
+                state.write_usize(s.elems.len());
+                for e in &s.elems {
+                    e.hash(state);
+                }
+            }
+            Value::Set(s) => {
+                state.write_u8(11);
+                state.write_usize(s.len());
+                state.write_u64(s.iter().map(|e| hash_one(&e)).fold(0u64, |a, b| a.wrapping_add(b)));
+            }
+            Value::ISet(s) => {
+                state.write_u8(12);
+                state.write_usize(s.elems.len());
+                state.write_u64(s.elems.iter().map(hash_one).fold(0u64, |a, b| a.wrapping_add(b)));
+            }
+            Value::MSet(s) => {
+                state.write_u8(13);
+                state.write_u64(s.elems.iter().map(|(e, n)| hash_one(e).wrapping_mul(*n | 1)).fold(0u64, |a, b| a.wrapping_add(b)));
+            }
+            Value::Tuple(tp) => {
+                state.write_u8(14);
+                for e in &tp.elems {
+                    e.hash(state);
+                }
+            }
+            Value::List(l) => {
+                state.write_u8(15);
+                for e in l.iter() {
+                    e.hash(state);
+                }
+            }
+            Value::Rec(r) => {
+                state.write_u8(16);
+                for e in &r.fields {
+                    e.hash(state);
+                }
+            }
+            Value::Assoc(a) => {
+                state.write_u8(17);
+                state.write_usize(a.map.len());
+            }
+            Value::Func(f) => (Rc::as_ptr(f) as usize).hash(state),
+            Value::Intr(s) => s.hash(state),
+            Value::Map(m) => (Rc::as_ptr(m) as usize).hash(state),
+            Value::Struct(s) => struct_hash(s, state),
+            Value::Cat(t) => t.hash(state),
+            Value::ECat(t) => t.hash(state),
+            Value::Err(e) => (Rc::as_ptr(e) as usize).hash(state),
+            Value::Obj(o) => o.id.hash(state),
+            Value::CopElt(c) => {
+                c.index.hash(state);
+                c.value.hash(state);
+            }
+            Value::Formal(f) => (Rc::as_ptr(f) as usize).hash(state),
+            Value::Io(f) => (Rc::as_ptr(f) as usize).hash(state),
+            Value::Elt(e) => state.write_u64(e.hash_u64()),
+        }
+    }
+}
+
+fn struct_hash<H: Hasher>(s: &Struct, state: &mut H) {
+    match &s.kind {
+        StructKind::Integers => state.write_u8(1),
+        StructKind::Rationals => state.write_u8(2),
+        StructKind::Reals(d) => {
+            state.write_u8(9);
+            d.hash(state);
+        }
+        StructKind::Booleans => state.write_u8(3),
+        StructKind::Strings => state.write_u8(4),
+        StructKind::PowerSet(u) | StructKind::PowerSeq(u) | StructKind::PowerISet(u) | StructKind::PowerMSet(u) => {
+            state.write_u8(5);
+            if let Some(u) = u {
+                u.hash(state);
+            }
+        }
+        StructKind::Cartesian(v) | StructKind::Coproduct(v) => {
+            state.write_u8(6);
+            for x in v {
+                x.hash(state);
+            }
+        }
+        StructKind::RecFormat(f) => {
+            state.write_u8(7);
+            f.names.hash(state);
+        }
+        StructKind::Maps(a, b) => {
+            state.write_u8(8);
+            a.hash(state);
+            b.hash(state);
+        }
+        StructKind::PowerStructure(t) => t.hash(state),
+        StructKind::Ring(r) => r.id.hash(state),
+    }
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Value) -> bool {
+        use Value::*;
+        match (self, other) {
+            (Undef, Undef) => true,
+            (Bool(a), Bool(b)) => a == b,
+            (Int(a), Int(b)) => a == b,
+            (Rat(a), Rat(b)) => a == b,
+            (Int(a), Rat(b)) | (Rat(b), Int(a)) => b.is_integral() && b.numerator() == *a,
+            (Real(a), Real(b)) => a.x == b.x,
+            (Str(a), Str(b)) => a == b,
+            (Seq(a), Seq(b)) => Rc::ptr_eq(a, b) || a.elems == b.elems,
+            (Set(a), Set(b)) => Rc::ptr_eq(a, b) || (a.len() == b.len() && a.iter().all(|x| b.contains(&x))),
+            (ISet(a), ISet(b)) => a.elems.len() == b.elems.len() && a.elems.iter().all(|x| b.elems.contains(x)),
+            (MSet(a), MSet(b)) => a.elems.len() == b.elems.len() && a.elems.iter().all(|(x, n)| b.elems.get(x) == Some(n)),
+            (Tuple(a), Tuple(b)) => a.elems == b.elems,
+            (List(a), List(b)) => a == b,
+            (Rec(a), Rec(b)) => Rc::ptr_eq(&a.format, &b.format) && a.fields == b.fields,
+            (Assoc(a), Assoc(b)) => a.map.len() == b.map.len() && a.map.iter().all(|(k, v)| b.map.get(k) == Some(v)),
+            (Func(a), Func(b)) => Rc::ptr_eq(a, b),
+            (Intr(a), Intr(b)) => a == b,
+            (Map(a), Map(b)) => Rc::ptr_eq(a, b),
+            (Struct(a), Struct(b)) => struct_eq(a, b),
+            (Cat(a), Cat(b)) => a == b,
+            (ECat(a), ECat(b)) => a == b,
+            (Cat(a), ECat(b)) | (ECat(b), Cat(a)) => b.args().is_empty() && b.base() == *a,
+            (Err(a), Err(b)) => Rc::ptr_eq(a, b),
+            (Obj(a), Obj(b)) => a.id == b.id,
+            (CopElt(a), CopElt(b)) => struct_eq(&a.cop, &b.cop) && a.index == b.index && a.value == b.value,
+            (Formal(a), Formal(b)) => Rc::ptr_eq(a, b),
+            (Io(a), Io(b)) => Rc::ptr_eq(a, b),
+            (Elt(a), Elt(b)) => a.same_as(b),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Value {}
+
+pub fn struct_eq(a: &Rc<Struct>, b: &Rc<Struct>) -> bool {
+    if Rc::ptr_eq(a, b) {
+        return true;
+    }
+    use StructKind::*;
+    match (&a.kind, &b.kind) {
+        (Integers, Integers) | (Rationals, Rationals) | (Booleans, Booleans) | (Strings, Strings) => true,
+        (Reals(a), Reals(b)) => a == b,
+        (PowerSet(x), PowerSet(y)) | (PowerSeq(x), PowerSeq(y)) | (PowerISet(x), PowerISet(y)) | (PowerMSet(x), PowerMSet(y)) => x == y,
+        (Cartesian(x), Cartesian(y)) | (Coproduct(x), Coproduct(y)) => x == y,
+        (RecFormat(_), RecFormat(_)) => false,
+        (Maps(a1, b1), Maps(a2, b2)) => a1 == a2 && b1 == b2,
+        (PowerStructure(x), PowerStructure(y)) => x == y,
+        (Ring(x), Ring(y)) => x.id == y.id,
+        _ => false,
+    }
+}
+
+/// A total order used for canonical printing of sets and for `Sort` on
+/// values with a natural order. Returns `None` if the values are not
+/// comparable this way.
+pub fn natural_cmp(a: &Value, b: &Value) -> Option<Ordering> {
+    use Value::*;
+    Some(match (a, b) {
+        (Int(x), Int(y)) => x.cmp(y),
+        (Rat(x), Rat(y)) => x.as_ref().cmp(y),
+        (Int(x), Rat(y)) => Rational::from_integer(x).cmp(y),
+        (Rat(x), Int(y)) => x.as_ref().cmp(&Rational::from_integer(y)),
+        (Real(x), Real(y)) => x.x.cmp(&y.x),
+        (Str(x), Str(y)) => x.cmp(y),
+        (Bool(x), Bool(y)) => x.cmp(y),
+        (Elt(x), Elt(y)) => x.natural_cmp(y)?,
+        (Seq(x), Seq(y)) => seq_cmp(&x.elems, &y.elems)?,
+        (Tuple(x), Tuple(y)) => seq_cmp(&x.elems, &y.elems)?,
+        (Set(x), Set(y)) => match x.len().cmp(&y.len()) {
+            Ordering::Equal => {
+                let mut xs: Vec<Value> = x.iter().collect();
+                let mut ys: Vec<Value> = y.iter().collect();
+                sort_values(&mut xs);
+                sort_values(&mut ys);
+                seq_cmp(&xs, &ys)?
+            }
+            o => o,
+        },
+        _ => return None,
+    })
+}
+
+fn seq_cmp(a: &[Value], b: &[Value]) -> Option<Ordering> {
+    for (x, y) in a.iter().zip(b) {
+        match natural_cmp(x, y)? {
+            Ordering::Equal => {}
+            o => return Some(o),
+        }
+    }
+    Some(a.len().cmp(&b.len()))
+}
+
+/// Sort values in their natural order if they all have one; otherwise leave
+/// them as they are. Returns whether sorting happened.
+pub fn sort_values(v: &mut [Value]) -> bool {
+    if v.windows(2).any(|w| natural_cmp(&w[0], &w[1]).is_none()) {
+        return false;
+    }
+    v.sort_by(|a, b| natural_cmp(a, b).unwrap_or(Ordering::Equal));
+    true
+}

@@ -1,0 +1,52 @@
+Mapping from: Integer Ring to Integer Ring given by a rule [no inverse]
+9 9
+{ 1, 4, 9 }
+[ 1, 4, 9 ]
+
+>> f(1/2);
+    ^
+Runtime error in map application: Element is not in the domain of the map
+
+Mapping from: Integer Ring to Rational Field given by a rule
+8
+1
+Integer Ring
+Rational Field
+[
+    Mapping from: Integer Ring to Integer Ring given by a rule [no inverse],
+    Mapping from: Integer Ring to Rational Field given by a rule
+]
+7
+Mapping from: Integer Ring to Integer Ring
+25
+false true
+b
+3
+{ 1, 2 }
+{ b, c }
+false true true true
+{ <1, "a">, <2, "b">, <3, "c"> }
+
+>> map< S -> T | <1, "a"> >;
+      ^
+Runtime error in map< ... >: Not enough images given to constructor
+
+
+>> map< S -> T | <1, "a">, <1, "b">, <2, "a">, <3, "a"> >;
+      ^
+Runtime error in map< ... >: More than one image is given for a single element 
+of the domain
+
+a
+
+>> pm(2);
+     ^
+Runtime error in map application: Application of map failed
+
+3
+Mapping from: Integer Ring to Rational Field
+Set of all maps from Integer Ring to Integer Ring
+Set of all maps from Integer Ring to Rational Field
+Integer Ring
+Map[RngInt, RngInt]
+99

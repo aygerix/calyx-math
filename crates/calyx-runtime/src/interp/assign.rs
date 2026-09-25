@@ -1,0 +1,832 @@
+//! Assignment, indexing and attributes.
+
+use std::rc::Rc;
+
+use calyx_flint::Integer;
+use calyx_syntax::ast::BinOp;
+
+use super::{Frame, Interp};
+use crate::error::{RResult, RuntimeError};
+use crate::ir::*;
+use crate::sym::Sym;
+use crate::value::*;
+
+/// One step of an assignment path below a variable.
+pub enum PathElem {
+    Index(Value),
+    Attr(Sym),
+}
+
+/// Where a reference argument came from, for writing it back.
+pub enum RefTarget {
+    Place(Place),
+    Path(Place, Vec<PathElem>),
+}
+
+impl Interp {
+    // ----- reference arguments ----------------------------------------------
+
+    /// Take the value referred to by `~lv` out of its variable (so it can be
+    /// modified in place) and remember where it goes back.
+    pub fn take_ref(&mut self, lv: &LV, f: &mut Frame) -> RResult<(RefTarget, Value)> {
+        match lv {
+            LV::Var(p, _) => Ok((RefTarget::Place(*p), self.take_place(*p, f))),
+            LV::Discard => Err(RuntimeError::runtime("'_' cannot be passed by reference")),
+            _ => {
+                let mut path = Vec::new();
+                let Some(root) = self.lv_path(lv, f, &mut path)? else {
+                    return Err(RuntimeError::runtime("'_' cannot be passed by reference"));
+                };
+                let mut rv = self.take_place(root, f);
+                if rv.is_undef() {
+                    return Err(RuntimeError::user(format!("Identifier '{}' has not been assigned", root.name())));
+                }
+                let r = self.take_at_path(&mut rv, &path);
+                self.put_place(root, rv, f);
+                Ok((RefTarget::Path(root, path), r?))
+            }
+        }
+    }
+
+    pub fn put_ref(&mut self, t: RefTarget, v: Value, f: &mut Frame) -> RResult<()> {
+        match t {
+            RefTarget::Place(p) => {
+                self.put_place(p, v, f);
+                Ok(())
+            }
+            RefTarget::Path(root, path) => {
+                let mut rv = self.take_place(root, f);
+                let r = self.put_at_path(&mut rv, &path, v);
+                self.put_place(root, rv, f);
+                r
+            }
+        }
+    }
+
+    fn put_at_path(&mut self, cur: &mut Value, path: &[PathElem], v: Value) -> RResult<()> {
+        // An unassigned associative array entry that stays unassigned is removed.
+        if v.is_undef() {
+            if let (Some(PathElem::Index(i)), true, Value::Assoc(a)) = (path.first(), path.len() == 1, &mut *cur) {
+                let key = i.clone();
+                let a = Rc::make_mut(a);
+                a.map.shift_remove(&key);
+                return Ok(());
+            }
+            if path.len() == 1 {
+                if let (PathElem::Index(i), Value::Seq(s)) = (&path[0], &mut *cur) {
+                    let k = seq_index(i, "Sequence")?;
+                    let s = Rc::make_mut(s);
+                    if k <= s.elems.len() {
+                        s.elems[k - 1] = Value::Undef;
+                    }
+                    return Ok(());
+                }
+            }
+        }
+        self.set_path(cur, path, v)
+    }
+
+    fn take_at_path(&mut self, cur: &mut Value, path: &[PathElem]) -> RResult<Value> {
+        let Some((first, rest)) = path.split_first() else {
+            return Ok(std::mem::take(cur));
+        };
+        let missing = |k: usize| RuntimeError::runtime(format!("Element {k} is not defined"));
+        match first {
+            PathElem::Index(i) => match cur {
+                Value::Seq(s) => {
+                    let k = seq_index(i, "Sequence")?;
+                    let s = Rc::make_mut(s);
+                    if k > s.elems.len() {
+                        return if rest.is_empty() { Ok(Value::Undef) } else { Err(missing(k)) };
+                    }
+                    self.take_at_path(&mut s.elems[k - 1], rest)
+                }
+                Value::List(l) => {
+                    let k = seq_index(i, "List")?;
+                    let l = Rc::make_mut(l);
+                    if k > l.len() {
+                        return if rest.is_empty() { Ok(Value::Undef) } else { Err(missing(k)) };
+                    }
+                    self.take_at_path(&mut l[k - 1], rest)
+                }
+                Value::Tuple(t) => {
+                    let k = seq_index(i, "Tuple")?;
+                    let t = Rc::make_mut(t);
+                    if k > t.elems.len() {
+                        return Err(missing(k));
+                    }
+                    self.take_at_path(&mut t.elems[k - 1], rest)
+                }
+                Value::Assoc(a) => {
+                    let key = match &a.universe {
+                        Some(u) => {
+                            let u = u.clone();
+                            self.try_coerce_into_universe(&u, i)?.unwrap_or_else(|| i.clone())
+                        }
+                        None => i.clone(),
+                    };
+                    let a = Rc::make_mut(a);
+                    match a.map.get_mut(&key) {
+                        Some(v) => self.take_at_path(v, rest),
+                        None => {
+                            let mut d = a.default.clone().unwrap_or(Value::Undef);
+                            if rest.is_empty() {
+                                return Ok(d);
+                            }
+                            if d.is_undef() {
+                                return Err(RuntimeError::runtime("Index is not in the domain of the associative array"));
+                            }
+                            self.take_at_path(&mut d, rest)
+                        }
+                    }
+                }
+                other => Err(RuntimeError::runtime(format!("Cannot index an object of type {}", self.type_name(other)))),
+            },
+            PathElem::Attr(name) => match cur {
+                Value::Rec(r) => {
+                    let StructKind::RecFormat(rf) = &r.format.kind else { unreachable!() };
+                    let Some(k) = rf.names.iter().position(|n| n == name) else {
+                        return Err(RuntimeError::runtime(format!("Field '{name}' does not exist in this record")));
+                    };
+                    let r = Rc::make_mut(r);
+                    self.take_at_path(&mut r.fields[k], rest)
+                }
+                Value::Struct(_) | Value::Obj(_) => {
+                    let attrs = match cur {
+                        Value::Struct(s) => &s.attrs,
+                        Value::Obj(o) => &o.attrs,
+                        _ => unreachable!(),
+                    };
+                    let mut v = attrs.borrow_mut().remove(name).unwrap_or(Value::Undef);
+                    let r = self.take_at_path(&mut v, rest);
+                    if !rest.is_empty() {
+                        attrs.borrow_mut().insert(*name, v);
+                    }
+                    r
+                }
+                other => Err(RuntimeError::runtime(format!("Objects of type {} do not have attributes", self.type_name(other)))),
+            },
+        }
+    }
+
+    // ----- places ---------------------------------------------------------
+
+    pub fn take_place(&mut self, p: Place, f: &mut Frame) -> Value {
+        match p {
+            Place::Local(s, _) => std::mem::take(&mut f.slots[s as usize]),
+            Place::Global(n) => {
+                if let Some(pkg) = self.package_stack.last_mut() {
+                    if let Some(v) = pkg.get_mut(&n) {
+                        return std::mem::take(v);
+                    }
+                    return Value::Undef;
+                }
+                match self.globals.get_mut(&n) {
+                    Some(v) => std::mem::take(v),
+                    None => Value::Undef,
+                }
+            }
+        }
+    }
+
+    pub fn put_place(&mut self, p: Place, v: Value, f: &mut Frame) {
+        if let Value::Struct(st) = &v {
+            if matches!(st.kind, StructKind::RecFormat(_) | StructKind::Coproduct(_) | StructKind::Cartesian(_)) && st.name.borrow().is_none() {
+                *st.name.borrow_mut() = Some(p.name());
+            }
+        }
+        match p {
+            Place::Local(s, _) => f.slots[s as usize] = v,
+            Place::Global(n) => self.set_global(n, v),
+        }
+    }
+
+    pub fn assign_place(&mut self, p: Place, v: Value, f: &mut Frame) -> RResult<()> {
+        self.put_place(p, v, f);
+        Ok(())
+    }
+
+    fn read_place(&mut self, p: Place, f: &mut Frame) -> RResult<Value> {
+        let v = match p {
+            Place::Local(s, _) => f.get(s).clone(),
+            Place::Global(n) => self.lookup_variable(n).unwrap_or(Value::Undef),
+        };
+        if v.is_undef() {
+            return Err(RuntimeError::user(format!("Identifier '{}' has not been assigned", p.name())));
+        }
+        Ok(v)
+    }
+
+    // ----- l-values -------------------------------------------------------
+
+    /// Flatten an l-value into its root place and the path below it.
+    fn lv_path(&mut self, lv: &LV, f: &mut Frame, path: &mut Vec<PathElem>) -> RResult<Option<Place>> {
+        match lv {
+            LV::Var(p, _) => Ok(Some(*p)),
+            LV::Discard => Ok(None),
+            LV::Index(b, idx, _) => {
+                let root = self.lv_path(b, f, path)?;
+                for i in idx {
+                    let v = self.eval(i, f)?;
+                    path.push(PathElem::Index(v));
+                }
+                Ok(root)
+            }
+            LV::Attr(b, n, _) => {
+                let root = self.lv_path(b, f, path)?;
+                path.push(PathElem::Attr(*n));
+                Ok(root)
+            }
+            LV::AttrDyn(b, e, _) => {
+                let root = self.lv_path(b, f, path)?;
+                let Value::Str(s) = self.eval(e, f)? else {
+                    return Err(RuntimeError::runtime("Attribute name must be a string"));
+                };
+                path.push(PathElem::Attr(Sym::new(&s)));
+                Ok(root)
+            }
+        }
+    }
+
+    pub fn assign(&mut self, lv: &LV, v: Value, f: &mut Frame) -> RResult<()> {
+        if let LV::Var(p, _) = lv {
+            return self.assign_place(*p, v, f);
+        }
+        let mut path = Vec::new();
+        let Some(root) = self.lv_path(lv, f, &mut path)? else {
+            return Ok(());
+        };
+        let mut cur = self.take_place(root, f);
+        if cur.is_undef() && !path.is_empty() {
+            return Err(RuntimeError::user(format!("Identifier '{}' has not been assigned", root.name())));
+        }
+        let r = self.set_path(&mut cur, &path, v);
+        self.put_place(root, cur, f);
+        r
+    }
+
+    /// Make the target of an assignment unassigned (for `_` results).
+    pub fn unassign(&mut self, lv: &LV, f: &mut Frame) -> RResult<()> {
+        match lv {
+            LV::Var(p, _) => {
+                self.put_place(*p, Value::Undef, f);
+                Ok(())
+            }
+            LV::Discard => Ok(()),
+            _ => Err(RuntimeError::runtime("Right hand side value is undefined")),
+        }
+    }
+
+    fn set_path(&mut self, cur: &mut Value, path: &[PathElem], v: Value) -> RResult<()> {
+        let Some((first, rest)) = path.split_first() else {
+            *cur = v;
+            return Ok(());
+        };
+        let last = rest.is_empty();
+        match first {
+            PathElem::Index(i) => self.set_index(cur, i, rest, v, last),
+            PathElem::Attr(name) => self.set_attr(cur, *name, rest, v),
+        }
+    }
+
+    fn set_index(&mut self, cur: &mut Value, i: &Value, rest: &[PathElem], v: Value, last: bool) -> RResult<()> {
+        match cur {
+            Value::Seq(s) => {
+                let k = seq_index(i, "Sequence")?;
+                if last {
+                    let v = match &s.universe {
+                        Some(u) => {
+                            let u = u.clone();
+                            self.coerce_into_universe(&u, &v).map_err(|_| RuntimeError::runtime("Sequence mutation failed").in_context("[]:="))?
+                        }
+                        None => v,
+                    };
+                    let s = Rc::make_mut(s);
+                    if s.universe.is_none() {
+                        s.universe = Some(self.parent_of(&v)?);
+                    }
+                    if k > s.elems.len() {
+                        s.elems.resize(k, Value::Undef);
+                    }
+                    s.elems[k - 1] = v;
+                    return Ok(());
+                }
+                let s = Rc::make_mut(s);
+                if k > s.elems.len() || s.elems[k - 1].is_undef() {
+                    return Err(RuntimeError::runtime("Bad indexed assign").in_context("[]:="));
+                }
+                let mut inner = std::mem::take(&mut s.elems[k - 1]);
+                let r = self.set_path(&mut inner, rest, v);
+                s.elems[k - 1] = inner;
+                r
+            }
+            Value::List(l) => {
+                let k = seq_index(i, "List")?;
+                let l = Rc::make_mut(l);
+                if last {
+                    if k > l.len() + 1 {
+                        return Err(RuntimeError::runtime("List index out of range").in_context("[]:="));
+                    }
+                    if k == l.len() + 1 {
+                        l.push(v);
+                    } else {
+                        l[k - 1] = v;
+                    }
+                    return Ok(());
+                }
+                if k > l.len() {
+                    return Err(RuntimeError::runtime("List index out of range").in_context("[]:="));
+                }
+                let mut inner = std::mem::take(&mut l[k - 1]);
+                let r = self.set_path(&mut inner, rest, v);
+                l[k - 1] = inner;
+                r
+            }
+            Value::Tuple(t) => {
+                let k = seq_index(i, "Tuple")?;
+                if k > t.elems.len() {
+                    return Err(RuntimeError::runtime(format!("Tuple index {k} is out of range")).in_context("[]:="));
+                }
+                let t = Rc::make_mut(t);
+                if last {
+                    let v = match &t.parent {
+                        Some(Value::Struct(p)) => match &p.kind {
+                            StructKind::Cartesian(parts) => {
+                                let u = parts[k - 1].clone();
+                                self.coerce(&u, &v)?
+                            }
+                            _ => v,
+                        },
+                        _ => {
+                            t.parent = None;
+                            v
+                        }
+                    };
+                    t.elems[k - 1] = v;
+                    return Ok(());
+                }
+                let mut inner = std::mem::take(&mut t.elems[k - 1]);
+                let r = self.set_path(&mut inner, rest, v);
+                t.elems[k - 1] = inner;
+                t.parent = None;
+                r
+            }
+            Value::Assoc(a) => {
+                let key = self.assoc_key(a, i)?;
+                let a = Rc::make_mut(a);
+                if last {
+                    a.map.insert(key, v);
+                    return Ok(());
+                }
+                if !a.map.contains_key(&key) {
+                    match &a.default {
+                        Some(d) => {
+                            a.map.insert(key.clone(), d.clone());
+                        }
+                        None => return Err(RuntimeError::runtime("Index is not in the domain of the associative array").in_context("[]:=")),
+                    }
+                }
+                let slot = a.map.get_mut(&key).unwrap();
+                let mut inner = std::mem::take(slot);
+                let r = self.set_path(&mut inner, rest, v);
+                *a.map.get_mut(&key).unwrap() = inner;
+                r
+            }
+            Value::ISet(_) => Err(RuntimeError::runtime("Indexed sets cannot be modified by indexing").in_context("[]:=")),
+            Value::Str(_) => Err(RuntimeError::runtime("Strings cannot be modified by indexing").in_context("[]:=")),
+            other => Err(RuntimeError::runtime(format!("Cannot assign by index into an object of type {}", self.type_name(other))).in_context("[]:=")),
+        }
+    }
+
+    /// Coerce a key into the index universe of an associative array,
+    /// widening the universe (and re-coercing existing keys) if needed.
+    fn assoc_key(&mut self, a: &mut Rc<Assoc>, i: &Value) -> RResult<Value> {
+        let Some(u) = a.universe.clone() else {
+            let p = self.parent_of(i)?;
+            Rc::make_mut(a).universe = Some(p);
+            return Ok(i.clone());
+        };
+        if let Some(k) = self.try_coerce_into_universe(&u, i)? {
+            return Ok(k);
+        }
+        let p = self.parent_of(i)?;
+        // Without a common universe the array accepts keys of any kind.
+        let w = self.common_universe(&u, &p).unwrap_or_else(|| Value::structure(StructKind::PowerStructure(crate::types::t::ANY)));
+        let old: Vec<(Value, Value)> = a.map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        let mut map = VMap::default();
+        for (k, v) in old {
+            map.insert(self.coerce_into_universe(&w, &k)?, v);
+        }
+        let m = Rc::make_mut(a);
+        m.map = map;
+        m.universe = Some(w.clone());
+        self.coerce_into_universe(&w, i)
+    }
+
+    fn set_attr(&mut self, cur: &mut Value, name: Sym, rest: &[PathElem], v: Value) -> RResult<()> {
+        match cur {
+            Value::Rec(r) => {
+                let fmt = r.format.clone();
+                let StructKind::RecFormat(rf) = &fmt.kind else { unreachable!() };
+                let Some(k) = rf.names.iter().position(|n| *n == name) else {
+                    return Err(RuntimeError::runtime(format!("Field '{name}' does not exist in this record")).in_context("`"));
+                };
+                let r = Rc::make_mut(r);
+                if rest.is_empty() {
+                    let v = match &rf.types[k] {
+                        Some(t) => self.coerce_field(t, v).map_err(|e| e.in_context(format!("`{name}")))?,
+                        None => v,
+                    };
+                    r.fields[k] = v;
+                    return Ok(());
+                }
+                if r.fields[k].is_undef() {
+                    return Err(RuntimeError::runtime(format!("Field '{name}' is not assigned")));
+                }
+                let mut inner = std::mem::take(&mut r.fields[k]);
+                let res = self.set_path(&mut inner, rest, v);
+                r.fields[k] = inner;
+                res
+            }
+            Value::Struct(_) | Value::Obj(_) => {
+                self.check_attr_valid(cur, name)?;
+                let attrs = match cur {
+                    Value::Struct(s) => &s.attrs,
+                    Value::Obj(o) => &o.attrs,
+                    _ => unreachable!(),
+                };
+                if rest.is_empty() {
+                    attrs.borrow_mut().insert(name, v);
+                    return Ok(());
+                }
+                let mut inner = attrs.borrow_mut().remove(&name).unwrap_or(Value::Undef);
+                if inner.is_undef() {
+                    return Err(RuntimeError::runtime(format!("Attribute '{name}' is not assigned")));
+                }
+                let res = self.set_path(&mut inner, rest, v);
+                attrs.borrow_mut().insert(name, inner);
+                res
+            }
+            Value::Err(e) => {
+                let e = Rc::make_mut(e);
+                match &*name.as_rc() {
+                    "Object" => e.object = v,
+                    "Position" => e.position = Some(Rc::from(self.to_string_default(&v)?.as_str())),
+                    "Traceback" => e.traceback = Some(Rc::from(self.to_string_default(&v)?.as_str())),
+                    "Type" => e.kind = Rc::from(self.to_string_default(&v)?.as_str()),
+                    _ => return Err(RuntimeError::runtime(format!("'{name}' is not an attribute of error objects"))),
+                }
+                Ok(())
+            }
+            other => Err(RuntimeError::runtime(format!("Objects of type {} do not have attributes", self.type_name(other)))),
+        }
+    }
+
+    fn check_attr_valid(&self, v: &Value, name: Sym) -> RResult<()> {
+        let t = v.type_id();
+        if self.types.has_attribute(t, name) {
+            return Ok(());
+        }
+        Err(RuntimeError::runtime(format!("'{name}' is not a valid attribute of objects of type {}", self.types.name(t))))
+    }
+
+    pub fn get_attr(&mut self, v: &Value, name: Sym) -> RResult<Value> {
+        match v {
+            Value::Rec(r) => {
+                let StructKind::RecFormat(rf) = &r.format.kind else { unreachable!() };
+                let Some(k) = rf.names.iter().position(|n| *n == name) else {
+                    return Err(RuntimeError::runtime(format!("Field '{name}' does not exist in this record")).in_context("`"));
+                };
+                let x = &r.fields[k];
+                if x.is_undef() {
+                    return Err(RuntimeError::runtime(format!("Field '{name}' of this record is not assigned")).in_context("`"));
+                }
+                Ok(x.clone())
+            }
+            Value::Err(e) => match &*name.as_rc() {
+                "Object" => Ok(e.object.clone()),
+                "Type" => Ok(Value::Str(e.kind.clone())),
+                "Position" => e.position.clone().map(Value::Str).ok_or_else(|| RuntimeError::runtime("Attribute 'Position' is not assigned")),
+                "Traceback" => e.traceback.clone().map(Value::Str).ok_or_else(|| RuntimeError::runtime("Attribute 'Traceback' is not assigned")),
+                _ => Err(RuntimeError::runtime(format!("'{name}' is not an attribute of error objects"))),
+            },
+            Value::Struct(s) => {
+                if let Some(x) = s.attrs.borrow().get(&name) {
+                    return Ok(x.clone());
+                }
+                self.check_attr_valid(v, name)?;
+                Err(RuntimeError::runtime(format!("Attribute '{name}' for this structure is valid but not assigned")))
+            }
+            Value::Obj(o) => {
+                if let Some(x) = o.attrs.borrow().get(&name) {
+                    return Ok(x.clone());
+                }
+                self.check_attr_valid(v, name)?;
+                Err(RuntimeError::runtime(format!("Attribute '{name}' for this object is valid but not assigned")))
+            }
+            other => Err(RuntimeError::runtime(format!("Objects of type {} do not have attributes", self.type_name(other)))),
+        }
+    }
+
+    pub fn attr_assigned(&mut self, v: &Value, name: Sym) -> RResult<bool> {
+        match v {
+            Value::Rec(r) => {
+                let StructKind::RecFormat(rf) = &r.format.kind else { unreachable!() };
+                let Some(k) = rf.names.iter().position(|n| *n == name) else {
+                    return Err(RuntimeError::runtime(format!("Field '{name}' does not exist in this record")).in_context("`"));
+                };
+                Ok(!r.fields[k].is_undef())
+            }
+            Value::Err(e) => Ok(match &*name.as_rc() {
+                "Object" | "Type" => true,
+                "Position" => e.position.is_some(),
+                "Traceback" => e.traceback.is_some(),
+                _ => false,
+            }),
+            Value::Struct(s) => {
+                if s.attrs.borrow().contains_key(&name) {
+                    return Ok(true);
+                }
+                self.check_attr_valid(v, name)?;
+                Ok(false)
+            }
+            Value::Obj(o) => {
+                if o.attrs.borrow().contains_key(&name) {
+                    return Ok(true);
+                }
+                self.check_attr_valid(v, name)?;
+                Ok(false)
+            }
+            other => Err(RuntimeError::runtime(format!("Objects of type {} do not have attributes", self.type_name(other)))),
+        }
+    }
+
+    pub fn delete(&mut self, lv: &LV, f: &mut Frame) -> RResult<()> {
+        match lv {
+            LV::Var(p, _) => {
+                self.put_place(*p, Value::Undef, f);
+                // A deleted global identifier is no longer declared.
+                if let Place::Global(name) = p {
+                    self.globals.remove(name);
+                }
+                Ok(())
+            }
+            LV::Discard => Ok(()),
+            LV::Attr(..) | LV::AttrDyn(..) => {
+                let mut path = Vec::new();
+                let Some(root) = self.lv_path(lv, f, &mut path)? else { return Ok(()) };
+                let Some(PathElem::Attr(name)) = path.pop() else { unreachable!() };
+                let mut cur = self.take_place(root, f);
+                let r = self.delete_attr_at(&mut cur, &path, name);
+                self.put_place(root, cur, f);
+                r
+            }
+            _ => Err(RuntimeError::runtime("Only identifiers and attributes can be deleted")),
+        }
+    }
+
+    fn delete_attr_at(&mut self, cur: &mut Value, path: &[PathElem], name: Sym) -> RResult<()> {
+        if !path.is_empty() {
+            return Err(RuntimeError::runtime("Cannot delete a nested attribute"));
+        }
+        match cur {
+            Value::Rec(r) => {
+                let StructKind::RecFormat(rf) = &r.format.kind else { unreachable!() };
+                let Some(k) = rf.names.iter().position(|n| *n == name) else {
+                    return Err(RuntimeError::runtime(format!("Field '{name}' does not exist in this record")).in_context("`"));
+                };
+                Rc::make_mut(r).fields[k] = Value::Undef;
+                Ok(())
+            }
+            Value::Struct(s) => {
+                s.attrs.borrow_mut().remove(&name);
+                Ok(())
+            }
+            Value::Obj(o) => {
+                o.attrs.borrow_mut().remove(&name);
+                Ok(())
+            }
+            other => Err(RuntimeError::runtime(format!("Objects of type {} do not have attributes", self.type_name(other)))),
+        }
+    }
+
+    // ----- mutation assignment --------------------------------------------
+
+    pub fn op_assign(&mut self, lv: &LV, op: BinOp, rhs: Value, f: &mut Frame) -> RResult<()> {
+        match lv {
+            LV::Var(p, _) => {
+                let mut cur = self.take_place(*p, f);
+                if cur.is_undef() {
+                    return Err(RuntimeError::user(format!("Identifier '{}' has not been assigned", p.name())));
+                }
+                let r = self.binop_assign(op, &mut cur, rhs);
+                self.put_place(*p, cur, f);
+                r
+            }
+            LV::Discard => Err(RuntimeError::runtime("Cannot apply a mutation assignment to '_'")),
+            _ => {
+                let mut path = Vec::new();
+                let Some(root) = self.lv_path(lv, f, &mut path)? else { return Ok(()) };
+                let base = self.read_place(root, f)?;
+                let mut cur = base;
+                for step in &path {
+                    cur = match step {
+                        PathElem::Index(i) => self.index_one(cur, i)?,
+                        PathElem::Attr(n) => self.get_attr(&cur, *n)?,
+                    };
+                }
+                let newv = self.binop(op, cur, rhs)?;
+                let mut root_val = self.take_place(root, f);
+                let r = self.set_path(&mut root_val, &path, newv);
+                self.put_place(root, root_val, f);
+                r
+            }
+        }
+    }
+
+    pub fn gen_assign(&mut self, target: &LV, names: &GenNamesEx, v: Value, f: &mut Frame) -> RResult<()> {
+        let strs: Vec<String> = match names {
+            GenNamesEx::List(ps) => ps.iter().map(|(p, _)| p.name().to_string()).collect(),
+            GenNamesEx::Seq(p, _) => {
+                let n = self.num_generators(&v)?;
+                (1..=n).map(|i| format!("{}[{i}]", p.name())).collect()
+            }
+        };
+        let v = self.assign_generator_names(v, &strs)?;
+        self.assign(target, v.clone(), f)?;
+        match names {
+            GenNamesEx::List(ps) => {
+                for (i, (p, _)) in ps.iter().enumerate() {
+                    let g = self.generator(&v, i + 1)?;
+                    self.assign_place(*p, g, f)?;
+                }
+            }
+            GenNamesEx::Seq(p, _) => {
+                let n = self.num_generators(&v)?;
+                let mut gens = Vec::new();
+                for i in 1..=n {
+                    gens.push(self.generator(&v, i)?);
+                }
+                let u = Some(v.clone());
+                self.assign_place(*p, Value::seq(u, gens), f)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn num_generators(&mut self, v: &Value) -> RResult<usize> {
+        let n = self.call_intrinsic_named(Sym::new("Ngens"), vec![v.clone()])?;
+        match n {
+            Value::Int(i) => Ok(i.to_u64().unwrap_or(0) as usize),
+            _ => Err(RuntimeError::runtime("Ngens must return an integer")),
+        }
+    }
+
+    pub fn generator(&mut self, v: &Value, i: usize) -> RResult<Value> {
+        self.call_intrinsic_named(Sym::new("."), vec![v.clone(), Value::int(i as i64)])
+    }
+
+    fn assign_generator_names(&mut self, v: Value, names: &[String]) -> RResult<Value> {
+        let seq = Value::seq(Some(Value::strings()), names.iter().map(|s| Value::str(s)).collect());
+        let sym = Sym::new("AssignNames");
+        if self.intrinsics.contains(sym) {
+            let mut args = vec![v, seq];
+            let mask = [true, false];
+            match self.select_signature(sym, &args, &mask, true) {
+                Some(_) => {
+                    self.call_intrinsic(sym, &mut args, &mask, Vec::new(), 0, true, calyx_syntax::Span::default())?;
+                    return Ok(std::mem::take(&mut args[0]));
+                }
+                None => return Ok(std::mem::take(&mut args[0])),
+            }
+        }
+        Ok(v)
+    }
+
+    // ----- reading by index -----------------------------------------------
+
+    pub fn index_multi(&mut self, mut base: Value, ids: &[Value]) -> RResult<Value> {
+        for i in ids {
+            base = self.index_one(base, i)?;
+        }
+        Ok(base)
+    }
+
+    pub fn index_one(&mut self, base: Value, i: &Value) -> RResult<Value> {
+        let ctx = "[]";
+        match &base {
+            Value::Seq(s) => {
+                if let Value::Seq(ix) = i {
+                    let mut out = Vec::with_capacity(ix.elems.len());
+                    for k in &ix.elems {
+                        let k = seq_index(k, "Sequence").map_err(|e| e.in_context(ctx))?;
+                        match s.elems.get(k - 1) {
+                            Some(v) if !v.is_undef() => out.push(v.clone()),
+                            _ => return Err(RuntimeError::runtime(format!("Sequence element {k} is not defined")).in_context(ctx)),
+                        }
+                    }
+                    return Ok(Value::seq(s.universe.clone(), out));
+                }
+                if let Value::Int(k) = i {
+                    let in_range = k.to_i64().is_some_and(|k| k >= 1 && (k as usize) <= s.elems.len());
+                    if !in_range {
+                        return Err(RuntimeError::runtime(format!("Sequence index {k} should be in the range 1 to {}", s.elems.len())).in_context(ctx));
+                    }
+                }
+                let k = seq_index(i, "Sequence").map_err(|e| e.in_context(ctx))?;
+                match s.elems.get(k - 1) {
+                    Some(v) if !v.is_undef() => Ok(v.clone()),
+                    _ => Err(RuntimeError::runtime(format!("Sequence element {k} not defined")).in_context(ctx)),
+                }
+            }
+            Value::List(l) => {
+                if let Value::Seq(ix) = i {
+                    let mut out = Vec::new();
+                    for k in &ix.elems {
+                        let k = seq_index(k, "List").map_err(|e| e.in_context(ctx))?;
+                        out.push(l.get(k - 1).cloned().ok_or_else(|| RuntimeError::runtime(format!("List index {k} is out of range")).in_context(ctx))?);
+                    }
+                    return Ok(Value::list(out));
+                }
+                let k = seq_index(i, "List").map_err(|e| e.in_context(ctx))?;
+                l.get(k - 1).cloned().ok_or_else(|| RuntimeError::runtime(format!("List index {k} is out of range")).in_context(ctx))
+            }
+            Value::Tuple(t) => {
+                let k = seq_index(i, "Tuple").map_err(|e| e.in_context(ctx))?;
+                t.elems.get(k - 1).cloned().ok_or_else(|| RuntimeError::runtime(format!("Tuple index {k} is out of range")).in_context(ctx))
+            }
+            Value::ISet(s) => {
+                if let Value::Seq(ix) = i {
+                    let mut out = VSet::default();
+                    for k in &ix.elems {
+                        let k = seq_index(k, "Indexed set").map_err(|e| e.in_context(ctx))?;
+                        out.insert(s.elems.get_index(k - 1).cloned().ok_or_else(|| RuntimeError::runtime(format!("Index {k} is out of range")).in_context(ctx))?);
+                    }
+                    return Ok(Value::ISet(Rc::new(SetIndx { universe: s.universe.clone(), elems: out })));
+                }
+                let k = seq_index(i, "Indexed set").map_err(|e| e.in_context(ctx))?;
+                s.elems.get_index(k - 1).cloned().ok_or_else(|| RuntimeError::runtime(format!("Index {k} is out of range")).in_context(ctx))
+            }
+            Value::Str(s) => {
+                let k = seq_index(i, "String").map_err(|e| e.in_context(ctx))?;
+                s.chars().nth(k - 1).map(|c| Value::str(&c.to_string())).ok_or_else(|| RuntimeError::runtime(format!("String index {k} is out of range")).in_context(ctx))
+            }
+            Value::Assoc(a) => {
+                let key = match &a.universe {
+                    Some(u) => {
+                        let u = u.clone();
+                        match self.try_coerce_into_universe(&u, i)? {
+                            Some(k) => k,
+                            None => return Err(RuntimeError::runtime("Index is not in the universe of the associative array").in_context(ctx)),
+                        }
+                    }
+                    None => i.clone(),
+                };
+                match a.map.get(&key) {
+                    Some(v) => Ok(v.clone()),
+                    None => a.default.clone().ok_or_else(|| RuntimeError::runtime("Value for given index is not set").in_context(ctx)),
+                }
+            }
+            Value::ECat(tv) => {
+                let k = seq_index(i, "Extended type").map_err(|e| e.in_context(ctx))?;
+                match tv.args().get(k - 1) {
+                    Some(crate::types::TypeArg::Type(t)) => Ok(Value::ECat(Rc::new(t.clone()))),
+                    Some(crate::types::TypeArg::Str(s)) => Ok(Value::Str(s.clone())),
+                    None => Err(RuntimeError::runtime(format!("Extended type index {k} is out of range")).in_context(ctx)),
+                }
+            }
+            Value::Rec(_) => Err(RuntimeError::runtime("Records are accessed with ` not []").in_context(ctx)),
+            Value::Struct(st) if matches!(st.kind, StructKind::Cartesian(_) | StructKind::Coproduct(_)) => {
+                let (StructKind::Cartesian(parts) | StructKind::Coproduct(parts)) = &st.kind else { unreachable!() };
+                let k = seq_index(i, "Component").map_err(|e| e.in_context(ctx))?;
+                parts.get(k - 1).cloned().ok_or_else(|| RuntimeError::runtime(format!("Component {k} is out of range")).in_context(ctx))
+            }
+            _ => {
+                if let Some(v) = self.dispatch_user_operator("[]", vec![base.clone(), i.clone()])? {
+                    return Ok(v);
+                }
+                let t1 = self.type_name(&base);
+                let t2 = self.type_name(i);
+                Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {t1}, {t2}")).in_context(ctx))
+            }
+        }
+    }
+}
+
+/// A positive index as `usize`, with a helpful error otherwise.
+pub fn seq_index(i: &Value, what: &str) -> RResult<usize> {
+    let n = match i {
+        Value::Int(n) => n.clone(),
+        Value::Rat(q) if q.is_integral() => q.numerator(),
+        _ => return Err(RuntimeError::runtime(format!("{what} index must be an integer"))),
+    };
+    if n.sign() <= 0 {
+        return Err(RuntimeError::runtime(format!("{what} index must be positive (got {n})")));
+    }
+    n.to_u64().filter(|&k| k < (1 << 40)).map(|k| k as usize).ok_or_else(|| RuntimeError::runtime(format!("{what} index {n} is too large")))
+}
+
+#[allow(dead_code)]
+fn int_value(i: i64) -> Value {
+    Value::Int(Integer::from_i64(i))
+}

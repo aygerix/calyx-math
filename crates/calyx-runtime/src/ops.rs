@@ -1,0 +1,954 @@
+//! Operators on built-in values.
+
+use std::cmp::Ordering;
+use std::rc::Rc;
+
+use calyx_flint::{Integer, Rational};
+use calyx_syntax::ast::BinOp;
+
+use crate::error::{RResult, RuntimeError};
+use crate::interp::Interp;
+use crate::value::*;
+
+fn rat_of(v: &Value) -> Option<Rational> {
+    match v {
+        Value::Int(i) => Some(Rational::from_integer(i)),
+        Value::Rat(q) => Some((**q).clone()),
+        _ => None,
+    }
+}
+
+fn is_num(v: &Value) -> bool {
+    matches!(v, Value::Int(_) | Value::Rat(_))
+}
+
+fn is_real_mix(a: &Value, b: &Value) -> bool {
+    (matches!(a, Value::Real(_)) || matches!(b, Value::Real(_))) && matches!(a, Value::Int(_) | Value::Rat(_) | Value::Real(_)) && matches!(b, Value::Int(_) | Value::Rat(_) | Value::Real(_))
+}
+
+/// Both operands as reals of the smaller precision, with that precision.
+fn reals_of(a: &Value, b: &Value) -> (calyx_flint::Real, calyx_flint::Real, u32, Option<u32>) {
+    let digits = |v: &Value| match v {
+        Value::Real(r) => Some(r.digits),
+        _ => None,
+    };
+    let fixed = |v: &Value| match v {
+        Value::Real(r) => r.fixed,
+        _ => None,
+    };
+    let d = match (digits(a), digits(b)) {
+        (Some(x), Some(y)) => x.min(y),
+        (Some(x), None) | (None, Some(x)) => x,
+        _ => crate::intrinsics::reals::DEFAULT_DIGITS,
+    };
+    let bits = calyx_flint::bits_for_digits(d as u64);
+    let conv = |v: &Value| match v {
+        Value::Int(i) => calyx_flint::Real::from_integer(i, bits),
+        Value::Rat(q) => calyx_flint::Real::from_rational(q, bits),
+        Value::Real(r) => r.x.clone(),
+        _ => unreachable!(),
+    };
+    let fx = match (fixed(a), fixed(b)) {
+        (Some(x), Some(y)) => Some(x.min(y)),
+        (Some(x), None) | (None, Some(x)) => Some(x),
+        _ => None,
+    };
+    (conv(a), conv(b), d, fx)
+}
+
+fn real_value(x: calyx_flint::Real, digits: u32, fixed: Option<u32>) -> Value {
+    Value::Real(Rc::new(RealV { x, digits, fixed }))
+}
+
+pub fn div_by_zero() -> RuntimeError {
+    RuntimeError::runtime("Division by zero")
+}
+
+impl Interp {
+    fn bad_types(&self, op: BinOp, a: &Value, b: &Value) -> RuntimeError {
+        let e = RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}, {}", self.type_name_ext(a), self.type_name_ext(b)));
+        // Inside user functions Magma does not name the operator.
+        if self.depth > 0 { e } else { e.in_context(op.intrinsic_name()) }
+    }
+
+    /// Apply a binary operator (not `and`/`or`, which short-circuit).
+    pub fn binop(&mut self, op: BinOp, a: Value, b: Value) -> RResult<Value> {
+        // Fast path for small integers.
+        if let (Value::Int(x), Value::Int(y)) = (&a, &b) {
+            match op {
+                BinOp::Add => return Ok(Value::Int(x + y)),
+                BinOp::Sub => return Ok(Value::Int(x - y)),
+                BinOp::Mul => return Ok(Value::Int(x * y)),
+                BinOp::Eq => return Ok(Value::Bool(x == y)),
+                BinOp::Ne => return Ok(Value::Bool(x != y)),
+                BinOp::Lt => return Ok(Value::Bool(x < y)),
+                BinOp::Le => return Ok(Value::Bool(x <= y)),
+                BinOp::Gt => return Ok(Value::Bool(x > y)),
+                BinOp::Ge => return Ok(Value::Bool(x >= y)),
+                _ => {}
+            }
+        }
+        let ring_result = if matches!(a, Value::Elt(_)) || matches!(b, Value::Elt(_)) { self.ring_binop(op, &a, &b)? } else { None };
+        let builtin = match ring_result {
+            Some(v) => Some(v),
+            None => self.builtin_binop(op, &a, &b)?,
+        };
+        match builtin {
+            Some(v) => Ok(v),
+            None => {
+                if let Some(v) = self.dispatch_user_operator(op.intrinsic_name(), vec![a.clone(), b.clone()])? {
+                    return Ok(v);
+                }
+                // `ne`/`cmpne` default to the negation of a user `eq`.
+                if matches!(op, BinOp::Ne | BinOp::Cmpne) {
+                    if let Some(Value::Bool(e)) = self.dispatch_user_operator("eq", vec![a.clone(), b.clone()])? {
+                        return Ok(Value::Bool(!e));
+                    }
+                }
+                // Objects of user types without an 'eq' compare by identity.
+                if matches!(op, BinOp::Eq | BinOp::Ne | BinOp::Cmpeq | BinOp::Cmpne) && matches!((&a, &b), (Value::Obj(_), Value::Obj(_))) {
+                    let same = a == b;
+                    return Ok(Value::Bool(if matches!(op, BinOp::Eq | BinOp::Cmpeq) { same } else { !same }));
+                }
+                if matches!(op, BinOp::Cmpeq | BinOp::Cmpne) {
+                    return Ok(Value::Bool(op == BinOp::Cmpne));
+                }
+                Err(self.bad_types(op, &a, &b))
+            }
+        }
+    }
+
+    /// `x o:= y`, modifying `x` in place where possible.
+    pub fn binop_assign(&mut self, op: BinOp, x: &mut Value, y: Value) -> RResult<()> {
+        match (op, &mut *x, &y) {
+            (BinOp::Add, Value::Int(a), Value::Int(b)) => {
+                *a += b;
+                return Ok(());
+            }
+            (BinOp::Sub, Value::Int(a), Value::Int(b)) => {
+                *a -= b;
+                return Ok(());
+            }
+            (BinOp::Mul, Value::Int(a), Value::Int(b)) => {
+                *a *= b;
+                return Ok(());
+            }
+            (BinOp::Cat, Value::Seq(s), Value::Seq(t)) if s.universe.is_some() && s.universe == t.universe => {
+                Rc::make_mut(s).elems.extend(t.elems.iter().cloned());
+                return Ok(());
+            }
+            (BinOp::Cat, Value::List(s), Value::List(t)) => {
+                Rc::make_mut(s).extend(t.iter().cloned());
+                return Ok(());
+            }
+            (BinOp::Join, Value::Set(s), Value::Set(t)) if s.universe.is_some() && s.universe == t.universe => {
+                let dst = Rc::make_mut(s).elems_mut();
+                for e in t.iter() {
+                    dst.insert(e);
+                }
+                return Ok(());
+            }
+            (BinOp::Cat, Value::Str(s), Value::Str(t)) => {
+                let mut n = String::with_capacity(s.len() + t.len());
+                n.push_str(s);
+                n.push_str(t);
+                *s = Rc::from(n);
+                return Ok(());
+            }
+            _ => {}
+        }
+        let cur = x.clone();
+        *x = self.binop(op, cur, y)?;
+        Ok(())
+    }
+
+    fn builtin_binop(&mut self, op: BinOp, a: &Value, b: &Value) -> RResult<Option<Value>> {
+        use BinOp::*;
+        use Value::{Bool, Int, List, Seq, Str};
+        Ok(Some(match op {
+            Add | Sub | Mul | Div if is_real_mix(a, b) => {
+                let (x, y, d, fx) = reals_of(a, b);
+                real_value(
+                    match op {
+                        Add => x.add(&y),
+                        Sub => x.sub(&y),
+                        Mul => x.mul(&y),
+                        _ => x.div(&y).ok_or_else(|| div_by_zero().in_context("/"))?,
+                    },
+                    d,
+                    fx,
+                )
+            }
+            Add | Sub | Mul => match (a, b) {
+                (Int(x), Int(y)) => Int(match op {
+                    Add => x + y,
+                    Sub => x - y,
+                    _ => x * y,
+                }),
+                _ if is_num(a) && is_num(b) => {
+                    let (x, y) = (rat_of(a).unwrap(), rat_of(b).unwrap());
+                    Value::rat(match op {
+                        Add => &x + &y,
+                        Sub => &x - &y,
+                        _ => &x * &y,
+                    })
+                }
+                (Str(x), Str(y)) if op == Mul => Value::str(&format!("{x}{y}")),
+                (Value::Map(f), Value::Map(g)) if op == Mul => {
+                    let mut parts = Vec::new();
+                    for m in [f, g] {
+                        match &m.imp {
+                            MapImpl::Compose(ms) => parts.extend(ms.iter().cloned()),
+                            _ => parts.push(m.clone()),
+                        }
+                    }
+                    Value::Map(Rc::new(MapObj { kind: f.kind, domain: f.domain.clone(), codomain: g.codomain.clone(), imp: MapImpl::Compose(parts) }))
+                }
+                _ => return Ok(None),
+            },
+            Div => match (a, b) {
+                _ if is_num(a) && is_num(b) => {
+                    let (x, y) = (rat_of(a).unwrap(), rat_of(b).unwrap());
+                    Value::rat(x.checked_div(&y).ok_or_else(|| div_by_zero().in_context("/"))?)
+                }
+                _ => return Ok(None),
+            },
+            IntDiv | Mod => match (a, b) {
+                (Int(x), Int(y)) => {
+                    let (q, r) = x.div_rem_euclid(y).ok_or_else(|| div_by_zero().in_context(op.intrinsic_name()))?;
+                    Int(if op == IntDiv { q } else { r })
+                }
+                _ if is_num(a) && is_num(b) => {
+                    // Rationals with integral values behave like integers.
+                    let (x, y) = (rat_of(a).unwrap(), rat_of(b).unwrap());
+                    if !x.is_integral() || !y.is_integral() {
+                        return Ok(None);
+                    }
+                    let (q, r) = x.numerator().div_rem_euclid(&y.numerator()).ok_or_else(|| div_by_zero().in_context(op.intrinsic_name()))?;
+                    Int(if op == IntDiv { q } else { r })
+                }
+                _ => return Ok(None),
+            },
+            Pow => return self.power(a, b),
+            Cat => match (a, b) {
+                (Str(x), Str(y)) => Value::str(&format!("{x}{y}")),
+                (Seq(x), Seq(y)) => {
+                    let u = match (&x.universe, &y.universe) {
+                        (None, u) | (u, None) => u.clone(),
+                        (Some(p), Some(q)) => Some(self.common_universe(p, q).ok_or_else(|| RuntimeError::runtime("Incompatible sequences").in_context("cat"))?),
+                    };
+                    let mut elems = Vec::with_capacity(x.elems.len() + y.elems.len());
+                    elems.extend(x.elems.iter().cloned());
+                    elems.extend(y.elems.iter().cloned());
+                    if let Some(u) = &u {
+                        if x.universe.as_ref() != Some(u) || y.universe.as_ref() != Some(u) {
+                            for e in elems.iter_mut() {
+                                if !e.is_undef() {
+                                    *e = self.coerce_into_universe(u, e).map_err(|e| e.in_context("cat"))?;
+                                }
+                            }
+                        }
+                    }
+                    Value::seq(u, elems)
+                }
+                (List(x), List(y)) => {
+                    let mut v = (**x).clone();
+                    v.extend(y.iter().cloned());
+                    Value::list(v)
+                }
+                _ => return Ok(None),
+            },
+            Join | Meet | Diff | Sdiff => return self.set_op(op, a, b),
+            Eq | Ne => {
+                let e = self.compare_eq(a, b, true)?;
+                match e {
+                    Some(e) => Bool(if op == Eq { e } else { !e }),
+                    None => return Ok(None),
+                }
+            }
+            Cmpeq | Cmpne => {
+                let e = self.compare_eq(a, b, false)?;
+                match e {
+                    Some(e) => Bool(if op == Cmpeq { e } else { !e }),
+                    None => return Ok(None),
+                }
+            }
+            Lt | Le | Gt | Ge => match self.compare_ord(a, b)? {
+                Some(o) => Bool(match op {
+                    Lt => o == Ordering::Less,
+                    Le => o != Ordering::Greater,
+                    Gt => o == Ordering::Greater,
+                    _ => o != Ordering::Less,
+                }),
+                None => return Ok(None),
+            },
+            In | Notin => {
+                let c = self.contains(b, a)?;
+                Bool(if op == In { c } else { !c })
+            }
+            Subset | Notsubset => match self.subset(a, b)? {
+                Some(s) => Bool(if op == Subset { s } else { !s }),
+                None => return Ok(None),
+            },
+            And | Or | Xor => match (a, b) {
+                (Bool(x), Bool(y)) => Bool(match op {
+                    And => *x && *y,
+                    Or => *x || *y,
+                    _ => x != y,
+                }),
+                _ => return Ok(None),
+            },
+            Adj | Notadj => return Ok(None),
+        }))
+    }
+
+    fn power(&mut self, a: &Value, b: &Value) -> RResult<Option<Value>> {
+        let Value::Int(e) = b else {
+            return Ok(None);
+        };
+        Ok(Some(match a {
+            Value::Real(r) => {
+                let e = e.to_i64().ok_or_else(|| RuntimeError::runtime("Exponent is too large").in_context("^"))?;
+                Value::Real(Rc::new(RealV { x: r.x.pow(e).ok_or_else(|| div_by_zero().in_context("^"))?, digits: r.digits, fixed: r.fixed }))
+            }
+            Value::Int(x) => {
+                if e.sign() >= 0 {
+                    let e = e.to_u64().ok_or_else(|| RuntimeError::runtime("Exponent is too large").in_context("^"))?;
+                    if x.bits() > 1 && e > (1 << 36) {
+                        return Err(RuntimeError::runtime("Exponent is too large").in_context("^"));
+                    }
+                    Value::Int(x.pow(e))
+                } else {
+                    let q = Rational::from_integer(x);
+                    let e = e.to_i64().ok_or_else(|| RuntimeError::runtime("Exponent is too large").in_context("^"))?;
+                    Value::rat(q.pow(e).ok_or_else(|| div_by_zero().in_context("^"))?)
+                }
+            }
+            Value::Rat(q) => {
+                let e = e.to_i64().ok_or_else(|| RuntimeError::runtime("Exponent is too large").in_context("^"))?;
+                Value::rat(q.pow(e).ok_or_else(|| div_by_zero().in_context("^"))?)
+            }
+            Value::Str(s) => {
+                let n = e.to_u64().ok_or_else(|| RuntimeError::runtime("Exponent must be non-negative").in_context("^"))?;
+                Value::str(&s.repeat(n as usize))
+            }
+            _ => return Ok(None),
+        }))
+    }
+
+    pub fn negate(&mut self, v: Value) -> RResult<Value> {
+        match v {
+            Value::Int(i) => Ok(Value::Int(-i)),
+            Value::Rat(q) => Ok(Value::rat(-&*q)),
+            Value::Real(r) => Ok(Value::Real(Rc::new(RealV { x: r.x.neg(), digits: r.digits, fixed: r.fixed }))),
+            Value::Elt(e) => self.ring_negate(&e),
+            other => self.unary_intrinsic("-", other),
+        }
+    }
+
+    pub fn unary_intrinsic(&mut self, name: &str, v: Value) -> RResult<Value> {
+        if let Some(r) = self.dispatch_user_operator(name, vec![v.clone()])? {
+            return Ok(r);
+        }
+        Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}", self.type_name_ext(&v))).in_context(name))
+    }
+
+    /// `#x`
+    pub fn cardinality(&mut self, v: &Value) -> RResult<Value> {
+        let n = match v {
+            Value::Seq(s) => s.elems.len(),
+            Value::Set(s) => s.len(),
+            Value::ISet(s) => s.elems.len(),
+            Value::MSet(s) => return Ok(Value::Int(Integer::from_u64(s.total()))),
+            Value::Str(s) => s.chars().count(),
+            Value::Tuple(t) => t.elems.len(),
+            Value::List(l) => l.len(),
+            Value::Assoc(a) => a.map.len(),
+            Value::ECat(t) => t.args().len(),
+            Value::Cat(_) => 0,
+            Value::Struct(s) => match &s.kind {
+                StructKind::Booleans => 2,
+                StructKind::Cartesian(parts) => {
+                    let mut prod = Integer::one();
+                    for p in parts.clone() {
+                        match self.cardinality(&p)? {
+                            Value::Int(n) => prod = &prod * &n,
+                            _ => return Err(RuntimeError::runtime("Structure is not finite").in_context("#")),
+                        }
+                    }
+                    return Ok(Value::Int(prod));
+                }
+                // For a coproduct, # gives the number of constituents.
+                StructKind::Coproduct(parts) => parts.len(),
+                StructKind::RecFormat(r) => r.names.len(),
+                _ => {
+                    if let Some(r) = self.dispatch_user_operator("#", vec![v.clone()])? {
+                        return Ok(r);
+                    }
+                    return Err(RuntimeError::runtime("Structure is not finite (or its cardinality is not known)").in_context("#"));
+                }
+            },
+            other => return self.unary_intrinsic("#", other.clone()),
+        };
+        Ok(Value::int(n as i64))
+    }
+
+    // ----- equality and order ---------------------------------------------
+
+    /// Equality with coercion to a common structure. `strict` makes
+    /// incomparable values an error (`eq`); otherwise they are unequal
+    /// (`cmpeq`). `None` means no built-in rule applies.
+    pub fn compare_eq(&mut self, a: &Value, b: &Value, strict: bool) -> RResult<Option<bool>> {
+        use Value::{Assoc, Bool, Cat, CopElt, ECat, Formal, Func, ISet, Int, Intr, Io, List, MSet, Map, Obj, Rec, Seq, Set, Str, Struct, Tuple};
+        let incompatible = |msg: &str| -> RResult<Option<bool>> {
+            if strict {
+                Err(RuntimeError::runtime(msg.to_string()).in_context("eq"))
+            } else {
+                Ok(Some(false))
+            }
+        };
+        if matches!(a, Value::Elt(_)) || matches!(b, Value::Elt(_)) {
+            let op = if strict { BinOp::Eq } else { BinOp::Cmpeq };
+            return match self.ring_binop(op, a, b)? {
+                Some(Value::Bool(e)) => Ok(Some(e)),
+                _ => incompatible("Arguments are not compatible"),
+            };
+        }
+        // Record formats cannot be compared.
+        if let (Struct(x), Struct(y)) = (a, b) {
+            if matches!(x.kind, StructKind::RecFormat(_)) && matches!(y.kind, StructKind::RecFormat(_)) {
+                return Ok(None);
+            }
+        }
+        Ok(Some(match (a, b) {
+            (Int(x), Int(y)) => x == y,
+            _ if is_real_mix(a, b) => {
+                let (x, y, _, _) = reals_of(a, b);
+                x == y
+            }
+            (Bool(x), Bool(y)) => x == y,
+            (Str(x), Str(y)) => x == y,
+            _ if is_num(a) && is_num(b) => rat_of(a) == rat_of(b),
+            (Seq(x), Seq(y)) => {
+                if let (Some(u), Some(v)) = (&x.universe, &y.universe) {
+                    if self.common_universe(u, v).is_none() {
+                        return incompatible("Incompatible sequences");
+                    }
+                }
+                if x.elems.len() != y.elems.len() {
+                    return Ok(Some(false));
+                }
+                for (p, q) in x.elems.iter().zip(&y.elems) {
+                    if p.is_undef() || q.is_undef() {
+                        if p.is_undef() != q.is_undef() {
+                            return Ok(Some(false));
+                        }
+                        continue;
+                    }
+                    match self.compare_eq(p, q, strict)? {
+                        Some(true) => {}
+                        Some(false) => return Ok(Some(false)),
+                        None => return Ok(None),
+                    }
+                }
+                true
+            }
+            (Set(_), Set(_)) | (ISet(_), ISet(_)) | (MSet(_), MSet(_)) => {
+                if let (Some(u), Some(v)) = (agg_universe(a), agg_universe(b)) {
+                    if self.common_universe(&u, &v).is_none() {
+                        return incompatible("Incompatible sets");
+                    }
+                }
+                a == b
+            }
+            (Tuple(x), Tuple(y)) => {
+                if x.elems.len() != y.elems.len() {
+                    return incompatible("Incompatible tuples");
+                }
+                for (p, q) in x.elems.iter().zip(&y.elems) {
+                    match self.compare_eq(p, q, strict)? {
+                        Some(true) => {}
+                        Some(false) => return Ok(Some(false)),
+                        None => return if strict { Ok(None) } else { Ok(Some(false)) },
+                    }
+                }
+                true
+            }
+            (List(x), List(y)) => {
+                if x.len() != y.len() {
+                    return Ok(Some(false));
+                }
+                for (p, q) in x.iter().zip(y.iter()) {
+                    if !self.values_equal_weak(p, q)? {
+                        return Ok(Some(false));
+                    }
+                }
+                true
+            }
+            (Rec(_), Rec(_))
+            | (Assoc(_), Assoc(_))
+            | (Func(_), Func(_))
+            | (Intr(_), Intr(_))
+            | (Map(_), Map(_))
+            | (Struct(_), Struct(_))
+            | (Cat(_), Cat(_))
+            | (ECat(_), ECat(_))
+            | (Cat(_), ECat(_))
+            | (ECat(_), Cat(_))
+            | (Value::Err(_), Value::Err(_))
+            | (CopElt(_), CopElt(_))
+            | (Formal(_), Formal(_))
+            | (Io(_), Io(_)) => a == b,
+            (Obj(_), _) | (_, Obj(_)) => return Ok(None),
+            (CopElt(c), other) | (other, CopElt(c)) if !matches!(other, CopElt(_)) => {
+                let v = c.value.clone();
+                return self.compare_eq(&v, other, strict);
+            }
+            (Struct(_), Seq(_) | Set(_)) | (Seq(_) | Set(_), Struct(_)) => false,
+            _ => {
+                if strict {
+                    return Ok(None);
+                }
+                false
+            }
+        }))
+    }
+
+    /// Equality as used by `case`, sequences of mixed content, etc.:
+    /// errors on incomparable values, like `eq`.
+    pub fn values_equal(&mut self, a: &Value, b: &Value) -> RResult<bool> {
+        match self.binop(BinOp::Eq, a.clone(), b.clone())? {
+            Value::Bool(x) => Ok(x),
+            _ => Err(RuntimeError::runtime("'eq' must return a boolean")),
+        }
+    }
+
+    /// Equality that treats incomparable values as unequal (`cmpeq`).
+    pub fn values_equal_weak(&mut self, a: &Value, b: &Value) -> RResult<bool> {
+        match self.binop(BinOp::Cmpeq, a.clone(), b.clone())? {
+            Value::Bool(x) => Ok(x),
+            _ => Ok(false),
+        }
+    }
+
+    pub fn compare_ord(&mut self, a: &Value, b: &Value) -> RResult<Option<Ordering>> {
+        use Value::*;
+        Ok(Some(match (a, b) {
+            (Int(x), Int(y)) => x.cmp(y),
+            _ if is_num(a) && is_num(b) => rat_of(a).unwrap().cmp(&rat_of(b).unwrap()),
+            _ if is_real_mix(a, b) => {
+                let (x, y, _, _) = reals_of(a, b);
+                x.cmp(&y)
+            }
+            (Str(x), Str(y)) => x.cmp(y),
+            (Bool(x), Bool(y)) => x.cmp(y),
+            (Seq(x), Seq(y)) => {
+                for (p, q) in x.elems.iter().zip(&y.elems) {
+                    match self.compare_ord(p, q)? {
+                        Some(Ordering::Equal) => {}
+                        Some(o) => return Ok(Some(o)),
+                        None => return Ok(None),
+                    }
+                }
+                x.elems.len().cmp(&y.elems.len())
+            }
+            (Tuple(x), Tuple(y)) if x.elems.len() == y.elems.len() => {
+                for (p, q) in x.elems.iter().zip(&y.elems) {
+                    match self.compare_ord(p, q)? {
+                        Some(Ordering::Equal) => {}
+                        Some(o) => return Ok(Some(o)),
+                        None => return Ok(None),
+                    }
+                }
+                Ordering::Equal
+            }
+            _ => {
+                if let Some(Value::Bool(lt)) = self.dispatch_user_operator("lt", vec![a.clone(), b.clone()])? {
+                    if lt {
+                        return Ok(Some(Ordering::Less));
+                    }
+                    if let Some(Value::Bool(gt)) = self.dispatch_user_operator("lt", vec![b.clone(), a.clone()])? {
+                        return Ok(Some(if gt { Ordering::Greater } else { Ordering::Equal }));
+                    }
+                }
+                return Ok(None);
+            }
+        }))
+    }
+
+    /// Compare for sorting; errors if the values cannot be ordered.
+    pub fn compare_for_sort(&mut self, a: &Value, b: &Value) -> RResult<Ordering> {
+        match self.compare_ord(a, b)? {
+            Some(o) => Ok(o),
+            None => Err(RuntimeError::runtime(format!("Cannot compare objects of types {} and {}", self.type_name(a), self.type_name(b)))),
+        }
+    }
+
+    // ----- sets -----------------------------------------------------------
+
+    fn set_op(&mut self, op: BinOp, a: &Value, b: &Value) -> RResult<Option<Value>> {
+        let name = op.intrinsic_name();
+        let univ = |me: &Interp, x: &Option<Value>, y: &Option<Value>| -> RResult<Option<Value>> {
+            Ok(match (x, y) {
+                (None, u) | (u, None) => u.clone(),
+                (Some(p), Some(q)) => Some(me.common_universe(p, q).ok_or_else(|| RuntimeError::runtime("Incompatible sets").in_context(name))?),
+            })
+        };
+        match (a, b) {
+            (Value::Set(x), Value::Set(y)) => {
+                let u = univ(self, &x.universe, &y.universe)?;
+                let xs = self.coerce_all(x.iter(), &u, x.universe.as_ref(), name)?;
+                let ys = self.coerce_all(y.iter(), &u, y.universe.as_ref(), name)?;
+                let xset: VSet = xs.iter().cloned().collect();
+                let yset: VSet = ys.iter().cloned().collect();
+                let out: Vec<Value> = match op {
+                    BinOp::Join => {
+                        let mut s = xset;
+                        for v in ys {
+                            s.insert(v);
+                        }
+                        s.into_iter().collect()
+                    }
+                    BinOp::Meet => xs.into_iter().filter(|v| yset.contains(v)).collect(),
+                    BinOp::Diff => xs.into_iter().filter(|v| !yset.contains(v)).collect(),
+                    _ => {
+                        let mut v: Vec<Value> = xs.iter().filter(|v| !yset.contains(*v)).cloned().collect();
+                        v.extend(ys.into_iter().filter(|w| !xset.contains(w)));
+                        v
+                    }
+                };
+                let mut out = out;
+                sort_values(&mut out);
+                Ok(Some(Value::Set(Rc::new(SetEnum::new(u, out.into_iter().collect())))))
+            }
+            (Value::ISet(x), Value::ISet(y)) => {
+                let u = univ(self, &x.universe, &y.universe)?;
+                let xs = self.coerce_all(x.elems.iter().cloned(), &u, x.universe.as_ref(), name)?;
+                let ys = self.coerce_all(y.elems.iter().cloned(), &u, y.universe.as_ref(), name)?;
+                let xset: VSet = xs.iter().cloned().collect();
+                let yset: VSet = ys.iter().cloned().collect();
+                let out: VSet = match op {
+                    BinOp::Join => {
+                        let mut s = xset;
+                        for v in ys {
+                            s.insert(v);
+                        }
+                        s
+                    }
+                    BinOp::Meet => xs.into_iter().filter(|v| yset.contains(v)).collect(),
+                    BinOp::Diff => xs.into_iter().filter(|v| !yset.contains(v)).collect(),
+                    _ => {
+                        let mut v: VSet = xs.iter().filter(|v| !yset.contains(*v)).cloned().collect();
+                        v.extend(ys.into_iter().filter(|w| !xset.contains(w)));
+                        v
+                    }
+                };
+                Ok(Some(Value::ISet(Rc::new(SetIndx { universe: u, elems: out }))))
+            }
+            (Value::MSet(x), Value::MSet(y)) => {
+                let u = univ(self, &x.universe, &y.universe)?;
+                let conv = |me: &mut Interp, m: &SetMulti| -> RResult<VMap<u64>> {
+                    let mut out = VMap::default();
+                    for (e, n) in &m.elems {
+                        let e = match &u {
+                            Some(u) if m.universe.as_ref() != Some(u) => me.coerce_into_universe(u, e).map_err(|e| e.in_context(name))?,
+                            _ => e.clone(),
+                        };
+                        *out.entry(e).or_insert(0) += n;
+                    }
+                    Ok(out)
+                };
+                let xm = conv(self, x)?;
+                let ym = conv(self, y)?;
+                let mut out = VMap::default();
+                match op {
+                    BinOp::Join => {
+                        for (e, n) in xm.iter().chain(ym.iter()) {
+                            *out.entry(e.clone()).or_insert(0) += n;
+                        }
+                    }
+                    BinOp::Meet => {
+                        for (e, n) in &xm {
+                            if let Some(m) = ym.get(e) {
+                                out.insert(e.clone(), (*n).min(*m));
+                            }
+                        }
+                    }
+                    BinOp::Diff => {
+                        for (e, n) in &xm {
+                            let m = ym.get(e).copied().unwrap_or(0);
+                            if *n > m {
+                                out.insert(e.clone(), n - m);
+                            }
+                        }
+                    }
+                    _ => {
+                        for (e, n) in &xm {
+                            let m = ym.get(e).copied().unwrap_or(0);
+                            if n.abs_diff(m) > 0 {
+                                out.insert(e.clone(), n.abs_diff(m));
+                            }
+                        }
+                        for (e, m) in &ym {
+                            if !xm.contains_key(e) {
+                                out.insert(e.clone(), *m);
+                            }
+                        }
+                    }
+                }
+                Ok(Some(Value::MSet(Rc::new(SetMulti { universe: u, elems: out }))))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn coerce_all(&mut self, it: impl Iterator<Item = Value>, u: &Option<Value>, from: Option<&Value>, ctx: &str) -> RResult<Vec<Value>> {
+        match u {
+            Some(u) if from != Some(u) => {
+                let mut out = Vec::new();
+                for v in it {
+                    out.push(self.coerce_into_universe(u, &v).map_err(|e| e.in_context(ctx.to_string()))?);
+                }
+                Ok(out)
+            }
+            _ => Ok(it.collect()),
+        }
+    }
+
+    fn subset(&mut self, a: &Value, b: &Value) -> RResult<Option<bool>> {
+        match a {
+            Value::Set(x) => {
+                for e in x.iter() {
+                    if !self.contains(b, &e)? {
+                        return Ok(Some(false));
+                    }
+                }
+                Ok(Some(true))
+            }
+            Value::ISet(x) => {
+                for e in x.elems.iter() {
+                    if !self.contains(b, e)? {
+                        return Ok(Some(false));
+                    }
+                }
+                Ok(Some(true))
+            }
+            Value::MSet(x) => {
+                if let Value::MSet(y) = b {
+                    for (e, n) in &x.elems {
+                        if y.elems.get(e).copied().unwrap_or(0) < *n {
+                            return Ok(Some(false));
+                        }
+                    }
+                    return Ok(Some(true));
+                }
+                for e in x.elems.keys() {
+                    if !self.contains(b, e)? {
+                        return Ok(Some(false));
+                    }
+                }
+                Ok(Some(true))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    // ----- reduction ------------------------------------------------------
+
+    /// `&op S`
+    pub fn reduce(&mut self, op: BinOp, s: &Value) -> RResult<Value> {
+        let (universe, null) = match s {
+            Value::Seq(q) => (q.universe.clone(), q.universe.is_none()),
+            Value::Set(q) => (q.universe.clone(), q.universe.is_none()),
+            Value::ISet(q) => (q.universe.clone(), q.universe.is_none()),
+            Value::MSet(q) => (q.universe.clone(), q.universe.is_none()),
+            Value::List(_) | Value::Tuple(_) => (None, false),
+            other => {
+                return Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}", self.type_name(other))).in_context(format!("&{}", op.intrinsic_name())));
+            }
+        };
+        let ctx = format!("&{}", op.intrinsic_name());
+        let mut it = self.iter_value(s, false)?;
+        let Some((_, mut acc)) = it.next_item() else {
+            return match op {
+                BinOp::And => Ok(Value::Bool(true)),
+                BinOp::Or => Ok(Value::Bool(false)),
+                BinOp::Add | BinOp::Mul => {
+                    if null {
+                        let what = if matches!(s, Value::Seq(_)) { "sequence" } else { "set" };
+                        return Err(RuntimeError::runtime(format!("Illegal null {what}")).in_context(ctx));
+                    }
+                    let u = universe.unwrap();
+                    let unit = if op == BinOp::Add { self.call_intrinsic_named(crate::sym::Sym::new("Zero"), vec![u.clone()]) } else { self.call_intrinsic_named(crate::sym::Sym::new("One"), vec![u.clone()]) };
+                    unit.map_err(|_| RuntimeError::runtime("The universe has no identity for this operation").in_context(ctx))
+                }
+                BinOp::Join => Ok(match universe {
+                    Some(Value::Struct(st)) => match &st.kind {
+                        StructKind::PowerSet(u) => Value::Set(Rc::new(SetEnum::new(u.clone(), VSet::default()))),
+                        StructKind::PowerISet(u) => Value::ISet(Rc::new(SetIndx { universe: u.clone(), elems: VSet::default() })),
+                        StructKind::PowerMSet(u) => Value::MSet(Rc::new(SetMulti { universe: u.clone(), elems: VMap::default() })),
+                        _ => Value::Set(Rc::new(SetEnum::new(None, VSet::default()))),
+                    },
+                    _ => Value::Set(Rc::new(SetEnum::new(None, VSet::default()))),
+                }),
+                BinOp::Cat => Ok(match universe {
+                    Some(Value::Struct(st)) => match &st.kind {
+                        StructKind::PowerSeq(u) => Value::seq(u.clone(), Vec::new()),
+                        StructKind::Strings => Value::str(""),
+                        _ => Value::seq(None, Vec::new()),
+                    },
+                    _ => Value::seq(None, Vec::new()),
+                }),
+                _ => Err(RuntimeError::runtime("Cannot reduce an empty sequence or set").in_context(ctx)),
+            };
+        };
+        while let Some((_, x)) = it.next_item() {
+            self.check_interrupt()?;
+            let cur = std::mem::take(&mut acc);
+            acc = match op {
+                BinOp::And | BinOp::Or => match (&cur, &x) {
+                    (Value::Bool(p), Value::Bool(q)) => Value::Bool(if op == BinOp::And { *p && *q } else { *p || *q }),
+                    _ => return Err(self.bad_types(op, &cur, &x)),
+                },
+                _ => {
+                    let mut c = cur;
+                    self.binop_assign(op, &mut c, x)?;
+                    c
+                }
+            };
+        }
+        Ok(acc)
+    }
+
+    // ----- maps -----------------------------------------------------------
+
+    pub fn apply_map(&mut self, m: &Rc<MapObj>, x: &Value) -> RResult<Value> {
+        let x = match self.try_coerce(&m.domain, x)? {
+            Ok(v) => v,
+            Err(_) => return Err(RuntimeError::runtime("Element is not in the domain of the map").in_context("@")),
+        };
+        let y = match &m.imp {
+            MapImpl::Rule { f, .. } => {
+                let f = f.clone();
+                self.call_function(&f, vec![x])?
+            }
+            MapImpl::Graph(g) => match g.get(&x) {
+                Some(y) => y.clone(),
+                None => return Err(RuntimeError::runtime("Application of map failed").in_context("@")),
+            },
+            MapImpl::Compose(ms) => {
+                let mut v = x;
+                for mm in ms.clone() {
+                    v = self.apply_map(&mm, &v)?;
+                }
+                return Ok(v);
+            }
+            MapImpl::Coercion => x,
+            MapImpl::Injection(i) => {
+                let Value::Struct(st) = &m.codomain else { unreachable!() };
+                Value::CopElt(Rc::new(CopElt { cop: st.clone(), index: *i, value: x }))
+            }
+            MapImpl::Inverse(inner) => {
+                let inner = inner.clone();
+                return self.map_preimage(&inner, &x);
+            }
+        };
+        if matches!(m.imp, MapImpl::Rule { .. }) {
+            return self.coerce(&m.codomain, &y).map_err(|_| RuntimeError::runtime("Image of the element is not in the codomain of the map").in_context("@"));
+        }
+        Ok(y)
+    }
+
+    pub fn map_preimage(&mut self, m: &Rc<MapObj>, y: &Value) -> RResult<Value> {
+        let y = match self.try_coerce(&m.codomain, y)? {
+            Ok(v) => v,
+            Err(_) => return Err(RuntimeError::runtime("Argument is not in the codomain of the map").in_context("@@")),
+        };
+        match &m.imp {
+            MapImpl::Rule { inv: Some(g), .. } => {
+                let g = g.clone();
+                let x = self.call_function(&g, vec![y])?;
+                self.coerce(&m.domain, &x)
+            }
+            MapImpl::Rule { inv: None, .. } => Err(RuntimeError::runtime("No inverse rule is known for the map").in_context("@@")),
+            MapImpl::Graph(g) => g.iter().find(|(_, v)| **v == y).map(|(k, _)| k.clone()).ok_or_else(|| RuntimeError::runtime("Element has no preimage under the map").in_context("@@")),
+            MapImpl::Compose(ms) => {
+                let mut v = y;
+                for mm in ms.clone().iter().rev() {
+                    v = self.map_preimage(mm, &v)?;
+                }
+                Ok(v)
+            }
+            MapImpl::Coercion => self.coerce(&m.domain, &y),
+            MapImpl::Injection(i) => match &y {
+                Value::CopElt(c) if c.index == *i => Ok(c.value.clone()),
+                _ => Err(RuntimeError::runtime("Element has no preimage under the injection").in_context("@@")),
+            },
+            MapImpl::Inverse(inner) => {
+                let inner = inner.clone();
+                self.apply_map(&inner, &y)
+            }
+        }
+    }
+
+    /// `x @ f`: also images of sets and sequences.
+    pub fn image(&mut self, x: &Value, m: &Value) -> RResult<Value> {
+        match m {
+            Value::Map(mm) => {
+                let mm = mm.clone();
+                if self.try_coerce(&mm.domain, x)?.is_err() {
+                    match x {
+                        Value::Set(_) | Value::Seq(_) | Value::ISet(_) => {
+                            let mut out = Vec::new();
+                            let mut it = self.iter_value(x, false)?;
+                            while let Some((_, e)) = it.next_item() {
+                                out.push(self.apply_map(&mm, &e)?);
+                            }
+                            let kind = match x {
+                                Value::Seq(_) => calyx_syntax::ast::AggKind::Seq,
+                                Value::ISet(_) => calyx_syntax::ast::AggKind::ISet,
+                                _ => calyx_syntax::ast::AggKind::Set,
+                            };
+                            return self.build_aggregate(kind, Some(mm.codomain.clone()), out, false);
+                        }
+                        _ => {}
+                    }
+                }
+                self.apply_map(&mm, x)
+            }
+            Value::Func(_) | Value::Intr(_) => self.call_function(m, vec![x.clone()]),
+            _ => Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}, {}", self.type_name(x), self.type_name(m))).in_context("@")),
+        }
+    }
+
+    pub fn preimage(&mut self, y: &Value, m: &Value) -> RResult<Value> {
+        match m {
+            Value::Map(mm) => {
+                let mm = mm.clone();
+                if self.try_coerce(&mm.codomain, y)?.is_err() {
+                    if let Value::Set(_) | Value::Seq(_) = y {
+                        let mut out = Vec::new();
+                        let mut it = self.iter_value(y, false)?;
+                        while let Some((_, e)) = it.next_item() {
+                            out.push(self.map_preimage(&mm, &e)?);
+                        }
+                        let kind = if matches!(y, Value::Seq(_)) { calyx_syntax::ast::AggKind::Seq } else { calyx_syntax::ast::AggKind::Set };
+                        return self.build_aggregate(kind, Some(mm.domain.clone()), out, false);
+                    }
+                }
+                self.map_preimage(&mm, y)
+            }
+            _ => Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}, {}", self.type_name(y), self.type_name(m))).in_context("@@")),
+        }
+    }
+}
+
+fn agg_universe(v: &Value) -> Option<Value> {
+    match v {
+        Value::Set(s) => s.universe.clone(),
+        Value::ISet(s) => s.universe.clone(),
+        Value::MSet(s) => s.universe.clone(),
+        Value::Seq(s) => s.universe.clone(),
+        _ => None,
+    }
+}

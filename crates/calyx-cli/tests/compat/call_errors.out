@@ -1,0 +1,22 @@
+
+>> f(1 : Bad := 2);
+    ^
+Runtime error in procedure call: Parameter 'Bad' is not defined for this
+function
+2
+
+>> p(z, 2);
+    ^
+Runtime error in procedure call: Argument 1 must be a variable reference (use ~)
+
+>> Gcd(~z, 2);
+      ^
+Runtime error in 'Gcd': Bad argument types
+Argument types given: RngIntElt ~, RngIntElt
+
+
+>> g(1, 2);
+    ^
+Runtime error in procedure call: Number of arguments (2) does not equal expected
+number of arguments (1)
+

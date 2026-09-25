@@ -1,0 +1,158 @@
+13 167
+163
+5/2
+3 -1 1
+-1 1
+true
+false
+false
+[
+    [ 1 ],
+    [ 1, 2 ],
+    [ 1, 2, 3 ]
+]
+[
+    [ 1 ],
+    [ 1, -1 ],
+    [ 1, 2, 3 ]
+]
+[
+    [ 1 ],
+    [ 5, -1 ],
+    [ 1, 2, 3 ]
+]
+{ 1, 2, 4, 8, 16, 32, 64, 128, 256, 512 }
+3
+2
+1024
+abcd
+false
+
+>> z;
+   ^
+User error: Identifier 'z' has not been declared or assigned
+2
+true
+true
+true
+true
+
+>> false and (4/0 eq 6);
+                ^
+User error: Illegal zero denominator
+
+>> true or (4/0 eq 6);
+              ^
+User error: Illegal zero denominator
+true
+true
+
+>> 1 eq "x";
+     ^
+Runtime error in 'eq': Bad argument types
+Argument types given: RngIntElt, MonStgElt
+
+false
+
+>> [1] eq ["x"];
+       ^
+Runtime error in 'eq': Incompatible sequences
+
+false
+true
+true
+2
+
+>> Integers() ! (1/2);
+              ^
+Runtime error in '!': Rational argument is not a whole integer
+LHS: RngInt
+RHS: FldRatElt
+true 2
+false
+5
+FldRatElt
+10
+1
+11
+11
+7
+12
+12
+8
+{ 7, 13, 19, 31 }
+[ <5, 3>, <7, 5>, <13, 11>, <19, 17> ]
+[ 1, 1 ]
+[ 2, 1 ]
+[ <1, 2>, <2, 1> ]
+[ 2, 2, 3 ]
+[ <11, 1>, <101, 1> ]
+-1
+[ 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610, 987, 1597, 2584,
+4181, 6765 ]
+73 is positive
+large
+seventy-three
+other
+1
+34
+67
+100
+133
+10
+7
+4
+1
+111
+6
+46 89
+46 89
+89 46
+1 a
+2 b
+3 c
+2
+2
+
+>> eval "1+1;";
+   ^
+Runtime error: eval must return a value
+
+2
+3
+>> eval "x := x + 1; return x";
+   ^
+
+In eval expression, line 1, column 1:
+>> x := x + 1; return x;
+   ^
+    Located in:
+    >> eval "x := x + 1; return x";
+       ^
+User error: Imported environment value 'x' cannot be used as a local
+
+1234
+RngIntElt
+RngIntElt
+true
+RngInt
+RngIntElt
+true
+false
+true
+Rational Field
+true Rational Field
+SeqEnum[RngIntElt]
+SeqEnum[SeqEnum[FldRatElt]]
+SeqEnum
+1
+SeqEnum[RngIntElt]
+RngIntElt
+ECat
+1 0
+true
+1 7 0
+false
+true
+3
+

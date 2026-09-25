@@ -1,0 +1,37 @@
+
+>> x := 1 +; y := 2; "same line";
+           ^
+User error: bad syntax
+
+>> y;
+   ^
+User error: Identifier 'y' has not been declared or assigned
+
+>> z := 3 + ; "a"; "b";
+            ^
+User error: bad syntax
+next
+
+>>   q := 1/0; "c";
+            ^
+User error: Illegal zero denominator
+d
+
+>> end for;
+   ^
+User error: bad syntax
+after
+
+>>   1 + ;
+         ^
+User error: bad syntax
+
+>> catch e
+   ^
+User error: bad syntax
+caught
+
+>> end try;
+   ^
+User error: bad syntax
+

@@ -1,0 +1,130 @@
+199
+199
+199
+<1, 2, true, "Simple">
+<1, 2, false, "Simple">
+<1, 2, false, "abc">
+
+>> f(1, 2: Bad := 1);
+    ^
+Runtime error in procedure call: Parameter 'Bad' is not defined for this 
+function
+9
+1
+true 1
+false
+1
+
+>> b;
+   ^
+User error: Identifier 'b' has not been assigned
+x:  1
+y:  [* 2 *]
+[ 3 ]
+x:  1
+y:  [* 2, 3, 4 *]
+[ 3, 4, 5 ]
+Yes, Pythagorean triple! 3 4 5
+Yes, Pythagorean triple! 4 3 5
+Yes, Pythagorean triple! 5 12 13
+Yes, Pythagorean triple! 6 8 10
+Yes, Pythagorean triple! 8 6 10
+Yes, Pythagorean triple! 9 12 15
+Yes, Pythagorean triple! 12 5 13
+Yes, Pythagorean triple! 12 9 15
+5 5
+[ 0, 1 ]
+
+>> p(a, b);
+    ^
+Runtime error in procedure call: Argument 2 must be a variable reference (use ~)
+
+>> x := p(1, ~b);
+         ^
+Runtime error: Reference arguments may only be used in procedure calls
+
+1
+13
+13
+13
+true true
+
+>> function usesUndefined(n) return undefinedThing(n); end function;
+                                    ^
+User error: Identifier 'undefinedThing' has not been declared or assigned
+144 7
+-1/3
+5/21
+-4/21
+MyRat
+
+MyRational(
+    n: 1,
+    d: 0
+)
+>> MyRational(1, 0);
+             ^
+Runtime error in 'MyRational': Denominator must be non-zero
+
+<1, 2/3>
+Direct product of <Integer Ring, Rational Field>
+<3, 17/12>
+
+>> D!<1>;
+    ^
+Runtime error in '!': Wrong length of tuple for coercion
+LHS: DirProd
+RHS: <>
+[
+    <1, 2/3>,
+    <2, 3/4>
+]
+<3, 17/12>
+true false
+1/4
+1 2 3
+10
+
+MyBinomial(
+    n: 5,
+    k: 7
+)
+>> MyBinomial(5, 7);
+             ^
+Runtime error in 'MyBinomial': Argument 'k' (7) should be in the range [0..5]
+
+
+MyBinomial(
+    n: -1,
+    k: 0
+)
+>> MyBinomial(-1, 0);
+             ^
+Runtime error in 'MyBinomial': Argument 'n' (-1) should be at least 0
+
+[ 1, 9, 9 ]
+[Nresults: 0]
+3 9
+[Nresults: 1]
+[Nresults: 2]
+4 16
+10
+Intrinsic 'MyBinomial'
+
+Signatures:
+
+    (<RngIntElt> n, <RngIntElt> k) -> RngIntElt
+
+        n choose k
+zed
+true
+[ Nickname ]
+
+>> Z`Unknown := 1;
+    ^
+Runtime error: 'Unknown' is not a valid attribute of objects of type RngInt
+
+2
+level one
+value 42
+false

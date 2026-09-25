@@ -1,0 +1,104 @@
+In catch handler
+1 ErrUser
+
+>>     x := 1/0;
+              ^
+User error: Illegal zero denominator
+
+>> catch err
+   ^
+User error: bad syntax
+
+>>     err`Type;
+       ^
+User error: Identifier 'err' has not been declared or assigned
+
+>>     err`Object;
+       ^
+User error: Identifier 'err' has not been declared or assigned
+
+>> end try;
+   ^
+User error: bad syntax
+custom 42
+Runtime error: Error calling procedure with parameter:  1
+Runtime error: condition held
+after
+
+>> assert 1 eq 2;
+   ^
+Runtime error in assert: Assertion failed
+
+>> assert2 false;
+   ^
+Runtime error in assert: Assertion failed
+
+>> 1/0;
+     ^
+User error: Illegal zero denominator
+
+>> 7 div 0;
+     ^
+Runtime error in 'div': Division by zero
+
+
+>> [1, 2][3];
+         ^
+Runtime error in '[]': Sequence index 3 should be in the range 1 to 2
+
+
+>> Gcd("a", 1);
+      ^
+Runtime error in 'Gcd': Bad argument types
+Argument types given: MonStgElt, RngIntElt
+
+
+>> Gcd(1);
+      ^
+Runtime error in 'Gcd': Bad argument types
+Argument types given: RngIntElt
+
+
+>> UnknownFunction(3);
+   ^
+User error: Identifier 'UnknownFunction' has not been declared or assigned
+
+>> unknownIdentifier;
+   ^
+User error: Identifier 'unknownIdentifier' has not been declared or assigned
+
+>> "a" + 1;
+       ^
+Runtime error in '+': Bad argument types
+Argument types given: MonStgElt, RngIntElt
+
+
+f(
+    x: 1
+)
+>> f := func< x | x + "s" >;
+                    ^
+Runtime error: Bad argument types
+Argument types given: RngIntElt, MonStgElt
+
+
+>> function deep(n) if n eq 0 then return 1/0; end if; return deep(n - 1); end
+                                            ^
+User error: Illegal zero denominator
+
+>> deep(3);
+   ^
+User error: Identifier 'deep' has not been declared or assigned
+
+>> if 1 then "yes"; end if;
+   ^
+Runtime error in if: Logical expected
+
+>> x := ;
+        ^
+User error: bad syntax
+1
+2
+3
+outer from inner
+

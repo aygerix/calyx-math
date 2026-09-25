@@ -1,0 +1,51 @@
+Runtime error: top level message
+next
+Runtime error: inside f 3
+next2
+
+>>   return h(x);
+            ^
+User error: Identifier 'h' has not been declared or assigned
+
+>> g(1);
+   ^
+User error: Identifier 'g' has not been declared or assigned
+next3
+
+>>   require x gt 0: "x must be positive";
+     ^
+User error: Require statements only allowed in intrinsics
+
+>> pr(-1);
+   ^
+User error: Identifier 'pr' has not been declared or assigned
+next4
+
+k(
+    x: -1
+)
+>>   assert x gt 0;
+     ^
+Runtime error in assert: Assertion failed
+>> error Error("object");
+   ^
+object
+>> e := Error("obj2"); error e;
+                       ^
+obj2
+
+>> Gcd(1, "a");
+      ^
+Runtime error in 'Gcd': Bad argument types
+Argument types given: RngIntElt, MonStgElt
+
+
+>> 1/0;
+     ^
+User error: Illegal zero denominator
+
+>> a := 0; 1/a;
+            ^
+Runtime error in '/': Division by zero
+
+

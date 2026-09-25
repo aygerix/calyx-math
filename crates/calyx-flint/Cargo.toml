@@ -1,0 +1,17 @@
+[package]
+name = "calyx-flint"
+description = "Safe Rust wrappers around the FLINT library for calyx"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+# Link against the system FLINT found by pkg-config (fast builds).
+# Disable default features to build FLINT from the bundled source instead.
+default = ["system-flint"]
+system-flint = ["flint3-sys/use-system-libs"]
+
+[dependencies]
+flint3-sys = { workspace = true }
+libc = { workspace = true }

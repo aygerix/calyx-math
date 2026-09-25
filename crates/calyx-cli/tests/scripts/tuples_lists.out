@@ -1,0 +1,85 @@
+Cartesian Product<Rational Field, Integer Ring>
+Cartesian Product<Integer Ring, Boolean Structure>
+
+>> CartesianProduct([ Integers(), Rationals(), Integers() ]);
+                    ^
+Runtime error in [ ... ]: No valid universe containing all elements
+
+Cartesian Product<Boolean Structure, Boolean Structure>
+8
+Cartesian Product<Integer Ring, Rational Field, Boolean Structure>
+2 Integer Ring
+Rational Field
+[*
+    Rational Field,
+    Integer Ring
+*]
+<false, false>
+<2, 1/2>
+<3, 1/3>
+
+>> C ! < 1/2, 1 >;
+     ^
+Runtime error in '!': Illegal coercion
+LHS: SetCart
+RHS: <>
+{ <2, 1/2>, <3, 1/3>, <5, 1/5>, <7, 1/7>, <11, 1/11>, <13, 1/13>, <17, 1/17>, 
+<19, 1/19>, <23, 1/23> }
+[ <false, 1>, <false, 2>, <true, 1>, <true, 2> ]
+<11/2, 13/3, 7/5>
+3
+Cartesian Product<Rational Field, Rational Field, Rational Field>
+337/30
+<11/2, 13/3, 7>
+<>
+<1, "a", true>
+<1, "a", [ 1 ]>
+<1, "a">
+<1, 2, 3, 4>
+7 8
+[* 1, x *] [* 2 *]
+true true true
+1
+b
+true
+1 p
+2 q
+true false
+3/2
+<1, 4, 9, 16>
+[* *]
+[* 1, a,
+    [ 2 ]
+*]
+3 a false
+[* 1, a,
+    [ 2 ],
+    4/5
+*]
+
+>> L[7] := 0;
+    ^
+Runtime error in :=: List index out of range
+[* 1, a,
+    [ 2 ],
+    4/5, true
+*]
+[* 1, a,
+    [ 2 ],
+    4/5, 9
+*]
+5
+first
+[* first, 1, a,
+    [ 2 ],
+    4/5
+*]
+[* 1, 2 *] [* 3 *]
+[* 3, 2, 1 *]
+[* first, 1 *]
+true false
+1
+z
+1 3
+2 4
+true

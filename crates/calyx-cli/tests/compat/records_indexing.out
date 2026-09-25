@@ -1,0 +1,72 @@
+rec<RF | >
+rec<RF |
+    n := 42,
+    misc := adsifaj,
+    seq := [ 4, 8, 1 ]>
+[
+    rec<RF |
+        n := 42,
+        misc := adsifaj,
+        seq := [ 4, 8, 1 ]>
+]
+<rec<RF |
+    n := 42,
+    misc := adsifaj,
+    seq := [ 4, 8, 1 ]>, 1>
+rec<RF |
+    n := 42,
+    misc := adsifaj,
+    seq := [ 4, 8, 1 ]>
+3
+rec<recformat<a, b> |
+    a := 1>
+rec<RF |
+    n := 1,
+    seq := [ 1, 1048576, 3486784401, 1099511627776, 95367431640625,
+        3656158440062976 ]>
+
+>> s[0];
+    ^
+Runtime error in '[]': Sequence index 0 should be in the range 1 to 2
+
+
+>> s[-1];
+    ^
+Runtime error in '[]': Sequence index -1 should be in the range 1 to 2
+
+5
+[ 1, 2, 3, undef, 7 ]
+
+>> q[4];
+    ^
+Runtime error in '[]': Sequence element 4 not defined
+
+1
+
+>> Integers() ! 1.5;
+              ^
+Runtime error in '!': Illegal coercion
+LHS: RngInt
+RHS: FldReElt
+5
+
+>> Integers(6) ! (1/2);
+               ^
+Runtime error in '!': Denominator is not a unit
+LHS: RngIntRes
+RHS: FldRatElt
+
+>> x := 3/0;
+          ^
+User error: Illegal zero denominator
+
+>> y := 0; z := 3/y;
+                 ^
+Runtime error in '/': Division by zero
+
+
+>> 1.5/0;
+      ^
+Runtime error in '/': Division by zero
+
+

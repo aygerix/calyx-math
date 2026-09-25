@@ -1,0 +1,57 @@
+
+g(
+    a: 1
+)
+h(
+    x: 1,
+    y: s
+)
+>>   return x + y;
+              ^
+Runtime error: Bad argument types
+Argument types given: RngIntElt, MonStgElt
+
+--
+
+pp(
+    v: 1,
+    w: q
+)
+>>   v := v + w;
+            ^
+Runtime error: Bad argument types
+Argument types given: RngIntElt, MonStgElt
+
+--
+
+f(
+    n: 5
+)
+>> f := func< n | [1,2][n] >;
+                       ^
+Runtime error in '[]': Sequence index 5 should be in the range 1 to 2
+
+--
+
+g(
+    a: 1
+)
+h(
+    x: 1,
+    y: s
+)
+>>   return x + y;
+              ^
+Runtime error: Bad argument types
+Argument types given: RngIntElt, MonStgElt
+
+--
+
+>> k := function(x) if x eq 0 then return 1/x; end if; return k(x-1); end func
+                                                              ^
+User error: Identifier 'k' has not been declared or assigned
+
+>> k(2);
+   ^
+User error: Identifier 'k' has not been declared or assigned
+

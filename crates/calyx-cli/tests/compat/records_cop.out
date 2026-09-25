@@ -1,0 +1,96 @@
+5
+abc
+Coproduct<Integer Ring, String structure>
+true
+false
+5
+Integer Ring
+1 2
+2 String structure
+1/2 2
+[
+    Mapping from: Integer Ring to Cop: C,
+    Mapping from: Rational Field to Cop: C
+]
+Coproduct<Integer Ring, Boolean Structure, String structure>
+[
+    Mapping from: Integer Ring to Coproduct<Integer Ring, Boolean Structure,
+    String structure>,
+    Mapping from: Boolean Structure to Coproduct<Integer Ring, Boolean
+    Structure, String structure>,
+    Mapping from: String structure to Coproduct<Integer Ring, Boolean Structure,
+    String structure>
+]
+
+>> C := cop< [ Integers(), Booleans() ] >;
+             ^
+Runtime error in [ ... ]: No valid universe containing all elements
+
+Coproduct<Integer Ring, Rational Field>
+
+>> C ! true;
+     ^
+Runtime error in '!': No constituent (with unique type) to coerce into
+LHS: Cop
+RHS: BoolElt
+
+>> C ! "no";
+     ^
+Runtime error in '!': No constituent (with unique type) to coerce into
+LHS: Cop
+RHS: MonStgElt
+recformat<n: IntegerRing(), misc, seq: SeqEnum>
+[ n, misc, seq ]
+rec<RF | >
+rec<RF |
+    n := 42,
+    misc := adsifaj,
+    seq := [ 4, 8, 1 ]>
+rec<RF |
+    n := 17,
+    seq := [ 4.70000000000000000000000000000, 1.90000000000000000000000000000 ]>
+
+>> Format(s) eq RF;
+             ^
+Runtime error in 'eq': Bad argument types
+Argument types given: RecFrmt, RecFrmt
+
+[ n, misc, seq ]
+false
+true
+rec<RF |
+    seq := [ 4.70000000000000000000000000000, 1.90000000000000000000000000000,
+        17.0000000000000000000000000000 ]>
+
+>> t``(s`misc);
+    ^
+Runtime error in `: Invalid attribute 'adsifaj' for this object
+
+rec<RF | >
+
+>> rec< RF | n := 1/2 >;
+   ^
+Runtime error in rec< ... >: Value for field 'n' not in structure given by
+format
+
+
+>> rec< RF | seq := { 1 } >;
+   ^
+Runtime error in rec< ... >: Value for field 'seq' should have category SeqEnum
+
+
+>> rec< RF | bogus := 1 >;
+   ^
+Runtime error in rec< ... >: Field 'bogus' is not in the format
+
+
+>> r`bogus;
+    ^
+Runtime error in `: Field 'bogus' does not exist in this record
+
+43
+[ 4, 0, 1 ]
+43 0
+rec<recformat<a, b> |
+    a := 1>
+

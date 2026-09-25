@@ -1,0 +1,441 @@
+//! Rings whose arithmetic is done by FLINT's generic rings: residue class
+//! rings, finite fields, polynomial rings and the complex field.
+//!
+//! A ring is a structure (`Value::Struct` with `StructKind::Ring`), and its
+//! elements are `Value::Elt`, which pair a FLINT element with the ring.
+//! The integers, rationals and reals keep their own value types, but can
+//! serve as coefficient rings.
+
+mod arith;
+mod coerce;
+mod print;
+
+use std::cell::{Cell, RefCell};
+use std::cmp::Ordering;
+use std::hash::{Hash, Hasher};
+use std::rc::Rc;
+
+use calyx_flint::gr::{Ctx, CtxKind, Elem, GrError, MonomialOrder, Truth};
+use calyx_flint::{Integer, bits_for_digits};
+use rustc_hash::{FxHashMap, FxHasher};
+
+use crate::error::{RResult, RuntimeError};
+use crate::interp::Interp;
+use crate::types::{TypeId, t};
+use crate::value::{Struct, StructKind, Value};
+
+pub use print::format_ring_elt;
+
+/// Largest field whose elements are stored as Zech logarithms (and printed
+/// as powers of the primitive element).
+pub const ZECH_LIMIT: u64 = 1 << 20;
+
+pub struct Ring {
+    pub kind: RingKind,
+    pub ctx: Rc<Ctx>,
+    /// Names of the generators, used for printing.
+    pub names: RefCell<Vec<Rc<str>>>,
+    /// Distinguishes rings; equal rings are the same object.
+    pub id: u64,
+}
+
+pub enum RingKind {
+    /// `Z/mZ`.
+    Residue(Integer),
+    /// A finite field (a prime field if its degree is 1).
+    Finite(FiniteField),
+    /// Univariate polynomials over `base`.
+    UPoly { base: Value, global: bool },
+    /// Multivariate polynomials over `base`.
+    MPoly { base: Value, rank: usize, order: MonomialOrder },
+    /// The complex field with the given decimal precision.
+    Complex(u32),
+}
+
+pub struct FiniteField {
+    pub p: Integer,
+    /// The degree over the prime field.
+    pub degree: u64,
+    /// The defining polynomial over the prime field (constant term first);
+    /// empty for a prime field.
+    pub modulus: Vec<Integer>,
+    pub conway: bool,
+    /// Created by `GF(q)` and friends rather than from a user polynomial.
+    pub default: bool,
+    pub power_printing: Cell<bool>,
+}
+
+impl FiniteField {
+    pub fn order(&self) -> Integer {
+        self.p.pow(self.degree)
+    }
+}
+
+thread_local! {
+    static NEXT_RING_ID: Cell<u64> = const { Cell::new(1) };
+}
+
+fn next_ring_id() -> u64 {
+    NEXT_RING_ID.with(|c| {
+        let v = c.get();
+        c.set(v + 1);
+        v
+    })
+}
+
+impl Ring {
+    pub fn new(kind: RingKind, ctx: Rc<Ctx>) -> Ring {
+        Ring { kind, ctx, names: RefCell::default(), id: next_ring_id() }
+    }
+
+    pub fn type_id(&self) -> TypeId {
+        match &self.kind {
+            RingKind::Residue(_) => t::RNG_INT_RES,
+            RingKind::Finite(_) => t::FLD_FIN,
+            RingKind::UPoly { .. } => t::RNG_UPOL,
+            RingKind::MPoly { .. } => t::RNG_MPOL,
+            RingKind::Complex(_) => t::FLD_COM,
+        }
+    }
+
+    pub fn elt_type(&self) -> TypeId {
+        match &self.kind {
+            RingKind::Residue(_) => t::RNG_INT_RES_ELT,
+            RingKind::Finite(_) => t::FLD_FIN_ELT,
+            RingKind::UPoly { .. } => t::RNG_UPOL_ELT,
+            RingKind::MPoly { .. } => t::RNG_MPOL_ELT,
+            RingKind::Complex(_) => t::FLD_COM_ELT,
+        }
+    }
+
+    /// The printing name of the i-th generator (1-based).
+    pub fn gen_name(&self, i: usize) -> String {
+        match self.names.borrow().get(i - 1) {
+            Some(n) => n.to_string(),
+            None => format!("$.{i}"),
+        }
+    }
+
+    pub fn has_names(&self) -> bool {
+        !self.names.borrow().is_empty()
+    }
+
+    /// The number of generators over the coefficient (or ground) ring.
+    pub fn ngens(&self) -> usize {
+        match &self.kind {
+            RingKind::Residue(_) => 1,
+            RingKind::Finite(_) => 1,
+            RingKind::UPoly { .. } => 1,
+            RingKind::MPoly { rank, .. } => *rank,
+            RingKind::Complex(_) => 1,
+        }
+    }
+
+    pub fn finite_field(&self) -> Option<&FiniteField> {
+        match &self.kind {
+            RingKind::Finite(f) => Some(f),
+            _ => None,
+        }
+    }
+
+    pub fn is_prime_field(&self) -> bool {
+        matches!(&self.kind, RingKind::Finite(f) if f.degree == 1)
+    }
+
+    /// The coefficient ring of a polynomial ring.
+    pub fn base(&self) -> Option<&Value> {
+        match &self.kind {
+            RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. } => Some(base),
+            _ => None,
+        }
+    }
+}
+
+/// An element of a `Ring`.
+pub struct Elt {
+    pub parent: Rc<Struct>,
+    pub x: Elem,
+}
+
+impl Elt {
+    pub fn ring(&self) -> &Ring {
+        match &self.parent.kind {
+            StructKind::Ring(r) => r,
+            _ => unreachable!("ring element with a non-ring parent"),
+        }
+    }
+
+    pub fn ring_rc(&self) -> Rc<Ring> {
+        match &self.parent.kind {
+            StructKind::Ring(r) => r.clone(),
+            _ => unreachable!("ring element with a non-ring parent"),
+        }
+    }
+
+    pub fn parent_value(&self) -> Value {
+        Value::Struct(self.parent.clone())
+    }
+
+    pub fn same_as(&self, o: &Elt) -> bool {
+        self.ring().id == o.ring().id && self.x.equal(&o.x) == Truth::True
+    }
+
+    pub fn hash_u64(&self) -> u64 {
+        let mut h = FxHasher::default();
+        match self.x.ctx().kind() {
+            CtxKind::Nmod(_) | CtxKind::FmpzMod(_) => {
+                self.x.to_integer().ok().hash(&mut h);
+            }
+            CtxKind::FqZech { .. } | CtxKind::FqNmod { .. } | CtxKind::Fq { .. } => self.x.fq_coords().hash(&mut h),
+            _ => self.x.to_flint_string().hash(&mut h),
+        }
+        h.finish()
+    }
+
+    /// The order used when sorting sets for printing.
+    pub fn natural_cmp(&self, o: &Elt) -> Option<Ordering> {
+        if self.ring().id != o.ring().id {
+            return None;
+        }
+        match self.x.ctx().kind() {
+            CtxKind::Nmod(_) | CtxKind::FmpzMod(_) => Some(self.x.to_integer().ok()?.cmp(&o.x.to_integer().ok()?)),
+            // Powers of the primitive element in order, zero last.
+            CtxKind::FqZech { .. } => Some(self.x.zech_log().unwrap_or(u64::MAX).cmp(&o.x.zech_log().unwrap_or(u64::MAX))),
+            // By coordinates, most significant first.
+            CtxKind::FqNmod { .. } | CtxKind::Fq { .. } => {
+                let (a, b) = (self.x.fq_coords(), o.x.fq_coords());
+                Some(a.iter().rev().cmp(b.iter().rev()))
+            }
+            _ => None,
+        }
+    }
+
+    /// The integer representing an element of a residue class ring or a
+    /// prime field.
+    pub fn residue(&self) -> Option<Integer> {
+        match self.x.ctx().kind() {
+            CtxKind::Nmod(_) | CtxKind::FmpzMod(_) => self.x.to_integer().ok(),
+            CtxKind::FqZech { .. } | CtxKind::FqNmod { .. } | CtxKind::Fq { .. } => self.x.fq_prime_value(),
+            _ => None,
+        }
+    }
+}
+
+/// The ring and its structure, if `v` is a ring.
+pub fn ring_of(v: &Value) -> Option<(&Rc<Struct>, &Ring)> {
+    match v {
+        Value::Struct(s) => match &s.kind {
+            StructKind::Ring(r) => Some((s, r)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+pub fn make_elt(parent: &Rc<Struct>, x: Elem) -> Value {
+    Value::Elt(Rc::new(Elt { parent: parent.clone(), x }))
+}
+
+/// Map a FLINT failure to a runtime error.
+pub fn gr_error(e: GrError, what: &str) -> RuntimeError {
+    match e {
+        GrError::Domain => RuntimeError::runtime(what.to_string()),
+        GrError::Unable => RuntimeError::runtime(format!("{what} (not implemented for this ring)")),
+    }
+}
+
+/// A key identifying a coefficient ring, for caching the rings built on it.
+pub fn structure_key(s: &Value) -> Option<String> {
+    Some(match s.as_struct()? {
+        StructKind::Integers => "Z".to_string(),
+        StructKind::Rationals => "Q".to_string(),
+        StructKind::Reals(d) => format!("R{d}"),
+        StructKind::Ring(r) => format!("#{}", r.id),
+        _ => return None,
+    })
+}
+
+/// Canonical rings, so that equal rings are the same object.
+#[derive(Default)]
+pub struct RingCache {
+    residue: FxHashMap<Integer, Value>,
+    finite: FxHashMap<(Integer, u64), Value>,
+    upoly: FxHashMap<String, Value>,
+    complex: FxHashMap<u32, Value>,
+    reals: FxHashMap<u32, Rc<Ctx>>,
+}
+
+impl Interp {
+    fn new_ring(&mut self, kind: RingKind, ctx: Rc<Ctx>) -> Value {
+        Value::Struct(Struct::new(StructKind::Ring(Rc::new(Ring::new(kind, ctx)))))
+    }
+
+    /// `Z/mZ` for `m ≥ 1`.
+    pub fn residue_ring(&mut self, m: &Integer) -> Value {
+        if let Some(r) = self.rings.residue.get(m) {
+            return r.clone();
+        }
+        let ctx = Ctx::residue_ring(m);
+        let r = self.new_ring(RingKind::Residue(m.clone()), ctx);
+        self.rings.residue.insert(m.clone(), r.clone());
+        r
+    }
+
+    /// The default field `GF(p^n)` (defined by a Conway polynomial when one
+    /// is known). `p` must be prime.
+    pub fn finite_field(&mut self, p: &Integer, n: u64) -> RResult<Value> {
+        let key = (p.clone(), n);
+        if let Some(f) = self.rings.finite.get(&key) {
+            return Ok(f.clone());
+        }
+        let f = if n == 1 {
+            let ctx = Ctx::residue_ring(p);
+            let ff = FiniteField { p: p.clone(), degree: 1, modulus: Vec::new(), conway: false, default: true, power_printing: Cell::new(false) };
+            self.new_ring(RingKind::Finite(ff), ctx)
+        } else {
+            let conway = p.to_u64().and_then(|pw| calyx_flint::gr::conway_polynomial(pw, n));
+            let is_conway = conway.is_some();
+            let modulus = match conway {
+                Some(c) => c,
+                None => crate::rings::coerce::default_irreducible(p, n)?,
+            };
+            self.field_from_modulus(p, modulus, is_conway, true)?
+        };
+        self.rings.finite.insert(key, f.clone());
+        Ok(f)
+    }
+
+    /// The field `F_p[x]/(f)` for a monic irreducible `f` over `F_p`.
+    pub fn field_from_modulus(&mut self, p: &Integer, modulus: Vec<Integer>, conway: bool, default: bool) -> RResult<Value> {
+        let degree = modulus.len() as u64 - 1;
+        let q = p.pow(degree);
+        let small = q.to_u64().is_some_and(|q| q <= ZECH_LIMIT);
+        let (ctx, zech) = match small.then(|| Ctx::finite_field(p, &modulus, true)) {
+            Some(Ok(c)) => (c, true),
+            _ => (Ctx::finite_field(p, &modulus, false).map_err(|e| gr_error(e, "Cannot create the finite field"))?, false),
+        };
+        let ff = FiniteField { p: p.clone(), degree, modulus, conway, default, power_printing: Cell::new(zech) };
+        Ok(self.new_ring(RingKind::Finite(ff), ctx))
+    }
+
+    /// The univariate polynomial ring over `base`; the global one unless
+    /// `global` is false.
+    pub fn poly_ring(&mut self, base: &Value, global: bool) -> RResult<Value> {
+        let key = structure_key(base);
+        if global {
+            if let Some(r) = key.as_ref().and_then(|k| self.rings.upoly.get(k)) {
+                return Ok(r.clone());
+            }
+        }
+        let bctx = self.ctx_of(base).ok_or_else(|| RuntimeError::runtime("Polynomial rings over this ring are not supported"))?;
+        let ctx = Ctx::poly(&bctx);
+        let r = self.new_ring(RingKind::UPoly { base: base.clone(), global }, ctx);
+        if global {
+            if let Some(k) = key {
+                self.rings.upoly.insert(k, r.clone());
+            }
+        }
+        Ok(r)
+    }
+
+    /// The multivariate polynomial ring of the given rank over `base`.
+    pub fn mpoly_ring(&mut self, base: &Value, rank: usize, order: MonomialOrder) -> RResult<Value> {
+        let bctx = self.ctx_of(base).ok_or_else(|| RuntimeError::runtime("Polynomial rings over this ring are not supported"))?;
+        let ctx = Ctx::mpoly(&bctx, rank, order);
+        Ok(self.new_ring(RingKind::MPoly { base: base.clone(), rank, order }, ctx))
+    }
+
+    /// The complex field with `digits` decimal digits of precision.
+    pub fn complex_field(&mut self, digits: u32) -> Value {
+        if let Some(c) = self.rings.complex.get(&digits) {
+            return c.clone();
+        }
+        let ctx = Ctx::complex_float(bits_for_digits(digits as u64));
+        let c = self.new_ring(RingKind::Complex(digits), ctx);
+        self.rings.complex.insert(digits, c.clone());
+        c
+    }
+
+    /// All elements of a finite ring, in the order Magma enumerates them.
+    pub fn enumerate_ring(&mut self, st: &Rc<Struct>) -> RResult<Vec<Value>> {
+        let StructKind::Ring(r) = &st.kind else { unreachable!() };
+        let size = match &r.kind {
+            RingKind::Residue(m) => m.clone(),
+            RingKind::Finite(f) => f.order(),
+            _ => return Err(RuntimeError::runtime("Cannot iterate over an infinite ring")),
+        };
+        let n = size.to_u64().filter(|&n| n <= 1 << 26).ok_or_else(|| RuntimeError::runtime("The ring is too large to enumerate"))?;
+        let mut out = Vec::with_capacity(n as usize);
+        let ctx = r.ctx.clone();
+        match &r.kind {
+            RingKind::Finite(f) if f.degree > 1 => {
+                out.push(make_elt(st, Elem::zero(&ctx)));
+                if matches!(ctx.kind(), CtxKind::FqZech { .. }) {
+                    // Zero, then the powers of the primitive element.
+                    let g = ctx.generator().map_err(|e| gr_error(e, "No generator"))?;
+                    let mut x = Elem::one(&ctx).map_err(|e| gr_error(e, "No one"))?;
+                    for _ in 1..n {
+                        out.push(make_elt(st, x.clone()));
+                        x = x.mul(&g).map_err(|e| gr_error(e, "Arithmetic error"))?;
+                    }
+                } else {
+                    let p = f.p.to_u64().unwrap();
+                    let d = f.degree as usize;
+                    let mut coords = vec![0u64; d];
+                    for _ in 1..n {
+                        // Next coordinate vector (counting in base p).
+                        for c in coords.iter_mut() {
+                            *c += 1;
+                            if *c < p {
+                                break;
+                            }
+                            *c = 0;
+                        }
+                        let cs: Vec<Integer> = coords.iter().map(|&c| Integer::from_u64(c)).collect();
+                        out.push(make_elt(st, Elem::fq_from_coords(&ctx, &cs).map_err(|e| gr_error(e, "Arithmetic error"))?));
+                    }
+                }
+            }
+            _ => {
+                for i in 0..n {
+                    out.push(make_elt(st, Elem::from_integer(&ctx, &Integer::from_u64(i)).map_err(|e| gr_error(e, "Arithmetic error"))?));
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// The FLINT context for the reals with the given decimal precision.
+    pub fn real_ctx(&mut self, digits: u32) -> Rc<Ctx> {
+        self.rings.reals.entry(digits).or_insert_with(|| Ctx::real_float(bits_for_digits(digits as u64))).clone()
+    }
+
+    /// The FLINT context whose elements represent the elements of the
+    /// structure `s`, if it has one.
+    pub fn ctx_of(&mut self, s: &Value) -> Option<Rc<Ctx>> {
+        match s.as_struct()? {
+            StructKind::Integers => Some(Ctx::integers()),
+            StructKind::Rationals => Some(Ctx::rationals()),
+            StructKind::Reals(d) => Some(self.real_ctx(*d)),
+            StructKind::Ring(r) => Some(r.ctx.clone()),
+            _ => None,
+        }
+    }
+
+    /// Wrap an element of the context of structure `s` as a value of `s`.
+    pub fn elem_to_value(&self, s: &Value, e: Elem) -> Value {
+        match s {
+            Value::Struct(st) => match &st.kind {
+                StructKind::Integers => Value::Int(e.to_integer().unwrap_or_default()),
+                StructKind::Rationals => Value::rat(e.to_rational().unwrap_or_default()),
+                StructKind::Reals(d) => match e.to_real() {
+                    Some(r) => Value::real(r, *d),
+                    None => Value::Undef,
+                },
+                StructKind::Ring(_) => make_elt(st, e),
+                _ => Value::Undef,
+            },
+            _ => Value::Undef,
+        }
+    }
+}
