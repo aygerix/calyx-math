@@ -20,6 +20,9 @@ use crate::sym::Sym;
 use crate::types::{TypeId, TypeVal, t};
 
 pub type FxBuild = BuildHasherDefault<FxHasher>;
+
+/// The results of a call: usually one value, held without allocating.
+pub type Vals = smallvec::SmallVec<[Value; 1]>;
 pub type VSet = IndexSet<Value, FxBuild>;
 pub type VMap<V> = IndexMap<Value, V, FxBuild>;
 
@@ -912,5 +915,14 @@ pub fn sort_values(v: &mut [Value]) -> bool {
         return false;
     }
     v.sort_by(|a, b| natural_cmp(a, b).unwrap_or(Ordering::Equal));
+    true
+}
+
+/// `sort_values` for the elements of a set, reordering them in place.
+pub fn sort_value_set(s: &mut VSet) -> bool {
+    if s.iter().zip(s.iter().skip(1)).any(|(a, b)| natural_cmp(a, b).is_none()) {
+        return false;
+    }
+    s.sort_by(|a, b| natural_cmp(a, b).unwrap_or(Ordering::Equal));
     true
 }

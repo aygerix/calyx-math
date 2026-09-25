@@ -9,7 +9,7 @@ use calyx_syntax::{FileId, Span};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::compile::{Compiler, UnitOptions};
-use crate::error::{ErrKind, RResult, RuntimeError};
+use crate::error::{ErrKind, ErrorInfo, RResult, RuntimeError};
 use crate::interp::{Flow, Frame, Interp, Package};
 use crate::intrinsics::{ArgSig, Imp, ParamSig, Signature};
 use crate::ir::IntrinsicDefIR;
@@ -30,7 +30,7 @@ fn syntax_error(e: &calyx_syntax::ParseError) -> RuntimeError {
     // Magma reports every syntax error the same way; the parser's detail is
     // not shown (except for literals it rejects).
     let msg = if e.message == "Illegal zero denominator" { e.message.as_str() } else { "bad syntax" };
-    RuntimeError { kind: ErrKind::Syntax, span: Some(e.span), ..RuntimeError::user(msg) }
+    ErrorInfo { kind: ErrKind::Syntax, span: Some(e.span), ..ErrorInfo::user(msg) }.into()
 }
 
 impl Interp {
@@ -95,11 +95,7 @@ impl Interp {
         let code = {
             let forwards = self.forwards.clone();
             let compiler = Compiler::new(&forwards, src, UnitOptions::default());
-            compiler.compile_unit(std::slice::from_ref(s), s.span).map_err(|e| RuntimeError {
-                kind: ErrKind::User,
-                span: Some(e.span),
-                ..RuntimeError::user(e.message)
-            })?
+            compiler.compile_unit(std::slice::from_ref(s), s.span).map_err(|e| RuntimeError::user(e.message).at(e.span))?
         };
         self.trace.clear();
         self.depth = 0;
@@ -146,7 +142,7 @@ impl Interp {
         match r? {
             ExecOutcome::Quit(c) => {
                 self.quit = Some(c);
-                Err(RuntimeError { kind: ErrKind::Interrupt, ..RuntimeError::runtime("quit") })
+                Err(ErrorInfo { kind: ErrKind::Interrupt, ..ErrorInfo::runtime("quit") }.into())
             }
             _ => Ok(()),
         }
@@ -253,7 +249,7 @@ impl Interp {
             if let Ok(e) = calyx_syntax::parse_expression(trimmed, file) {
                 let forwards = self.forwards.clone();
                 let compiler = Compiler::new(&forwards, trimmed, UnitOptions { package: false, eval_readonly: Some(readonly) });
-                let code = compiler.compile_expr_unit(&e).map_err(|e| RuntimeError { span: Some(e.span), ..RuntimeError::user(e.message) }).map_err(mark(true))?;
+                let code = compiler.compile_expr_unit(&e).map_err(|e| RuntimeError::user(e.message).at(e.span)).map_err(mark(true))?;
                 let saved = self.package_stack.len();
                 let r = self.run_unit(&code).map_err(mark(false));
                 self.package_stack.truncate(saved);
@@ -267,7 +263,7 @@ impl Interp {
         let forwards = self.forwards.clone();
         let compiler = Compiler::new(&forwards, &shown, UnitOptions { package: false, eval_readonly: Some(readonly) });
         let span = Span::new(file, 0, shown.len());
-        let code = compiler.compile_unit(&stmts, span).map_err(|e| RuntimeError { span: Some(e.span), ..RuntimeError::user(e.message) }).map_err(mark(true))?;
+        let code = compiler.compile_unit(&stmts, span).map_err(|e| RuntimeError::user(e.message).at(e.span)).map_err(mark(true))?;
         match self.run_unit(&code).map_err(mark(false))? {
             Flow::Return(mut v) if !v.is_empty() => Ok(v.remove(0)),
             _ => Err(RuntimeError::runtime("eval must return a value")),

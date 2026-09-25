@@ -42,8 +42,33 @@ pub enum ErrStyle {
     Plain,
 }
 
+/// A runtime error. Its details are boxed so that results stay small.
 #[derive(Clone)]
-pub struct RuntimeError {
+pub struct RuntimeError(Box<ErrorInfo>);
+
+impl std::ops::Deref for RuntimeError {
+    type Target = ErrorInfo;
+
+    fn deref(&self) -> &ErrorInfo {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for RuntimeError {
+    fn deref_mut(&mut self) -> &mut ErrorInfo {
+        &mut self.0
+    }
+}
+
+impl From<ErrorInfo> for RuntimeError {
+    fn from(info: ErrorInfo) -> RuntimeError {
+        RuntimeError(Box::new(info))
+    }
+}
+
+/// The details of a runtime error.
+#[derive(Clone)]
+pub struct ErrorInfo {
     pub kind: ErrKind,
     /// The intrinsic or operator in which the error arose (`'Gcd'`, `'/'`).
     pub context: Option<String>,
@@ -63,23 +88,39 @@ pub struct RuntimeError {
     pub eval_outer: Option<(Span, bool)>,
 }
 
+impl ErrorInfo {
+    pub fn runtime(message: impl Into<String>) -> ErrorInfo {
+        ErrorInfo { kind: ErrKind::Runtime, context: None, message: message.into(), span: None, trace: Vec::new(), object: None, at_caller: false, style: ErrStyle::Normal, eval_outer: None }
+    }
+
+    pub fn user(message: impl Into<String>) -> ErrorInfo {
+        ErrorInfo { kind: ErrKind::User, ..ErrorInfo::runtime(message) }
+    }
+}
+
 impl RuntimeError {
     pub fn runtime(message: impl Into<String>) -> RuntimeError {
-        RuntimeError { kind: ErrKind::Runtime, context: None, message: message.into(), span: None, trace: Vec::new(), object: None, at_caller: false, style: ErrStyle::Normal, eval_outer: None }
+        ErrorInfo::runtime(message).into()
     }
 
     pub fn user(message: impl Into<String>) -> RuntimeError {
-        RuntimeError { kind: ErrKind::User, ..RuntimeError::runtime(message) }
+        ErrorInfo::user(message).into()
     }
 
     pub fn interrupt() -> RuntimeError {
-        RuntimeError { kind: ErrKind::Interrupt, ..RuntimeError::runtime("Interrupted") }
+        ErrorInfo { kind: ErrKind::Interrupt, ..ErrorInfo::runtime("Interrupted") }.into()
     }
 
     pub fn in_context(mut self, ctx: impl Into<String>) -> RuntimeError {
         if self.context.is_none() {
             self.context = Some(ctx.into());
         }
+        self
+    }
+
+    /// Report the error where the current function was called.
+    pub fn at_caller(mut self) -> RuntimeError {
+        self.at_caller = true;
         self
     }
 
@@ -93,7 +134,7 @@ impl RuntimeError {
     /// An error raised by a statement such as `assert` (reported as
     /// `Runtime error in assert: ...`).
     pub fn statement(ctx: &str, message: impl Into<String>) -> RuntimeError {
-        RuntimeError { context: Some(ctx.to_string()), style: ErrStyle::Statement, ..RuntimeError::runtime(message) }
+        ErrorInfo { context: Some(ctx.to_string()), style: ErrStyle::Statement, ..ErrorInfo::runtime(message) }.into()
     }
 
     /// Whether the report ends with an extra blank line (errors raised by

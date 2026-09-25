@@ -51,42 +51,42 @@ fn real_arg(v: &Value) -> RResult<f64> {
     }
 }
 
-fn cputime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn cputime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let now = cpu_time();
     let t = if a.args.is_empty() { now } else { now - real_arg(&a.args[0])? };
     one(timing_value(t))
 }
 
-fn realtime(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn realtime(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let _ = it;
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
     let t = if a.args.is_empty() { now } else { now - real_arg(&a.args[0])? };
     one(timing_value(t))
 }
 
-fn clock_cycles(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn clock_cycles(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::int(it.start.elapsed().as_nanos() as i64))
 }
 
-fn time_start(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn time_start(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::str(&format!("{}", cpu_time())))
 }
 
-fn time_since(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn time_since(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let t0: f64 = a.str(0)?.parse().map_err(|_| RuntimeError::runtime("Argument must be a string returned by Time()"))?;
     one(Value::str(&format!("{:.3}", cpu_time() - t0)))
 }
 
-fn set_show_real_time(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn set_show_real_time(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     it.show_real_time = a.bool(0)?;
     none()
 }
 
-fn get_show_real_time(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn get_show_real_time(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     boolv(it.show_real_time)
 }
 
-fn set_verbose(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn set_verbose(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let flag: Rc<str> = Rc::from(a.str(0)?);
     let level = match &a.args[1] {
         Value::Int(i) => i.to_i64().unwrap_or(0),
@@ -101,16 +101,16 @@ fn set_verbose(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     none()
 }
 
-fn get_verbose(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn get_verbose(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::int(it.verbose_level(a.str(0)?)))
 }
 
-fn is_verbose(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_verbose(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let need = if a.args.len() > 1 { a.i64(1)? } else { 1 };
     boolv(it.verbose_level(a.str(0)?) >= need)
 }
 
-fn list_verbose(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn list_verbose(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     let mut flags: Vec<(Rc<str>, (i64, i64))> = it.verbose.iter().map(|(k, v)| (k.clone(), *v)).collect();
     flags.sort();
     for (k, (lvl, max)) in flags {
@@ -120,14 +120,14 @@ fn list_verbose(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
     none()
 }
 
-fn clear_verbose(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn clear_verbose(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     for v in it.verbose.values_mut() {
         v.0 = 0;
     }
     none()
 }
 
-fn set_assertions(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn set_assertions(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     it.assertions = match &a.args[0] {
         Value::Int(i) => i.to_i64().unwrap_or(1),
         Value::Bool(b) => *b as i64,
@@ -136,71 +136,71 @@ fn set_assertions(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     none()
 }
 
-fn get_assertions(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn get_assertions(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::int(it.assertions))
 }
 
-fn set_columns(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn set_columns(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.usize(0)?;
     it.out.columns = if n == 0 { usize::MAX / 4 } else { n.max(20) };
     none()
 }
 
-fn get_columns(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn get_columns(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     let c = if it.out.columns > 1_000_000 { 0 } else { it.out.columns };
     one(Value::int(c as i64))
 }
 
-fn set_auto_columns(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn set_auto_columns(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     it.out.auto_columns = a.bool(0)?;
     none()
 }
 
-fn set_quit_on_error(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn set_quit_on_error(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     it.quit_on_error = a.bool(0)?;
     none()
 }
 
-fn get_version(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn get_version(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     let v: Vec<i64> = env!("CARGO_PKG_VERSION").split('.').map(|p| p.parse().unwrap_or(0)).collect();
     Ok(v.into_iter().map(Value::int).collect())
 }
 
-fn get_script_filename(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn get_script_filename(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     let name = it.file_stack.last().map(|p| p.display().to_string()).unwrap_or_else(|| it.script_name.clone());
     one(Value::str(&name))
 }
 
-fn get_script_arguments(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn get_script_arguments(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     let args: Vec<Value> = it.script_args.iter().skip(1).map(|s| Value::str(s)).collect();
     one(Value::seq(Some(Value::strings()), args))
 }
 
-fn set_indent(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn set_indent(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     it.indent_width = a.usize(0)?;
     none()
 }
 
-fn get_indent(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn get_indent(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::int(it.indent_width as i64))
 }
 
-fn set_prompt(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn set_prompt(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     it.prompt = a.str(0)?.to_string();
     none()
 }
 
-fn set_path(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn set_path(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     it.search_path = a.str(0)?.split([' ', ':']).filter(|s| !s.is_empty()).map(std::path::PathBuf::from).collect();
     none()
 }
 
-fn get_path(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn get_path(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     let s: Vec<String> = it.search_path.iter().map(|p| p.display().to_string()).collect();
     one(Value::str(&s.join(" ")))
 }
 
-fn show_identifiers(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn show_identifiers(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     let mut names: Vec<String> = it.globals.keys().map(|k| k.to_string()).collect();
     names.sort();
     for n in names {
@@ -209,7 +209,7 @@ fn show_identifiers(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
     none()
 }
 
-fn show_values(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn show_values(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     let mut entries: Vec<(String, Value)> = it.globals.iter().map(|(k, v)| (k.to_string(), v.clone())).collect();
     entries.sort_by(|a, b| a.0.cmp(&b.0));
     for (n, v) in entries {
@@ -219,17 +219,17 @@ fn show_values(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
     none()
 }
 
-fn show_memory_usage(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn show_memory_usage(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     let mb = max_rss() as f64 / (1024.0 * 1024.0);
     it.out.write(&format!("Memory usage: {mb:.2}MB\n"));
     none()
 }
 
-fn get_memory_usage(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn get_memory_usage(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::int(max_rss()))
 }
 
-fn traceback(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn traceback(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     let frames: Vec<String> = it.trace.iter().rev().map(|f| f.name.to_string()).collect();
     for f in frames {
         it.out.write(&format!("  {f}\n"));
@@ -237,7 +237,7 @@ fn traceback(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
     none()
 }
 
-fn list_signatures(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn list_signatures(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (only, cat) = match (&a.args[0], a.args.get(1)) {
         (Value::Intr(name), Some(Value::Cat(c))) => (Some(*name), *c),
         (Value::Cat(c), None) => (None, *c),
@@ -269,7 +269,7 @@ fn list_signatures(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     none()
 }
 
-fn list_categories(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn list_categories(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     let mut names: Vec<String> = it.types.all().map(|(_, info)| info.name.to_string()).collect();
     names.sort();
     let mut line = String::new();
@@ -289,29 +289,29 @@ fn list_categories(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
     none()
 }
 
-fn no_op(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn no_op(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     none()
 }
 
-fn get_nthreads(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn get_nthreads(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::int(1))
 }
 
-fn set_profile(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn set_profile(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     it.profile = a.bool(0)?;
     none()
 }
 
-fn get_profile(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn get_profile(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     boolv(it.profile)
 }
 
-fn set_warn_override(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn set_warn_override(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     it.warn_override = a.bool(0)?;
     none()
 }
 
-fn set_print_level(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn set_print_level(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let l = a.str(0)?;
     Level::parse(l).ok_or_else(|| RuntimeError::runtime(format!("Unknown print level '{l}'")))?;
     none()

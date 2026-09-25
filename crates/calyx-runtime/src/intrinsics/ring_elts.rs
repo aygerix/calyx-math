@@ -20,7 +20,7 @@ fn truth(t: Truth) -> bool {
     t == Truth::True
 }
 
-fn is_unit(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_unit(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(match &a.args[0] {
         Value::Int(n) => n.is_one() || (-n).is_one(),
         Value::Rat(q) => q.sign() != 0,
@@ -29,18 +29,18 @@ fn is_unit(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     })
 }
 
-fn is_one(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_one(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let Value::Real(r) = &a.args[0] else { unreachable!() };
     boolv(r.x.to_rational().is_some_and(|q| q.is_integral() && q.numerator().is_one()))
 }
 
-fn is_minus_one(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_minus_one(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let Value::Real(r) = &a.args[0] else { unreachable!() };
     boolv(r.x.to_rational().is_some_and(|q| q.is_integral() && (-&q.numerator()).is_one()))
 }
 
 /// `x^2 = x`
-fn is_idempotent(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_idempotent(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let zero_or_one = |q: Option<calyx_flint::Rational>| q.is_some_and(|q| q.sign() == 0 || (q.is_integral() && q.numerator().is_one()));
     boolv(match &a.args[0] {
         Value::Int(n) => n.is_zero() || n.is_one(),
@@ -52,8 +52,8 @@ fn is_idempotent(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
 }
 
 /// Whether some power of x is zero, and if so the least such power.
-fn is_nilpotent(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let yes = |k: u64| Ok(vec![Value::Bool(true), Value::Int(Integer::from_u64(k))]);
+fn is_nilpotent(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let yes = |k: u64| Ok(vals![Value::Bool(true), Value::Int(Integer::from_u64(k))]);
     let zero = match &a.args[0] {
         Value::Int(n) => n.is_zero(),
         Value::Rat(q) => q.sign() == 0,
@@ -85,7 +85,7 @@ fn is_nilpotent(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
 }
 
 /// Whether x is a non-zero element with a non-zero multiple equal to zero.
-fn is_zero_divisor(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_zero_divisor(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let Value::Elt(e) = &a.args[0] else { return boolv(false) };
     boolv(match &e.ring().kind {
         RingKind::Residue(m) => !truth(e.x.is_zero()) && e.residue().is_some_and(|r| !r.gcd(m).is_one()),
@@ -124,11 +124,11 @@ fn elt_irreducible(e: &Rc<Elt>) -> RResult<bool> {
     }
 }
 
-fn is_irreducible(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_irreducible(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(irreducible(&a.args[0])?)
 }
 
-fn is_prime_elt(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_prime_elt(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     if let Value::Elt(e) = &a.args[0] {
         if matches!(e.ring().kind, RingKind::Residue(_)) {
             return Err(RuntimeError::runtime("Algorithm not possible for this type of element"));

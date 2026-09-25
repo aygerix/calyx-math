@@ -7,7 +7,7 @@ use crate::error::{RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
 use crate::value::*;
 
-fn binomial(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn binomial(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (n, k) = (a.int(0)?.clone(), a.int(1)?.clone());
     if k.sign() < 0 {
         return intv(Integer::zero());
@@ -26,7 +26,7 @@ fn binomial(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     intv(num.divexact(&Integer::factorial(k)))
 }
 
-fn multinomial(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn multinomial(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int(0)?.clone();
     let parts = super::ints::ints_of(&a.args[1])?;
     if parts.is_empty() {
@@ -46,7 +46,7 @@ fn multinomial(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     intv(r)
 }
 
-fn factorial(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn factorial(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.small_ge(0, 0)?;
     if n >= 100_000_000 {
         return Err(RuntimeError::runtime("Argument 1 is too large"));
@@ -54,9 +54,9 @@ fn factorial(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     intv(Integer::factorial(n))
 }
 
-fn is_factorial(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_factorial(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int(0)?.clone();
-    let no = Ok(vec![Value::Bool(false), Value::Undef]);
+    let no = Ok(vals![Value::Bool(false), Value::Undef]);
     if n.sign() <= 0 {
         return no;
     }
@@ -65,7 +65,7 @@ fn is_factorial(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     // Divide by 2, 3, ... while the quotient stays whole.
     loop {
         if m.is_one() {
-            return Ok(vec![Value::Bool(true), Value::Int(Integer::from_u64(k.max(1)))]);
+            return Ok(vals![Value::Bool(true), Value::Int(Integer::from_u64(k.max(1)))]);
         }
         let d = Integer::from_u64(k + 1);
         if !m.is_divisible_by(&d) {
@@ -109,7 +109,7 @@ fn partitions_value(ps: Vec<Vec<u64>>) -> Value {
     Value::seq(Some(inner), elems)
 }
 
-fn partitions(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn partitions(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int(0)?;
     if n.sign() < 0 {
         return Err(arg_not(1, "non-negative"));
@@ -119,12 +119,12 @@ fn partitions(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(partitions_value(partitions_of(n, &parts, None)))
 }
 
-fn number_of_partitions(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn number_of_partitions(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.small_ge(0, 0)?;
     intv(Integer::partitions(n))
 }
 
-fn restricted_partitions(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn restricted_partitions(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int(0)?;
     if n.sign() < 0 {
         return Err(arg_not(1, "positive"));
@@ -140,17 +140,17 @@ fn restricted_partitions(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Valu
     one(partitions_value(partitions_of(n, &parts, k)))
 }
 
-fn stirling_first(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn stirling_first(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (n, k) = (a.small_ge(0, 0)?, a.small_ge(1, 0)?);
     intv(Integer::stirling1(n, k))
 }
 
-fn stirling_second(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn stirling_second(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (n, k) = (a.small_ge(0, 0)?, a.small_ge(1, 0)?);
     intv(Integer::stirling2(n, k))
 }
 
-fn bell(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn bell(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.small_ge(0, 0).map_err(super::bare)?;
     intv(Integer::bell(n))
 }
@@ -167,18 +167,18 @@ fn generalized_fibonacci(g0: &Integer, g1: &Integer, n: i64) -> Integer {
     &(g0 * &fibonacci_any(n - 1)) + &(g1 * &fibonacci_any(n))
 }
 
-fn fibonacci(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn fibonacci(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(fibonacci_any(a.small(0)?))
 }
 
-fn lucas(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn lucas(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.small(0)?;
     let m = n.unsigned_abs();
     let l = if m == 0 { Integer::from_i64(2) } else { &Integer::fibonacci(m - 1) + &Integer::fibonacci(m + 1) };
     intv(if n < 0 && m % 2 == 1 { -l } else { l })
 }
 
-fn generalized_fibonacci_number(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn generalized_fibonacci_number(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.small(2)?;
     intv(generalized_fibonacci(a.int(0)?, a.int(1)?, n))
 }

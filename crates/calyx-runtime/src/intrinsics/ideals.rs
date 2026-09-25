@@ -14,28 +14,28 @@ fn generator(a: &CallArgs) -> Integer {
     int_ideal_gen(&a.args[0]).unwrap_or_default()
 }
 
-fn power_ideal(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn power_ideal(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::structure(StructKind::PowerStructure(t::RNG_INT)))
 }
 
-fn gen1(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn gen1(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(generator(a))
 }
 
-fn gens(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn gens(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::int_seq([generator(a)]))
 }
 
-fn is_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = generator(a);
     boolv(n.is_zero() || n.is_prime())
 }
 
-fn is_principal(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    Ok(vec![Value::Bool(true), Value::Int(generator(a))])
+fn is_principal(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    Ok(vals![Value::Bool(true), Value::Int(generator(a))])
 }
 
-fn is_zero(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_zero(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(generator(a).is_zero())
 }
 

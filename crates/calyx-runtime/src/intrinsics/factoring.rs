@@ -18,8 +18,8 @@ fn int(v: i64) -> Integer {
 }
 
 /// A factorization sequence and the composites left unfactored.
-fn fact_and_rest(f: &Fact, rest: Vec<Integer>) -> Vec<Value> {
-    vec![fact_value(f), Value::int_seq(rest)]
+fn fact_and_rest(f: &Fact, rest: Vec<Integer>) -> Vals {
+    vals![fact_value(f), Value::int_seq(rest)]
 }
 
 fn sorted_fact(mut f: Fact) -> Fact {
@@ -89,7 +89,7 @@ fn split_with(n: &Integer, method: &mut dyn FnMut(&Integer) -> Option<Integer>) 
     (sorted_fact(fact), rest)
 }
 
-fn factorization(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn factorization(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int(0)?.clone();
     if n.is_zero() {
         return Err(arg_not(1, "non-zero"));
@@ -146,12 +146,12 @@ fn factorization(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     let fact = sorted_fact(fact);
     // The sign and the unfactored part are returned only when asked for;
     // the latter stays unassigned when the factorization is complete.
-    let mut out = vec![fact_value(&fact), sign, if rest.is_empty() { Value::Undef } else { Value::int_seq(rest) }];
+    let mut out: Vals = vals![fact_value(&fact), sign, if rest.is_empty() { Value::Undef } else { Value::int_seq(rest) }];
     out.truncate(a.nresults.max(1));
     Ok(out)
 }
 
-fn store_factor(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn store_factor(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let ps = match &a.args[0] {
         Value::Int(n) => vec![n.clone()],
         v => super::ints::ints_of(v)?,
@@ -169,16 +169,16 @@ fn store_factor(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
             it.stored_factors.push(p);
         }
     }
-    Ok(Vec::new())
+    Ok(Vals::new())
 }
 
-fn get_stored_factors(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn get_stored_factors(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::int_seq(it.stored_factors.clone()))
 }
 
-fn clear_stored_factors(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn clear_stored_factors(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     it.stored_factors.clear();
-    Ok(Vec::new())
+    Ok(Vals::new())
 }
 
 // ----- trial division ---------------------------------------------------------------------
@@ -209,7 +209,7 @@ fn trial_division(n: &Integer, bound: u64) -> (Fact, Integer) {
     (fact, m)
 }
 
-fn trial_division_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn trial_division_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int(0)?.clone();
     if n.is_zero() {
         return Err(arg_not(1, "non-zero"));
@@ -224,7 +224,7 @@ fn trial_division_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> 
         10000
     };
     let (f, r) = trial_division(&n, bound);
-    Ok(vec![fact_value(&f), Value::Int(r)])
+    Ok(vals![fact_value(&f), Value::Int(r)])
 }
 
 // ----- Pollard rho --------------------------------------------------------------------------
@@ -273,7 +273,7 @@ fn pollard_rho(n: &Integer, c: &Integer, s: &Integer, k: u64) -> Option<Integer>
     if g == *n { None } else { Some(g) }
 }
 
-fn pollard_rho_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn pollard_rho_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int(0)?.clone();
     if n <= Integer::one() {
         return Err(RuntimeError::runtime("Argument 1 must be greater than 1"));
@@ -342,7 +342,7 @@ fn squfof(n: &Integer, limit: u64) -> Option<Integer> {
     None
 }
 
-fn squfof_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn squfof_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int(0)?.clone();
     if n <= Integer::one() {
         return Err(RuntimeError::runtime("Argument 1 must be greater than 1"));
@@ -496,18 +496,18 @@ fn pm1_args(it: &mut Interp, a: &CallArgs) -> RResult<(Integer, u64, u64, Intege
     Ok((n, b1, b2, x0))
 }
 
-fn p_minus_1_fn(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn p_minus_1_fn(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (n, b1, b2, x0) = pm1_args(it, a)?;
     match p_minus_1(&n, b1, b2, &x0) {
-        Attempt::Found(d) => Ok(vec![Value::Int(d), Value::Int(x0)]),
+        Attempt::Found(d) => Ok(vals![Value::Int(d), Value::Int(x0)]),
         Attempt::Failed => intv(Integer::zero()),
     }
 }
 
-fn p_plus_1_fn(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn p_plus_1_fn(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (n, b1, b2, x0) = pm1_args(it, a)?;
     match p_plus_1(&n, b1, b2, &x0) {
-        Attempt::Found(d) => Ok(vec![Value::Int(d), Value::Int(x0)]),
+        Attempt::Found(d) => Ok(vals![Value::Int(d), Value::Int(x0)]),
         Attempt::Failed => intv(Integer::zero()),
     }
 }
@@ -604,7 +604,7 @@ fn ecm_curve(n: &Integer, b1: u64, b2: u64, sigma: &Integer, x0: Option<&Integer
     })
 }
 
-fn ecm_fn(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn ecm_fn(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int(0)?.clone();
     if n <= Integer::one() {
         return Err(RuntimeError::runtime("Argument 1 should be greater than 1"));
@@ -614,12 +614,12 @@ fn ecm_fn(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     let sigma = param_int(a, "Sigma").unwrap_or_else(|| Integer::from_u64(6 + it.rng.below_u64((1 << 32) - 6)));
     let x0 = param_int(a, "x0");
     match ecm_curve(&n, b1, b2, &sigma, x0.as_ref()) {
-        Attempt::Found(d) => Ok(vec![Value::Int(d), Value::Int(sigma)]),
+        Attempt::Found(d) => Ok(vals![Value::Int(d), Value::Int(sigma)]),
         Attempt::Failed => intv(Integer::zero()),
     }
 }
 
-fn ecm_steps(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn ecm_steps(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int(0)?.clone();
     if n <= Integer::one() {
         return Err(RuntimeError::runtime("Argument 1 should be greater than 1"));
@@ -629,14 +629,14 @@ fn ecm_steps(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     while b1 <= hi {
         let sigma = Integer::from_u64(6 + it.rng.below_u64((1 << 32) - 6));
         if let Attempt::Found(d) = ecm_curve(&n, b1, 100 * b1, &sigma, None) {
-            return Ok(vec![Value::Int(d), Value::Int(sigma)]);
+            return Ok(vals![Value::Int(d), Value::Int(sigma)]);
         }
         b1 += (b1 as f64).sqrt() as u64;
     }
     intv(Integer::zero())
 }
 
-fn mpqs(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn mpqs(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int(0)?.clone();
     if n <= Integer::one() {
         return Err(RuntimeError::runtime("Argument 1 must be greater than 1"));
@@ -808,11 +808,11 @@ fn ecm_order_of(it: &mut Interp, a: &CallArgs) -> RResult<Integer> {
     Ok(c.order(&mut it.rng))
 }
 
-fn ecm_order(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn ecm_order(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(ecm_order_of(it, a)?)
 }
 
-fn ecm_factored_order(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn ecm_factored_order(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(fact_value(&factor(&ecm_order_of(it, a)?)))
 }
 
@@ -849,7 +849,7 @@ pub fn coprime_basis(s: &[Integer]) -> Fact {
         .collect()
 }
 
-fn coprime_basis_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn coprime_basis_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(fact_value(&coprime_basis(&super::ints::ints_of(&a.args[0])?)))
 }
 
@@ -978,7 +978,7 @@ fn partial_factorization(s: &[Integer]) -> Vec<(Fact, Fact)> {
         .collect()
 }
 
-fn partial_factorization_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn partial_factorization_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = super::ints::ints_of(&a.args[0])?;
     if s.iter().any(|x| x.is_zero()) {
         return Err(RuntimeError::runtime("The integers must be non-zero"));
@@ -1019,7 +1019,7 @@ fn moebius(n: u64) -> i32 {
     }
 }
 
-fn cunningham(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn cunningham(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (b, k, c) = (a.int(0)?.clone(), a.int(1)?.clone(), a.int(2)?.clone());
     if b < int(2) || b > int(1073741823) {
         return Err(arg_range(1, &b, 2, 1073741823));

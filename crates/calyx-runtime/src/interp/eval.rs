@@ -46,7 +46,7 @@ impl Interp {
     pub fn eval_multi(&mut self, e: &E, f: &mut Frame, nres: usize) -> RResult<Vec<Value>> {
         match &e.kind {
             Ex::Call(c) => match self.call_expr(c, f, nres, false, e.span)? {
-                Some(v) if !v.is_empty() => Ok(v),
+                Some(v) if !v.is_empty() => Ok(v.into_vec()),
                 _ => Err(RuntimeError::runtime("Procedure call has no return value").at(e.span)),
             },
             Ex::Previous(n) => self.previous_values(*n).ok_or_else(|| RuntimeError::user(format!("There is no previous value ${n}")).at(e.span)),

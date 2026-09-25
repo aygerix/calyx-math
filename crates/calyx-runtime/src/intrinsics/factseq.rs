@@ -174,11 +174,11 @@ impl Interp {
 
 // ----- conversions -------------------------------------------------------------
 
-fn facint(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn facint(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(fact_int(&fact_of(&a.args[0])))
 }
 
-fn seqfact(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn seqfact(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let bad = || RuntimeError::runtime("Sequence not a factorization list (must be a sequence of ordered <prime, exponent> tuples)");
     let pairs = pairs_of(&a.args[0]).ok_or_else(bad)?;
     let mut f = Fact::with_capacity(pairs.len());
@@ -237,11 +237,11 @@ fn at_least_two(i: usize, n: &Integer) -> RResult<()> {
     if *n < Integer::from_i64(2) { Err(arg_ge(i, n, 2)) } else { Ok(()) }
 }
 
-fn divisors(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn divisors(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::int_seq(divisors_of(&fact_arg(a, 0, at_least_one)?)))
 }
 
-fn prime_divisors(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn prime_divisors(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = match &a.args[0] {
         Value::Int(n) if n.is_zero() => return Err(arg_not(1, "non-zero")),
         Value::Int(n) => factor(n),
@@ -265,15 +265,15 @@ fn sigma(f: &Fact, k: u64) -> Integer {
     s
 }
 
-fn number_of_divisors(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn number_of_divisors(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(sigma(&fact_arg(a, 0, positive)?, 0))
 }
 
-fn sum_of_divisors(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn sum_of_divisors(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(sigma(&fact_arg(a, 0, positive)?, 1))
 }
 
-fn divisor_sigma(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn divisor_sigma(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let k = a.small_ge(0, 0)?;
     intv(sigma(&fact_arg(a, 1, at_least_one)?, k))
 }
@@ -286,7 +286,7 @@ pub fn phi(f: &Fact) -> Integer {
     r
 }
 
-fn euler_phi(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn euler_phi(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(phi(&fact_arg(a, 0, positive)?))
 }
 
@@ -303,7 +303,7 @@ pub fn factored_phi(f: &Fact) -> Fact {
     out
 }
 
-fn factored_euler_phi(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn factored_euler_phi(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(fact_value(&factored_phi(&fact_arg(a, 0, positive)?)))
 }
 
@@ -331,15 +331,15 @@ fn factored_lambda(f: &Fact) -> Fact {
     out
 }
 
-fn carmichael_lambda(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn carmichael_lambda(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(fact_int(&factored_lambda(&fact_arg(a, 0, at_least_two)?)))
 }
 
-fn factored_carmichael_lambda(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn factored_carmichael_lambda(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(fact_value(&factored_lambda(&fact_arg(a, 0, positive)?)))
 }
 
-fn moebius_mu(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn moebius_mu(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = fact_arg(a, 0, at_least_one)?;
     let mu = if f.iter().any(|(_, e)| *e > 1) {
         0
@@ -387,7 +387,7 @@ pub fn phi_inverse(m: &Integer) -> Vec<Integer> {
     out
 }
 
-fn euler_phi_inverse(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn euler_phi_inverse(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let m = match &a.args[0] {
         Value::Int(n) => {
             if n.sign() <= 0 {
@@ -400,7 +400,7 @@ fn euler_phi_inverse(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> 
     one(Value::int_seq(phi_inverse(&m)))
 }
 
-fn factored_euler_phi_inverse(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn factored_euler_phi_inverse(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let m = match &a.args[0] {
         Value::Int(n) => {
             if n.sign() <= 0 {
@@ -431,11 +431,11 @@ fn cmp_fact(a: &Fact, b: &Fact) -> std::cmp::Ordering {
     a.len().cmp(&b.len())
 }
 
-fn gcd_fact(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn gcd_fact(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(fact_value(&fact_merge(&fact_of(&a.args[0]), &fact_of(&a.args[1]), u64::min)))
 }
 
-fn lcm_fact(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn lcm_fact(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(fact_value(&fact_merge(&fact_of(&a.args[0]), &fact_of(&a.args[1]), u64::max)))
 }
 
@@ -446,45 +446,45 @@ pub fn squarefree_split(f: &Fact) -> (Fact, Fact) {
     (x, y)
 }
 
-fn squarefree_factorization_fact(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn squarefree_factorization_fact(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (x, y) = squarefree_split(&fact_of(&a.args[0]));
-    Ok(vec![fact_value(&x), fact_value(&y)])
+    Ok(vals![fact_value(&x), fact_value(&y)])
 }
 
 // ----- predicates --------------------------------------------------------------
 
-fn fact_is_one(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn fact_is_one(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(fact_of(&a.args[0]).is_empty())
 }
 
-fn fact_is_even(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn fact_is_even(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let two = Integer::from_i64(2);
     boolv(fact_of(&a.args[0]).iter().any(|(p, _)| *p == two))
 }
 
-fn fact_is_odd(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn fact_is_odd(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let two = Integer::from_i64(2);
     boolv(!fact_of(&a.args[0]).iter().any(|(p, _)| *p == two))
 }
 
-fn fact_is_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn fact_is_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = fact_of(&a.args[0]);
     boolv(f.len() == 1 && f[0].1 == 1)
 }
 
-fn fact_is_prime_power(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn fact_is_prime_power(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(fact_of(&a.args[0]).len() <= 1)
 }
 
-fn fact_is_square(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn fact_is_square(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = fact_of(&a.args[0]);
     if f.iter().any(|(_, e)| e % 2 == 1) {
         return boolv(false);
     }
-    Ok(vec![Value::Bool(true), fact_value(&f.iter().map(|(p, e)| (p.clone(), e / 2)).collect::<Fact>())])
+    Ok(vals![Value::Bool(true), fact_value(&f.iter().map(|(p, e)| (p.clone(), e / 2)).collect::<Fact>())])
 }
 
-fn fact_is_squarefree(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn fact_is_squarefree(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(fact_of(&a.args[0]).iter().all(|(_, e)| *e == 1))
 }
 

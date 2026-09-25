@@ -12,3 +12,4 @@ calyx-syntax = { workspace = true }
 indexmap = { workspace = true }
 regex = { workspace = true }
 rustc-hash = { workspace = true }
+smallvec = { workspace = true }

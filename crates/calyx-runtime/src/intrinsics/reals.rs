@@ -38,12 +38,12 @@ pub fn timing_value(secs: f64) -> Value {
     Value::Real(std::rc::Rc::new(RealV { x, digits: DEFAULT_DIGITS, fixed: Some(3) }))
 }
 
-fn real_field(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn real_field(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let d = if a.args.is_empty() { DEFAULT_DIGITS } else { a.int(0)?.to_u64().filter(|&d| d >= 1 && d <= 1_000_000).ok_or_else(|| RuntimeError::runtime("Precision must be positive"))? as u32 };
     one(Value::reals(d))
 }
 
-fn sqrt(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn sqrt(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let digits = match &a.args[0] {
         Value::Real(r) => r.digits,
         _ => DEFAULT_DIGITS,
@@ -55,7 +55,7 @@ fn sqrt(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     }
 }
 
-fn precision(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn precision(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     match &a.args[0] {
         Value::Struct(s) => match &s.kind {
             StructKind::Reals(d) => one(Value::int(*d as i64)),
@@ -66,27 +66,27 @@ fn precision(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     }
 }
 
-fn extended_reals(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn extended_reals(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::extended_reals())
 }
 
-fn infinity(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn infinity(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::Infinity(true))
 }
 
-fn minus_infinity(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn minus_infinity(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::Infinity(false))
 }
 
-fn infinity_abs(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn infinity_abs(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::Infinity(true))
 }
 
-fn infinity_sign(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn infinity_sign(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::int(if matches!(a.args[0], Value::Infinity(true)) { 1 } else { -1 }))
 }
 
-fn infinity_is_finite(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn infinity_is_finite(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::Bool(false))
 }
 

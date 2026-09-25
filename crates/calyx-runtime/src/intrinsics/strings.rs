@@ -12,12 +12,12 @@ fn str_seq(v: Vec<String>) -> Value {
     Value::seq(Some(Value::strings()), v.into_iter().map(|s| Value::str(&s)).collect())
 }
 
-fn eltseq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn eltseq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = a.str(0)?;
     one(str_seq(s.chars().map(|c| c.to_string()).collect()))
 }
 
-fn substring(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn substring(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s: Vec<char> = a.str(0)?.chars().collect();
     let n = a.i64(1)?;
     let k = a.i64(2)?;
@@ -29,7 +29,7 @@ fn substring(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(Value::str(&s[start..end].iter().collect::<String>()))
 }
 
-fn position(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn position(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = a.str(0)?;
     let t = a.str(1)?;
     match s.find(t) {
@@ -38,14 +38,14 @@ fn position(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     }
 }
 
-fn string_to_code(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn string_to_code(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     match a.str(0)?.chars().next() {
         Some(c) => one(Value::int(c as i64)),
         None => Err(RuntimeError::runtime("Argument must be a non-empty string")),
     }
 }
 
-fn code_to_string(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn code_to_string(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.i64(0)?;
     match u32::try_from(n).ok().and_then(char::from_u32) {
         Some(c) => one(Value::str(&c.to_string())),
@@ -58,7 +58,7 @@ fn parse_int_in_base(s: &str, base: u32) -> RResult<Integer> {
     Integer::parse_radix(t, base).ok_or_else(|| RuntimeError::runtime(format!("\"{s}\" is not an integer in base {base}")))
 }
 
-fn string_to_integer(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn string_to_integer(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = a.str(0)?;
     let base = if a.args.len() > 1 {
         match &a.args[1] {
@@ -72,7 +72,7 @@ fn string_to_integer(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> 
     intv(parse_int_in_base(s, base)?)
 }
 
-fn string_to_integer_sequence(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn string_to_integer_sequence(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = a.str(0)?;
     let mut v = Vec::new();
     for w in s.split_whitespace() {
@@ -81,7 +81,7 @@ fn string_to_integer_sequence(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec
     one(Value::int_seq(v))
 }
 
-fn integer_to_string(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn integer_to_string(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int(0)?;
     let base = if a.args.len() > 1 {
         let b = a.int(1)?;
@@ -92,7 +92,7 @@ fn integer_to_string(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> 
     one(Value::str(&n.to_string_radix(base).to_uppercase()))
 }
 
-fn split(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn split(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = a.str(0)?.to_string();
     let delims: Vec<char> = if a.args.len() > 1 { a.str(1)?.chars().collect() } else { vec!['\n'] };
     let include_empty = a.param_bool("IncludeEmpty")?;
@@ -108,7 +108,7 @@ fn split(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(str_seq(parts))
 }
 
-fn regexp(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn regexp(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let pat = a.str(0)?;
     let s = a.str(1)?;
     let re = regex::Regex::new(pat).map_err(|e| RuntimeError::runtime(format!("Bad regular expression: {e}")))?;
@@ -116,13 +116,13 @@ fn regexp(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
         Some(caps) => {
             let whole = caps.get(0).map(|m| m.as_str()).unwrap_or("").to_string();
             let groups: Vec<String> = (1..caps.len()).map(|i| caps.get(i).map(|m| m.as_str().to_string()).unwrap_or_default()).collect();
-            Ok(vec![Value::Bool(true), Value::str(&whole), str_seq(groups)])
+            Ok(vals![Value::Bool(true), Value::str(&whole), str_seq(groups)])
         }
-        None => Ok(vec![Value::Bool(false), Value::Undef, Value::Undef]),
+        None => Ok(vals![Value::Bool(false), Value::Undef, Value::Undef]),
     }
 }
 
-fn sprint(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn sprint(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let v = a.args[0].clone();
     let level = if a.args.len() > 1 {
         let l = a.str(1)?;
@@ -133,32 +133,32 @@ fn sprint(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(Value::str(&it.format_value(&v, level)?))
 }
 
-fn sprintf(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn sprintf(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let vals = a.args.clone();
     one(Value::str(&it.sprintf(&vals)?))
 }
 
-fn to_lower(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn to_lower(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::str(&a.str(0)?.to_lowercase()))
 }
 
-fn to_upper(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn to_upper(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::str(&a.str(0)?.to_uppercase()))
 }
 
-fn reverse_string(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn reverse_string(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::str(&a.str(0)?.chars().rev().collect::<String>()))
 }
 
-fn is_empty_string(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_empty_string(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(a.str(0)?.is_empty())
 }
 
-fn strings(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn strings(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::strings())
 }
 
-fn int_from_string(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn int_from_string(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(parse_int_in_base(a.str(0)?, 10)?)
 }
 

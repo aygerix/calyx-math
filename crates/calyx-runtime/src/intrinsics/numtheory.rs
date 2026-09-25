@@ -26,25 +26,25 @@ fn proof(a: &CallArgs) -> bool {
     !matches!(a.param("Proof"), Some(Value::Bool(false)))
 }
 
-fn is_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(prime_test(a.int(0)?, proof(a)))
 }
 
-fn is_probable_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_probable_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(a.int(0)?.is_probable_prime())
 }
 
-fn is_prime_power(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_prime_power(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int_ge(0, 2)?;
     let (b, e) = n.perfect_power().unwrap_or((n.clone(), 1));
     // b^e with e largest; b is then prime if n is a prime power.
     if b.is_prime() {
-        return Ok(vec![Value::Bool(true), Value::Int(b), Value::Int(Integer::from_u64(e))]);
+        return Ok(vals![Value::Bool(true), Value::Int(b), Value::Int(Integer::from_u64(e))]);
     }
-    Ok(vec![Value::Bool(false), Value::Undef, Value::Undef])
+    Ok(vals![Value::Bool(false), Value::Undef, Value::Undef])
 }
 
-fn next_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn next_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int_ge(0, 0)?;
     if proof(a) {
         return intv(n.next_prime());
@@ -56,7 +56,7 @@ fn next_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     intv(p)
 }
 
-fn previous_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn previous_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(a.int_ge(0, 3)?.previous_prime().unwrap())
 }
 
@@ -116,7 +116,7 @@ pub fn primes_up_to(n: u64) -> Vec<u64> {
     out
 }
 
-fn primes_up_to_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn primes_up_to_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int(0)?;
     if n.sign() <= 0 {
         return Err(RuntimeError::runtime("Limit must be positive"));
@@ -130,7 +130,7 @@ fn primes_up_to_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(Value::int_seq(out))
 }
 
-fn primes_in_interval(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn primes_in_interval(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (lo, hi) = (a.int(0)?.clone(), a.int(1)?.clone());
     if hi < lo {
         return Err(RuntimeError::runtime("Upper limit < Lower Limit !"));
@@ -285,14 +285,14 @@ fn nth_prime_of(n: u64) -> u64 {
     found
 }
 
-fn nth_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn nth_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int_ge(0, 0)?.to_u64().filter(|&n| n <= PRIME_COUNTS[999] as u64).ok_or_else(|| RuntimeError::runtime("Integer is too large"))?;
     intv(if n == 0 { Integer::one() } else { Integer::from_u64(nth_prime_of(n)) })
 }
 
 // ----- modular arithmetic --------------------------------------------------------
 
-fn modexp(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn modexp(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (n, k, m) = (a.int(0)?.clone(), a.int(1)?.clone(), a.int(2)?.clone());
     if m.sign() <= 0 {
         return Err(arg_ge(3, &m, 2));
@@ -307,7 +307,7 @@ fn modexp(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     }
 }
 
-fn modinv(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn modinv(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let m = a.int_ge(1, 1)?;
     if m.is_one() {
         return intv(Integer::zero());
@@ -527,7 +527,7 @@ pub fn modsqrt(n: &Integer, m: &Integer) -> Option<Integer> {
     Some(modp(&x, &big))
 }
 
-fn modsqrt_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn modsqrt_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let m = a.int_ge(1, 2)?;
     match modsqrt(a.int(0)?, &m) {
         Some(r) => intv(r),
@@ -535,12 +535,12 @@ fn modsqrt_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     }
 }
 
-fn modorder_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn modorder_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let m = a.int_ge(1, 2)?;
     intv(super::ints::modorder(a.int(0)?, &m))
 }
 
-fn is_primitive(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_primitive(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let m = a.int_ge(1, 2)?;
     let n = a.int_ge(0, 1)?;
     let top = &m - 1;
@@ -551,7 +551,7 @@ fn is_primitive(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     boolv(!order.is_zero() && order == m.euler_phi())
 }
 
-fn primitive_root(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn primitive_root(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let m = a.int_ge(0, 2)?;
     intv(super::ints::primitive_root(&m).unwrap_or_else(Integer::zero))
 }
@@ -570,11 +570,11 @@ fn linear_congruence(a: &Integer, b: &Integer, m: &Integer) -> Option<(Integer, 
     Some((modp(&(&b.divexact(&g) * &inv), &k), k))
 }
 
-fn solution(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn solution(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let m = a.int_ge(2, 1)?;
     match linear_congruence(a.int(0)?, a.int(1)?, &m) {
-        Some((x, k)) => Ok(vec![Value::Int(x), Value::Int(k)]),
-        None => Ok(vec![Value::int(-1), Value::Undef]),
+        Some((x, k)) => Ok(vals![Value::Int(x), Value::Int(k)]),
+        None => Ok(vals![Value::int(-1), Value::Undef]),
     }
 }
 
@@ -595,7 +595,7 @@ fn int_elems(v: &Value) -> RResult<Vec<Integer>> {
     super::ints::ints_of(v)
 }
 
-fn crt(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn crt(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (xs, ms) = (int_elems(&a.args[0])?, int_elems(&a.args[1])?);
     if xs.is_empty() {
         return Err(RuntimeError::runtime("Sequence argument 1 must be non-empty"));
@@ -616,7 +616,7 @@ fn crt(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     intv(x)
 }
 
-fn solution_seq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn solution_seq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (aa, bb, nn) = (int_elems(&a.args[0])?, int_elems(&a.args[1])?, int_elems(&a.args[2])?);
     if aa.len() != bb.len() || aa.len() != nn.len() {
         return Err(RuntimeError::runtime("Lengths of sequence arguments should be the same"));
@@ -639,7 +639,7 @@ fn solution_seq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
 
 // ----- residue symbols -------------------------------------------------------------
 
-fn legendre(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn legendre(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let p = a.int_ge(1, 3)?;
     if !p.is_prime() {
         return Err(arg_prime(2, &p));
@@ -647,7 +647,7 @@ fn legendre(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(Value::int(a.int(0)?.kronecker(&p) as i64))
 }
 
-fn jacobi(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn jacobi(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int_ge(1, 3)?;
     if n.is_even() {
         return Err(RuntimeError::runtime(format!("Argument 2 ({n}) should not be divisible by 2")));
@@ -655,7 +655,7 @@ fn jacobi(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(Value::int(a.int(0)?.kronecker(&n) as i64))
 }
 
-fn kronecker(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn kronecker(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::int(a.int(0)?.kronecker(a.int(1)?) as i64))
 }
 
@@ -718,14 +718,14 @@ pub fn norm_equation(d: &Integer, m: &Integer) -> Option<(Integer, Integer)> {
     None
 }
 
-fn norm_equation_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn norm_equation_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (d, m) = (a.int(0)?.clone(), a.int(1)?.clone());
     if d.sign() <= 0 || m.sign() < 0 {
         return Err(RuntimeError::runtime("Argument 1 must be positive and argument 2 non-negative"));
     }
     match norm_equation(&d, &m) {
-        Some((x, y)) => Ok(vec![Value::Bool(true), Value::Int(x), Value::Int(y)]),
-        None => Ok(vec![Value::Bool(false), Value::Undef, Value::Undef]),
+        Some((x, y)) => Ok(vals![Value::Bool(true), Value::Int(x), Value::Int(y)]),
+        None => Ok(vals![Value::Bool(false), Value::Undef, Value::Undef]),
     }
 }
 
@@ -767,7 +767,7 @@ fn dickman_rho(u: &Real, digits: u32) -> Real {
     r.round_to(bits_for_digits(digits as u64))
 }
 
-fn dickman_rho_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn dickman_rho_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let digits = match &a.args[0] {
         Value::Real(r) => r.digits,
         _ => DEFAULT_DIGITS,

@@ -14,15 +14,15 @@ fn map_arg(a: &CallArgs, i: usize) -> Rc<MapObj> {
     }
 }
 
-fn coercion_map(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn coercion_map(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::Map(Rc::new(MapObj { kind: MapKind::Map, domain: a.args[0].clone(), codomain: a.args[1].clone(), imp: MapImpl::Coercion })))
 }
 
-fn identity_map(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn identity_map(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::Map(Rc::new(MapObj { kind: MapKind::Map, domain: a.args[0].clone(), codomain: a.args[0].clone(), imp: MapImpl::Coercion })))
 }
 
-fn domain(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn domain(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     match &a.args[0] {
         Value::Map(m) => one(m.domain.clone()),
         Value::Struct(s) => match &s.kind {
@@ -33,7 +33,7 @@ fn domain(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     }
 }
 
-fn codomain(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn codomain(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     match &a.args[0] {
         Value::Map(m) => one(m.codomain.clone()),
         Value::Struct(s) => match &s.kind {
@@ -44,7 +44,7 @@ fn codomain(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     }
 }
 
-fn image(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn image(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let m = map_arg(a, 0);
     let dom = m.domain.clone();
     let mut iter = it.iter_value(&dom, false).map_err(|_| RuntimeError::runtime("The image can only be computed for maps with a finite domain"))?;
@@ -55,14 +55,14 @@ fn image(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(it.build_aggregate(calyx_syntax::ast::AggKind::Set, Some(m.codomain.clone()), out, false)?)
 }
 
-fn inverse(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn inverse(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let m = map_arg(a, 0);
     match &m.imp {
         _ => one(Value::Map(Rc::new(MapObj { kind: m.kind, domain: m.codomain.clone(), codomain: m.domain.clone(), imp: MapImpl::Inverse(m.clone()) }))),
     }
 }
 
-fn function(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn function(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let m = map_arg(a, 0);
     match &m.imp {
         MapImpl::Rule { f, .. } => one(f.clone()),
@@ -70,19 +70,19 @@ fn function(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     }
 }
 
-fn has_preimage(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn has_preimage(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let y = a.args[0].clone();
     let m = map_arg(a, 1);
     // The preimage is only returned when it is asked for.
     let want = a.nresults >= 2;
     match it.map_preimage(&m, &y) {
-        Ok(x) if want => Ok(vec![Value::Bool(true), x]),
-        Ok(_) => Ok(vec![Value::Bool(true)]),
-        Err(_) => Ok(vec![Value::Bool(false), Value::Undef]),
+        Ok(x) if want => Ok(vals![Value::Bool(true), x]),
+        Ok(_) => Ok(vals![Value::Bool(true)]),
+        Err(_) => Ok(vals![Value::Bool(false), Value::Undef]),
     }
 }
 
-fn components(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn components(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let m = map_arg(a, 0);
     let parts: Vec<Value> = match &m.imp {
         MapImpl::Compose(ms) => ms.iter().map(|x| Value::Map(x.clone())).collect(),
@@ -91,28 +91,28 @@ fn components(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(Value::seq(None, parts))
 }
 
-fn maps(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn maps(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::structure(StructKind::Maps(a.args[0].clone(), a.args[1].clone())))
 }
 
-fn aut(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn aut(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::structure(StructKind::Maps(a.args[0].clone(), a.args[0].clone())))
 }
 
-fn is_injective(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_injective(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let m = map_arg(a, 0);
     let dom = m.domain.clone();
     let mut iter = it.iter_value(&dom, false)?;
     let mut seen = VSet::default();
     while let Some((_, x)) = iter.next_item() {
         if !seen.insert(it.apply_map(&m, &x)?) {
-            return Ok(vec![Value::Bool(false)]);
+            return Ok(vals![Value::Bool(false)]);
         }
     }
-    Ok(vec![Value::Bool(true)])
+    Ok(vals![Value::Bool(true)])
 }
 
-fn is_surjective(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_surjective(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let m = map_arg(a, 0);
     let dom = m.domain.clone();
     let mut iter = it.iter_value(&dom, false)?;
@@ -124,13 +124,13 @@ fn is_surjective(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     let mut iter = it.iter_value(&cod, false)?;
     while let Some((_, y)) = iter.next_item() {
         if !seen.contains(&y) {
-            return Ok(vec![Value::Bool(false)]);
+            return Ok(vals![Value::Bool(false)]);
         }
     }
-    Ok(vec![Value::Bool(true)])
+    Ok(vals![Value::Bool(true)])
 }
 
-fn is_bijective(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_bijective(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let inj = is_injective(it, a)?;
     if inj[0] == Value::Bool(false) {
         return Ok(inj);
@@ -138,7 +138,7 @@ fn is_bijective(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     is_surjective(it, a)
 }
 
-fn graph(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn graph(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let m = map_arg(a, 0);
     let dom = m.domain.clone();
     let mut iter = it.iter_value(&dom, false)?;

@@ -77,6 +77,8 @@ pub struct CallEx {
     pub func: E,
     pub args: Vec<CArg>,
     pub params: Vec<(Sym, E)>,
+    /// The intrinsic signature chosen here last time.
+    pub site: crate::intrinsics::SigCache,
 }
 
 pub enum CArg {

@@ -43,6 +43,9 @@ impl Integer {
 
     #[inline]
     pub fn from_i64(v: i64) -> Self {
+        if v.unsigned_abs() <= COEFF_MAX {
+            return Integer { raw: v as sys::fmpz };
+        }
         let mut z = Integer::zero();
         unsafe { sys::fmpz_set_si(&mut z.raw, v as sys::slong) };
         z
@@ -139,6 +142,9 @@ impl Integer {
 
     #[inline]
     pub fn to_i64(&self) -> Option<i64> {
+        if let Some(v) = self.to_i64_fast() {
+            return Some(v);
+        }
         if unsafe { sys::fmpz_fits_si(&self.raw) } != 0 {
             Some(unsafe { sys::fmpz_get_si(&self.raw) } as i64)
         } else {
@@ -184,7 +190,10 @@ impl Integer {
 
     #[inline]
     pub fn sign(&self) -> i32 {
-        unsafe { sys::fmpz_sgn(&self.raw) }
+        match self.to_i64_fast() {
+            Some(v) => v.signum() as i32,
+            None => unsafe { sys::fmpz_sgn(&self.raw) },
+        }
     }
 
     #[inline]
@@ -251,6 +260,14 @@ impl Integer {
     pub fn fdiv_qr(&self, d: &Integer) -> Option<(Integer, Integer)> {
         if d.is_zero() {
             return None;
+        }
+        if let Some((a, b)) = self.both_small(d) {
+            let (mut q, mut r) = (a / b, a % b);
+            if r != 0 && (r < 0) != (b < 0) {
+                q -= 1;
+                r += b;
+            }
+            return Some((Integer::from_i64(q), Integer::from_i64(r)));
         }
         let mut q = Integer::zero();
         let mut r = Integer::zero();
@@ -631,6 +648,9 @@ impl Drop for Integer {
     }
 }
 
+/// The largest absolute value FLINT stores inline in the word.
+const COEFF_MAX: u64 = (1 << 62) - 1;
+
 impl Integer {
     /// FLINT marks heap-allocated values by setting the two top bits of the
     /// word to `01`; anything else is an inline small integer.
@@ -638,6 +658,18 @@ impl Integer {
     fn to_i64_fast(&self) -> Option<i64> {
         let v = self.raw as i64;
         if ((v as u64) >> 62) == 1 { None } else { Some(v) }
+    }
+
+    /// Both values, if both are inline.
+    #[inline]
+    fn both_small(&self, other: &Integer) -> Option<(i64, i64)> {
+        Some((self.to_i64_fast()?, other.to_i64_fast()?))
+    }
+
+    /// An inline value, if `v` is small enough to be one.
+    #[inline]
+    fn small(v: i128) -> Option<Integer> {
+        (v.unsigned_abs() <= COEFF_MAX as u128).then(|| Integer { raw: v as i64 as sys::fmpz })
     }
 }
 
@@ -662,6 +694,9 @@ impl Default for Integer {
 impl PartialEq for Integer {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
+        if let Some((a, b)) = self.both_small(other) {
+            return a == b;
+        }
         unsafe { sys::fmpz_equal(&self.raw, &other.raw) != 0 }
     }
 }
@@ -677,6 +712,9 @@ impl PartialOrd for Integer {
 impl Ord for Integer {
     #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
+        if let Some((a, b)) = self.both_small(other) {
+            return a.cmp(&b);
+        }
         unsafe { sys::fmpz_cmp(&self.raw, &other.raw) }.cmp(&0)
     }
 }
@@ -724,11 +762,14 @@ impl From<usize> for Integer {
 }
 
 macro_rules! binop {
-    ($trait:ident, $method:ident, $ffi:ident) => {
+    ($trait:ident, $method:ident, $ffi:ident, $small:ident) => {
         impl ops::$trait<&Integer> for &Integer {
             type Output = Integer;
             #[inline]
             fn $method(self, rhs: &Integer) -> Integer {
+                if let Some(z) = self.both_small(rhs).and_then(|(a, b)| Integer::small((a as i128).$small(b as i128))) {
+                    return z;
+                }
                 let mut z = Integer::zero();
                 unsafe { sys::$ffi(&mut z.raw, &self.raw, &rhs.raw) };
                 z
@@ -758,9 +799,9 @@ macro_rules! binop {
     };
 }
 
-binop!(Add, add, fmpz_add);
-binop!(Sub, sub, fmpz_sub);
-binop!(Mul, mul, fmpz_mul);
+binop!(Add, add, fmpz_add, wrapping_add);
+binop!(Sub, sub, fmpz_sub, wrapping_sub);
+binop!(Mul, mul, fmpz_mul, wrapping_mul);
 
 impl ops::Neg for &Integer {
     type Output = Integer;
@@ -779,20 +820,37 @@ impl ops::Neg for Integer {
     }
 }
 
+// An inline result replaces an inline value directly; a small `self` owns
+// nothing that would need clearing.
 impl ops::AddAssign<&Integer> for Integer {
+    #[inline]
     fn add_assign(&mut self, rhs: &Integer) {
+        if let Some(z) = self.both_small(rhs).and_then(|(a, b)| Integer::small(a as i128 + b as i128)) {
+            self.raw = z.raw;
+            return;
+        }
         unsafe { sys::fmpz_add(&mut self.raw, &self.raw, &rhs.raw) };
     }
 }
 
 impl ops::SubAssign<&Integer> for Integer {
+    #[inline]
     fn sub_assign(&mut self, rhs: &Integer) {
+        if let Some(z) = self.both_small(rhs).and_then(|(a, b)| Integer::small(a as i128 - b as i128)) {
+            self.raw = z.raw;
+            return;
+        }
         unsafe { sys::fmpz_sub(&mut self.raw, &self.raw, &rhs.raw) };
     }
 }
 
 impl ops::MulAssign<&Integer> for Integer {
+    #[inline]
     fn mul_assign(&mut self, rhs: &Integer) {
+        if let Some(z) = self.both_small(rhs).and_then(|(a, b)| Integer::small(a as i128 * b as i128)) {
+            self.raw = z.raw;
+            return;
+        }
         unsafe { sys::fmpz_mul(&mut self.raw, &self.raw, &rhs.raw) };
     }
 }
@@ -838,6 +896,43 @@ mod tests {
         let (g, s, t) = Integer::from_i64(12).xgcd(&Integer::from_i64(15));
         assert_eq!(g.to_i64(), Some(3));
         assert_eq!((&(&s * 12) + &(&t * 15)).to_i64(), Some(3));
+    }
+
+    #[test]
+    fn small_value_fast_paths_agree_with_flint() {
+        let edge: i128 = 1 << 62;
+        let mut xs: Vec<i128> = vec![0, 1, -1, 2, -3, 7, 1 << 31, 1 << 32, edge - 2, edge - 1, edge, edge + 1, 1 << 63, (1 << 63) - 1];
+        xs.extend(xs.clone().iter().map(|x| -x));
+        for &a in &xs {
+            let za = Integer::from_i128(a);
+            assert_eq!(za.to_i128(), Some(a));
+            assert_eq!(za.sign(), a.signum() as i32);
+            if let Ok(v) = i64::try_from(a) {
+                assert_eq!(Integer::from_i64(v), za);
+                assert_eq!(za.to_i64(), Some(v));
+            }
+            for &b in &xs {
+                let zb = Integer::from_i128(b);
+                assert_eq!(za == zb, a == b);
+                assert_eq!(za.cmp(&zb), a.cmp(&b));
+                assert_eq!((&za + &zb).to_i128(), Some(a + b), "{a} + {b}");
+                assert_eq!((&za - &zb).to_i128(), Some(a - b), "{a} - {b}");
+                let p = Integer::from_i128(a * b);
+                assert_eq!(&za * &zb, p, "{a} * {b}");
+                let (mut s, mut d, mut m) = (za.clone(), za.clone(), za.clone());
+                s += &zb;
+                d -= &zb;
+                m *= &zb;
+                assert_eq!((s.to_i128(), d.to_i128()), (Some(a + b), Some(a - b)));
+                assert_eq!(m, p);
+                if b != 0 {
+                    // Floor division: a = q b + r with r of the sign of b.
+                    let (q, r) = za.fdiv_qr(&zb).unwrap();
+                    let (q, r) = (q.to_i128().unwrap(), r.to_i128().unwrap());
+                    assert!(a == q * b + r && r.abs() < b.abs() && (r == 0 || (r < 0) == (b < 0)), "{a} fdiv {b}");
+                }
+            }
+        }
     }
 
     #[test]

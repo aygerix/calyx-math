@@ -64,7 +64,7 @@ impl Interp {
                 let reason = msg.unwrap_or_else(|| "Illegal coercion".to_string());
                 let rhs = self.coercion_type_name(x);
                 let text = format!("{reason}\nLHS: {}\nRHS: {rhs}", self.type_name(s));
-                Err(RuntimeError { style: crate::error::ErrStyle::Plain, ..RuntimeError::runtime(text) })
+                Err(crate::error::ErrorInfo { style: crate::error::ErrStyle::Plain, ..crate::error::ErrorInfo::runtime(text) }.into())
             }
         }
     }
@@ -446,6 +446,19 @@ impl Interp {
         if vals.is_empty() {
             return Ok(None);
         }
+        // Integers, rationals, booleans and strings each have one parent, so
+        // values all of one of these kinds need no coercion.
+        let kind = |v: &Value| match v {
+            Value::Int(_) => 1,
+            Value::Rat(_) => 2,
+            Value::Bool(_) => 3,
+            Value::Str(_) => 4,
+            _ => 0,
+        };
+        let k = kind(&vals[0]);
+        if k != 0 && vals.iter().all(|v| kind(v) == k) {
+            return Ok(Some(self.parent_of(&vals[0])?));
+        }
         let mut parents = Vec::with_capacity(vals.len());
         let mut u: Option<Value> = None;
         for (i, v) in vals.iter().enumerate() {
@@ -492,9 +505,8 @@ impl Interp {
                 for v in vals {
                     set.insert(v);
                 }
-                let mut elems: Vec<Value> = set.into_iter().collect();
-                sort_values(&mut elems);
-                Value::Set(Rc::new(SetEnum::new(u, elems.into_iter().collect())))
+                sort_value_set(&mut set);
+                Value::Set(Rc::new(SetEnum::new(u, set)))
             }
             AggKind::ISet => {
                 let mut set: VSet = VSet::with_capacity_and_hasher(vals.len(), Default::default());

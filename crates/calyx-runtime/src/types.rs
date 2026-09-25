@@ -118,6 +118,8 @@ pub struct TypeRegistry {
     /// Known answers of `isa`, an n by n table for n types (0 unknown,
     /// 1 no, 2 yes), dropped when types are added or change.
     isa_cache: RefCell<(usize, Vec<u8>)>,
+    /// Bumped whenever a type is added or gains parents.
+    version: u64,
 }
 
 impl Default for TypeRegistry {
@@ -128,7 +130,7 @@ impl Default for TypeRegistry {
 
 impl TypeRegistry {
     pub fn new() -> TypeRegistry {
-        let mut r = TypeRegistry { types: Vec::new(), by_name: FxHashMap::default(), isa_cache: RefCell::default() };
+        let mut r = TypeRegistry { types: Vec::new(), by_name: FxHashMap::default(), isa_cache: RefCell::default(), version: 0 };
         for (name, parents) in builtin_table() {
             r.add(name, parents, false);
         }
@@ -165,7 +167,13 @@ impl TypeRegistry {
         let name: Rc<str> = Rc::from(name);
         self.types.push(TypeInfo { name: name.clone(), parents, elt_type: None, user, attributes: Vec::new() });
         self.by_name.insert(name, id);
+        self.version += 1;
         id
+    }
+
+    /// Changes whenever the answers of `isa` may change.
+    pub fn version(&self) -> u64 {
+        self.version
     }
 
     /// Declare (or re-declare) a user type.
@@ -178,6 +186,7 @@ impl TypeRegistry {
                 }
             }
             *self.isa_cache.borrow_mut() = (0, Vec::new());
+            self.version += 1;
             return id;
         }
         let parents = if parents.is_empty() { vec![t::ANY] } else { parents };

@@ -34,23 +34,23 @@ fn elt_arg(a: &CallArgs, i: usize) -> RResult<Rc<crate::rings::Elt>> {
 // ----- residue class rings ---------------------------------------------------
 
 /// `GF(p)` with the reduction map from the integers.
-fn residue_class_field(it: &mut Interp, p: Integer) -> RResult<Vec<Value>> {
+fn residue_class_field(it: &mut Interp, p: Integer) -> RResult<Vals> {
     let f = it.finite_field(&p, 1)?;
     let map = Value::Map(Rc::new(MapObj { kind: MapKind::Map, domain: Value::integers(), codomain: f.clone(), imp: MapImpl::Reduction(p) }));
-    Ok(vec![f, map])
+    Ok(vals![f, map])
 }
 
-fn residue_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn residue_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let m = a.int(0)?.clone();
     if m.sign() <= 0 {
         return Err(RuntimeError::runtime("Argument 1 must be positive"));
     }
     let r = it.residue_ring(&m);
     let map = Value::Map(Rc::new(MapObj { kind: MapKind::Map, domain: Value::integers(), codomain: r.clone(), imp: MapImpl::Reduction(m) }));
-    Ok(vec![r, map])
+    Ok(vals![r, map])
 }
 
-fn modulus(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn modulus(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (_, r) = ring_arg(a, 0)?;
     match &r.kind {
         RingKind::Residue(m) => intv(m.clone()),
@@ -60,7 +60,7 @@ fn modulus(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
 
 // ----- finite fields ---------------------------------------------------------
 
-fn finite_field_q(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn finite_field_q(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let q = a.int(0)?.clone();
     let err = || RuntimeError::runtime("Argument must be a prime power");
     if q.sign() <= 0 {
@@ -74,7 +74,7 @@ fn finite_field_q(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(it.finite_field(&p, n)?)
 }
 
-fn finite_field_pn(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn finite_field_pn(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let p = a.int(0)?.clone();
     let n = a.int(1)?.clone();
     let check = a.param_bool("Check")?;
@@ -88,7 +88,7 @@ fn finite_field_pn(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(it.finite_field(&p, n)?)
 }
 
-fn degree_ff(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn degree_ff(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (_, r) = ring_arg(a, 0)?;
     match &r.kind {
         RingKind::Finite(f) => intv(Integer::from_u64(f.degree)),
@@ -96,7 +96,7 @@ fn degree_ff(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     }
 }
 
-fn prime_field(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn prime_field(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     match &a.args[0] {
         Value::Struct(s) => match &s.kind {
             StructKind::Ring(r) => match &r.kind {
@@ -114,8 +114,8 @@ fn prime_field(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     }
 }
 
-fn is_prime_field(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    Ok(vec![Value::Bool(match &a.args[0] {
+fn is_prime_field(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    Ok(vals![Value::Bool(match &a.args[0] {
         Value::Struct(s) => match &s.kind {
             StructKind::Rationals => true,
             StructKind::Ring(r) => r.is_prime_field(),
@@ -125,17 +125,17 @@ fn is_prime_field(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     })])
 }
 
-fn is_conway(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_conway(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (_, r) = ring_arg(a, 0)?;
     boolv(r.finite_field().is_some_and(|f| f.conway))
 }
 
-fn is_default(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_default(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (_, r) = ring_arg(a, 0)?;
     boolv(r.finite_field().is_some_and(|f| f.default))
 }
 
-fn defining_polynomial_ff(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn defining_polynomial_ff(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (_, r) = ring_arg(a, 0)?;
     let f = r.finite_field().ok_or_else(|| RuntimeError::runtime("Bad argument types"))?;
     let p = f.p.clone();
@@ -146,7 +146,7 @@ fn defining_polynomial_ff(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Valu
     one(it.coerce(&px, &Value::seq(Some(Value::integers()), coeffs))?)
 }
 
-fn conway_polynomial(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn conway_polynomial(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let p = a.int(0)?.clone();
     let n = a.int(1)?.clone();
     let c = p.to_u64().zip(n.to_u64()).and_then(|(p, n)| calyx_flint::gr::conway_polynomial(p, n));
@@ -158,7 +158,7 @@ fn conway_polynomial(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(it.coerce(&px, &Value::seq(Some(Value::integers()), c.into_iter().map(Value::Int).collect()))?)
 }
 
-fn set_power_printing(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn set_power_printing(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (_, r) = ring_arg(a, 0)?;
     let on = a.bool(1)?;
     let f = r.finite_field().ok_or_else(|| RuntimeError::runtime("Bad argument types"))?;
@@ -169,7 +169,7 @@ fn set_power_printing(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>>
     none()
 }
 
-fn primitive_element(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn primitive_element(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (st, r) = ring_arg(a, 0)?;
     match &r.kind {
         RingKind::Finite(f) => {
@@ -205,7 +205,7 @@ fn primitive_element(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
 
 // ----- polynomial rings ------------------------------------------------------
 
-fn polynomial_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn polynomial_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let base = a.args[0].clone();
     let global = a.param_bool("Global")?;
     one(it.poly_ring(&base, global)?)
@@ -220,7 +220,7 @@ fn parse_order(s: &str) -> RResult<MonomialOrder> {
     })
 }
 
-fn mpolynomial_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn mpolynomial_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let base = a.args[0].clone();
     let n = a.usize(1)?;
     if n == 0 {
@@ -230,7 +230,7 @@ fn mpolynomial_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(it.mpoly_ring(&base, n, order)?)
 }
 
-fn base_ring(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn base_ring(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let r = match &a.args[0] {
         Value::Elt(e) => e.ring_rc(),
         _ => ring_arg(a, 0)?.1,
@@ -243,7 +243,7 @@ fn base_ring(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
 
 // ----- complex fields --------------------------------------------------------
 
-fn complex_field(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn complex_field(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let d = if a.args.is_empty() {
         crate::intrinsics::reals::DEFAULT_DIGITS
     } else {
@@ -263,12 +263,12 @@ fn complex_field(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
 
 // ----- generic ring functions -------------------------------------------------
 
-fn ngens(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn ngens(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (_, r) = ring_arg(a, 0)?;
     intv(Integer::from_u64(r.ngens() as u64))
 }
 
-fn generator(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn generator(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (st, r) = ring_arg(a, 0)?;
     let i = a.usize(1)?;
     if i == 0 || i > r.ngens() {
@@ -290,7 +290,7 @@ fn generator(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(make_elt(&st, g))
 }
 
-fn assign_names(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn assign_names(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (_, r) = ring_arg(a, 0)?;
     let names = a.seq(1)?;
     let mut out = Vec::new();
@@ -311,77 +311,77 @@ fn props(a: &CallArgs) -> RResult<RingProps> {
     ring_props(&a.args[0]).ok_or_else(|| RuntimeError::runtime("Bad argument types"))
 }
 
-fn characteristic(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn characteristic(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(props(a)?.characteristic)
 }
 
 /// `IsFinite(R)`: also the cardinality of a finite ring.
-fn is_finite(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_finite(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     match props(a)?.cardinality {
-        Some(n) => Ok(vec![Value::Bool(true), Value::Int(n)]),
+        Some(n) => Ok(vals![Value::Bool(true), Value::Int(n)]),
         None => boolv(false),
     }
 }
 
-fn is_true(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_true(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     boolv(true)
 }
 
-fn is_field(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_field(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(props(a)?.field)
 }
 
-fn is_ordered(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_ordered(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(props(a)?.ordered)
 }
 
-fn is_domain(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_domain(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(props(a)?.domain)
 }
 
-fn is_ufd(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_ufd(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(props(a)?.ufd)
 }
 
-fn has_gcd(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn has_gcd(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(props(a)?.has_gcd)
 }
 
-fn is_magma_euclidean(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_magma_euclidean(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(props(a)?.magma_euclidean)
 }
 
 /// A property Magma cannot always decide; `algorithm` names it in the error.
-fn undecided(v: Option<bool>, algorithm: &str) -> RResult<Vec<Value>> {
+fn undecided(v: Option<bool>, algorithm: &str) -> RResult<Vals> {
     match v {
         Some(b) => boolv(b),
         None => Err(RuntimeError::runtime(format!("Algorithm for '{algorithm}' not available for this object"))),
     }
 }
 
-fn is_euclidean_domain(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_euclidean_domain(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     undecided(props(a)?.euclidean, "IsEuclideanDomain")
 }
 
-fn is_euclidean_ring(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_euclidean_ring(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let p = props(a)?;
     // Residue class rings are Euclidean rings even when not domains.
     let v = if p.cardinality.is_some() && !p.field && p.magma_euclidean { Some(true) } else { p.euclidean };
     undecided(v, "IsEuclideanRing")
 }
 
-fn is_pid(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_pid(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     undecided(props(a)?.pid, "IsPrincipalIdealDomain")
 }
 
-fn is_pir(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_pir(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let p = props(a)?;
     let v = if p.cardinality.is_some() && !p.field && p.magma_euclidean { Some(true) } else { p.pid };
     undecided(v, "IsPrincipalIdealRing")
 }
 
 /// The smallest subring containing 1 (the prime field of a field).
-fn prime_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn prime_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     fn of(it: &mut Interp, v: &Value) -> RResult<Value> {
         Ok(match v.as_struct() {
             Some(StructKind::Integers) => Value::integers(),
@@ -405,30 +405,30 @@ fn prime_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(r)
 }
 
-fn centre(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn centre(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(a.args[0].clone())
 }
 
 // ----- elements ----------------------------------------------------------------
 
-fn elt_pred(a: &CallArgs, f: impl Fn(&Elem) -> Truth) -> RResult<Vec<Value>> {
+fn elt_pred(a: &CallArgs, f: impl Fn(&Elem) -> Truth) -> RResult<Vals> {
     let e = elt_arg(a, 0)?;
     boolv(f(&e.x) == Truth::True)
 }
 
-fn is_zero(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_zero(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     elt_pred(a, Elem::is_zero)
 }
 
-fn is_one(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_one(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     elt_pred(a, Elem::is_one)
 }
 
-fn is_minus_one(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_minus_one(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     elt_pred(a, Elem::is_neg_one)
 }
 
-fn is_unit(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_unit(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let e = elt_arg(a, 0)?;
     boolv(elt_is_unit(it, &e.ring_rc(), &e.x))
 }
@@ -457,7 +457,7 @@ fn elt_is_unit(it: &mut Interp, ring: &Ring, x: &Elem) -> bool {
     }
 }
 
-fn multiplicative_order(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn multiplicative_order(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let e = elt_arg(a, 0)?;
     match &e.ring().kind {
         RingKind::Finite(f) => {
@@ -478,7 +478,7 @@ fn multiplicative_order(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value
     }
 }
 
-fn eltseq_ff(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn eltseq_ff(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let e = elt_arg(a, 0)?;
     let f = e.ring().finite_field().ok_or_else(|| RuntimeError::runtime("Bad argument types"))?;
     let p = f.p.clone();

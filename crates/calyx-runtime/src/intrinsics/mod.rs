@@ -30,7 +30,7 @@ use crate::sym::Sym;
 use crate::types::{TypePat, parse_type_pat};
 use crate::value::*;
 
-pub type NativeFn = fn(&mut Interp, &mut CallArgs) -> RResult<Vec<Value>>;
+pub type NativeFn = fn(&mut Interp, &mut CallArgs) -> RResult<Vals>;
 
 pub enum Imp {
     Native(NativeFn),
@@ -66,6 +66,72 @@ pub struct Signature {
     pub source: Option<PathBuf>,
 }
 
+/// The signature last chosen at a call site, remembered with the argument
+/// types it was chosen for. Only calls whose candidate signatures test
+/// plain types are remembered, since their choice depends on nothing else;
+/// for other calls the site remembers not to try.
+#[derive(Default)]
+pub struct SigCache(std::cell::RefCell<SiteChoice>);
+
+#[derive(Default)]
+enum SiteChoice {
+    #[default]
+    Empty,
+    Chosen(SiteKey, Rc<Signature>),
+    Never(Sym, (u64, u64)),
+}
+
+#[derive(PartialEq)]
+pub struct SiteKey {
+    name: Sym,
+    stamp: (u64, u64),
+    stmt: bool,
+    arity: usize,
+    refs: u32,
+    types: [u32; 4],
+}
+
+impl SiteKey {
+    /// The key of a call with at most four arguments.
+    pub fn new(it: &Interp, name: Sym, args: &[Value], refmask: &[bool], stmt: bool) -> Option<SiteKey> {
+        if args.len() > 4 {
+            return None;
+        }
+        let mut types = [0; 4];
+        let mut refs = 0;
+        for (i, v) in args.iter().enumerate() {
+            types[i] = if v.is_undef() { u32::MAX } else { v.type_id().0 };
+            if refmask.get(i).copied().unwrap_or(false) {
+                refs |= 1 << i;
+            }
+        }
+        let stamp = (it.intrinsics.generation(), it.types.version());
+        Some(SiteKey { name, stamp, stmt, arity: args.len(), refs, types })
+    }
+}
+
+impl SigCache {
+    pub fn get(&self, key: &SiteKey) -> Option<Rc<Signature>> {
+        match &*self.0.borrow() {
+            SiteChoice::Chosen(k, sig) if k == key => Some(sig.clone()),
+            _ => None,
+        }
+    }
+
+    /// Whether calls of `name` here are known not to be remembered.
+    pub fn never(&self, it: &Interp, name: Sym) -> bool {
+        matches!(&*self.0.borrow(), SiteChoice::Never(n, stamp) if *n == name && *stamp == (it.intrinsics.generation(), it.types.version()))
+    }
+
+    pub fn put(&self, key: SiteKey, sig: Rc<Signature>) {
+        *self.0.borrow_mut() = SiteChoice::Chosen(key, sig);
+    }
+
+    pub fn put_never(&self, key: SiteKey) {
+        *self.0.borrow_mut() = SiteChoice::Never(key.name, key.stamp);
+    }
+}
+
 #[derive(Default)]
 pub struct IntrinsicTable {
     map: FxHashMap<Sym, Vec<Rc<Signature>>>,
@@ -85,14 +151,27 @@ impl IntrinsicTable {
         self.map.get(&name).filter(|v| !v.is_empty())
     }
 
+    /// Whether every signature of `name` taking `arity` arguments tests
+    /// them by type only.
+    pub fn plain(&self, name: Sym, arity: usize) -> bool {
+        let takes = |s: &Signature| if s.variadic { arity >= s.args.len() } else { arity == s.args.len() };
+        self.get(name).is_some_and(|sigs| sigs.iter().filter(|s| takes(s)).all(|s| s.args.iter().all(|a| matches!(a.pat, TypePat::Any | TypePat::Is(_)))))
+    }
+
     pub fn add(&mut self, name: Sym, mut sig: Signature) {
         self.counter += 1;
         sig.order = self.counter;
         self.map.entry(name).or_default().push(Rc::new(sig));
     }
 
+    /// Changes whenever signatures are added or removed.
+    pub fn generation(&self) -> u64 {
+        self.counter
+    }
+
     /// Remove all signatures defined by a package file.
     pub fn remove_source(&mut self, path: &PathBuf) {
+        self.counter += 1;
         for sigs in self.map.values_mut() {
             sigs.retain(|s| s.source.as_ref() != Some(path));
         }
@@ -257,20 +336,20 @@ fn wrap_text(s: &str, width: usize) -> Vec<String> {
 
 // ----- helpers for native implementations ----------------------------------
 
-pub fn one(v: Value) -> RResult<Vec<Value>> {
-    Ok(vec![v])
+pub fn one(v: Value) -> RResult<Vals> {
+    Ok(vals![v])
 }
 
-pub fn none() -> RResult<Vec<Value>> {
-    Ok(Vec::new())
+pub fn none() -> RResult<Vals> {
+    Ok(Vals::new())
 }
 
-pub fn boolv(b: bool) -> RResult<Vec<Value>> {
-    Ok(vec![Value::Bool(b)])
+pub fn boolv(b: bool) -> RResult<Vals> {
+    one(Value::Bool(b))
 }
 
-pub fn intv(i: Integer) -> RResult<Vec<Value>> {
-    Ok(vec![Value::Int(i)])
+pub fn intv(i: Integer) -> RResult<Vals> {
+    one(Value::Int(i))
 }
 
 // ----- Magma's wording for bad arguments -------------------------------------

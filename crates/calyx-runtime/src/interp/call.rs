@@ -6,7 +6,7 @@ use calyx_syntax::Span;
 
 use super::{Flow, Frame, Interp};
 use crate::error::{ErrKind, RResult, RuntimeError, TraceFrame};
-use crate::intrinsics::{Imp, Signature};
+use crate::intrinsics::{Imp, SigCache, Signature, SiteKey};
 use crate::ir::*;
 use crate::sym::Sym;
 use crate::value::*;
@@ -28,14 +28,20 @@ impl CallArgs {
     }
 }
 
+/// The reference mask of `n` value arguments.
+fn value_mask(n: usize) -> std::borrow::Cow<'static, [bool]> {
+    const NONE: [bool; 32] = [false; 32];
+    if n <= NONE.len() { std::borrow::Cow::Borrowed(&NONE[..n]) } else { std::borrow::Cow::Owned(vec![false; n]) }
+}
+
 impl Interp {
     /// Evaluate a call expression. Returns `None` if a procedure was called.
     /// With `stmt` set, a procedure call is allowed.
-    pub fn call_expr(&mut self, c: &CallEx, f: &mut Frame, nres: usize, stmt: bool, span: Span) -> RResult<Option<Vec<Value>>> {
+    pub fn call_expr(&mut self, c: &CallEx, f: &mut Frame, nres: usize, stmt: bool, span: Span) -> RResult<Option<Vals>> {
         let func = self.eval(&c.func, f)?;
-        let mut args = self.arg_buffers.pop().unwrap_or_default();
+        let mut args = self.spare_vecs.pop().unwrap_or_default();
         let has_refs = c.args.iter().any(|a| matches!(a, CArg::Ref(..)));
-        let mut refs: Vec<Option<super::assign::RefTarget>> = Vec::new();
+        let mut refs: smallvec::SmallVec<[Option<super::assign::RefTarget>; 3]> = smallvec::SmallVec::new();
         // Evaluate value arguments first; take references afterwards so a
         // referenced variable is not shared while the callee modifies it.
         for a in &c.args {
@@ -92,13 +98,10 @@ impl Interp {
             Ex::Global(n) | Ex::Local(_, n) | Ex::Capture(_, n) => Some(*n),
             _ => None,
         };
-        let result = self.call_value_full(&func, &mut args, refmask, params, nres, stmt, span);
+        let result = self.call_value_full(&func, &mut args, refmask, params, nres, stmt, span, Some(&c.site));
         // Write back reference arguments, even if the call failed.
         let wb = self.restore_refs(&mut refs, &mut args, f);
-        if self.arg_buffers.len() < 64 {
-            args.clear();
-            self.arg_buffers.push(args);
-        }
+        self.recycle(args);
         let r = result?;
         wb?;
         Ok(r)
@@ -131,7 +134,8 @@ impl Interp {
         nres: usize,
         stmt: bool,
         span: Span,
-    ) -> RResult<Option<Vec<Value>>> {
+        site: Option<&SigCache>,
+    ) -> RResult<Option<Vals>> {
         self.check_interrupt()?;
         let call_name = self.pending_call_name.take();
         match func {
@@ -147,13 +151,13 @@ impl Interp {
                 let r = self.call_closure(&clo, args, refmask, params, nres, span, call_name)?;
                 Ok(if clo.code.is_procedure { None } else { Some(r) })
             }
-            Value::Intr(name) => self.call_intrinsic(*name, args, refmask, params, nres, stmt, span),
+            Value::Intr(name) => self.call_intrinsic(*name, args, refmask, params, nres, stmt, span, site),
             Value::Map(_) => {
                 if args.len() != 1 || !params.is_empty() {
                     return Err(RuntimeError::runtime("A map takes exactly one argument"));
                 }
                 let x = args[0].clone();
-                Ok(Some(vec![self.image(&x, func)?]))
+                Ok(Some(vals![self.image(&x, func)?]))
             }
             Value::Obj(_) => {
                 // Objects of user types may be made callable via '()'? Not supported.
@@ -173,9 +177,9 @@ impl Interp {
 
     /// Call a value as a function returning its principal value.
     pub fn call_function(&mut self, func: &Value, mut args: Vec<Value>) -> RResult<Value> {
-        let mask = vec![false; args.len()];
+        let mask = value_mask(args.len());
         let span = Span::default();
-        match self.call_value_full(func, &mut args, &mask, Vec::new(), 1, false, span)? {
+        match self.call_value_full(func, &mut args, &mask, Vec::new(), 1, false, span, None)? {
             Some(v) if !v.is_empty() => Ok(v.into_iter().next().unwrap()),
             _ => Err(RuntimeError::runtime("Function returned no value")),
         }
@@ -183,8 +187,8 @@ impl Interp {
 
     /// Call a value, returning all results.
     pub fn call_function_multi(&mut self, func: &Value, mut args: Vec<Value>, nres: usize) -> RResult<Vec<Value>> {
-        let mask = vec![false; args.len()];
-        Ok(self.call_value_full(func, &mut args, &mask, Vec::new(), nres, false, Span::default())?.unwrap_or_default())
+        let mask = value_mask(args.len());
+        Ok(self.call_value_full(func, &mut args, &mask, Vec::new(), nres, false, Span::default(), None)?.map(Vals::into_vec).unwrap_or_default())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -197,7 +201,7 @@ impl Interp {
         nres: usize,
         span: Span,
         trace_name: Option<Sym>,
-    ) -> RResult<Vec<Value>> {
+    ) -> RResult<Vals> {
         let code = &clo.code;
         let np = code.params.len();
         let name = trace_name.or(code.name).unwrap_or_else(|| Sym::new("<function>"));
@@ -219,7 +223,11 @@ impl Interp {
             return Err(RuntimeError::runtime("Recursion depth exceeded"));
         }
         let mut frame = Frame {
-            slots: vec![Value::Undef; code.n_slots as usize],
+            slots: {
+                let mut slots = self.spare_vecs.pop().unwrap_or_default();
+                slots.resize(code.n_slots as usize, Value::Undef);
+                slots
+            },
             captures: clo.captures.clone(),
             self_fn: Some(Value::Func(clo.clone())),
             code: Some(code.clone()),
@@ -247,7 +255,7 @@ impl Interp {
         self.depth += 1;
         self.nresults_stack.push(nres);
         self.trace.push(TraceFrame { name, span: Some(span), args: Vec::new() });
-        let result = (|| -> RResult<Vec<Value>> {
+        let result = (|| -> RResult<Vals> {
             for (pname, slot, default) in &code.opt_params {
                 let v = match params.iter().find(|(n, _)| n == pname) {
                     Some((_, v)) => v.clone(),
@@ -256,7 +264,7 @@ impl Interp {
                 frame.slots[*slot as usize] = v;
             }
             match &code.body {
-                Body::Expr(e) => Ok(vec![self.eval(e, &mut frame)?]),
+                Body::Expr(e) => Ok(vals![self.eval(e, &mut frame)?]),
                 Body::Block(stmts) => match self.exec_block(stmts, &mut frame)? {
                     Flow::Return(vals) => {
                         if code.is_procedure && !vals.is_empty() {
@@ -266,7 +274,7 @@ impl Interp {
                     }
                     Flow::Normal => {
                         if code.is_procedure {
-                            Ok(Vec::new())
+                            Ok(Vals::new())
                         } else {
                             Err(RuntimeError::runtime("Function has no return value"))
                         }
@@ -303,7 +311,16 @@ impl Interp {
             }
         };
         self.restore_args(code, &mut frame, args);
+        self.recycle(frame.slots);
         result
+    }
+
+    /// Keep an emptied vector for a later call.
+    fn recycle(&mut self, mut v: Vec<Value>) {
+        if self.spare_vecs.len() < 64 {
+            v.clear();
+            self.spare_vecs.push(v);
+        }
     }
 
     fn restore_args(&self, code: &FuncCode, frame: &mut Frame, args: &mut [Value]) {
@@ -323,8 +340,8 @@ impl Interp {
     /// Call an intrinsic by name with value arguments, returning the
     /// principal result.
     pub fn call_intrinsic_named(&mut self, name: Sym, mut args: Vec<Value>) -> RResult<Value> {
-        let mask = vec![false; args.len()];
-        match self.call_intrinsic(name, &mut args, &mask, Vec::new(), 1, false, Span::default())? {
+        let mask = value_mask(args.len());
+        match self.call_intrinsic(name, &mut args, &mask, Vec::new(), 1, false, Span::default(), None)? {
             Some(v) if !v.is_empty() => Ok(v.into_iter().next().unwrap()),
             _ => Err(RuntimeError::runtime(format!("'{name}' returned no value"))),
         }
@@ -413,8 +430,35 @@ impl Interp {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn call_intrinsic(&mut self, name: Sym, args: &mut Vec<Value>, refmask: &[bool], params: Vec<(Sym, Value)>, nres: usize, stmt: bool, span: Span) -> RResult<Option<Vec<Value>>> {
-        let Some(sig) = self.select_signature(name, args, refmask, stmt) else {
+    pub fn call_intrinsic(
+        &mut self,
+        name: Sym,
+        args: &mut Vec<Value>,
+        refmask: &[bool],
+        params: Vec<(Sym, Value)>,
+        nres: usize,
+        stmt: bool,
+        span: Span,
+        site: Option<&SigCache>,
+    ) -> RResult<Option<Vals>> {
+        let site = site.filter(|s| !s.never(self, name));
+        let key = site.and_then(|_| SiteKey::new(self, name, args, refmask, stmt));
+        let known = match (site, &key) {
+            (Some(site), Some(key)) => site.get(key),
+            _ => None,
+        };
+        let chosen = known.or_else(|| {
+            let sig = self.select_signature(name, args, refmask, stmt)?;
+            if let (Some(site), Some(key)) = (site, key) {
+                if self.intrinsics.plain(name, args.len()) {
+                    site.put(key, sig.clone());
+                } else {
+                    site.put_never(key);
+                }
+            }
+            Some(sig)
+        });
+        let Some(sig) = chosen else {
             if !self.intrinsics.contains(name) {
                 return Err(self.unassigned_error(name));
             }
@@ -467,7 +511,7 @@ impl Interp {
     /// built-in one matches.
     pub fn dispatch_user_operator(&mut self, name: &str, args: Vec<Value>) -> RResult<Option<Value>> {
         let sym = Sym::new(name);
-        let mask = vec![false; args.len()];
+        let mask = value_mask(args.len());
         let Some(sig) = self.select_signature(sym, &args, &mask, false) else {
             return Ok(None);
         };
@@ -475,7 +519,7 @@ impl Interp {
             return Ok(None);
         }
         let mut args = args;
-        let r = self.call_intrinsic(sym, &mut args, &mask, Vec::new(), 1, false, Span::default())?;
+        let r = self.call_intrinsic(sym, &mut args, &mask, Vec::new(), 1, false, Span::default(), None)?;
         Ok(r.and_then(|v| v.into_iter().next()))
     }
 

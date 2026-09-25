@@ -25,7 +25,7 @@ fn perm_arg(a: &CallArgs, i: usize) -> Rc<Perm> {
     }
 }
 
-fn sym(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn sym(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int(0)?;
     if n.sign() <= 0 {
         return Err(RuntimeError::runtime(format!("Argument 1 ({n}) should be >= 1")));
@@ -38,11 +38,11 @@ fn ngens_count(n: usize) -> usize {
     n.min(3) - 1
 }
 
-fn ngens(_: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn ngens(_: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::int(ngens_count(group_arg(a, 0)) as i64))
 }
 
-fn generator(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn generator(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = group_arg(a, 0);
     let k = ngens_count(n) as i64;
     let i = a.int(1)?;
@@ -58,53 +58,53 @@ fn generator(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     }
 }
 
-fn identity(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn identity(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = group_arg(a, 0);
     one(it.perm_identity(n))
 }
 
-fn group_degree(_: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn group_degree(_: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::int(group_arg(a, 0) as i64))
 }
 
-fn group_order(_: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn group_order(_: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(Integer::factorial(group_arg(a, 0) as u64))
 }
 
-fn degree(_: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn degree(_: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::int(perm_arg(a, 0).degree() as i64))
 }
 
-fn order(_: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn order(_: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(perm_arg(a, 0).order())
 }
 
-fn eltseq(_: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn eltseq(_: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::int_seq(perm_arg(a, 0).images.iter().map(|&x| Integer::from_u64(x as u64 + 1))))
 }
 
-fn inverse(_: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn inverse(_: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::Perm(Rc::new(perm_arg(a, 0).inverse())))
 }
 
-fn sign(_: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn sign(_: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::int(perm_arg(a, 0).sign()))
 }
 
-fn is_even(_: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_even(_: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(perm_arg(a, 0).sign() == 1)
 }
 
-fn is_odd(_: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_odd(_: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(perm_arg(a, 0).sign() == -1)
 }
 
-fn is_identity(_: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_identity(_: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(perm_arg(a, 0).is_identity())
 }
 
 /// `[ <length, count>, ... ]`, longest cycles first, fixed points included.
-fn cycle_structure(_: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn cycle_structure(_: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let mut lens: Vec<usize> = perm_arg(a, 0).cycles().iter().map(|c| c.len()).collect();
     lens.sort_unstable_by(|x, y| y.cmp(x));
     let mut out: Vec<(usize, usize)> = Vec::new();
@@ -119,7 +119,7 @@ fn cycle_structure(_: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
 }
 
 /// The cycle of `p` through the point `i`, starting at `i`.
-fn cycle(_: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn cycle(_: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let p = perm_arg(a, 0);
     let i = a.int(1)?.to_u64().filter(|&i| i >= 1 && i as usize <= p.degree()).ok_or_else(|| RuntimeError::runtime("Argument 2 not in support of group"))?;
     let start = i as usize - 1;

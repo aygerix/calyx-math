@@ -15,7 +15,7 @@ use crate::value::*;
 
 macro_rules! binop_fn {
     ($name:ident, $op:expr) => {
-        fn $name(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+        fn $name(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
             let x = std::mem::take(&mut a.args[0]);
             let y = std::mem::take(&mut a.args[1]);
             one(it.binop($op, x, y)?)
@@ -50,7 +50,7 @@ binop_fn!(op_and, BinOp::And);
 binop_fn!(op_or, BinOp::Or);
 binop_fn!(op_xor, BinOp::Xor);
 
-fn op_sub(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn op_sub(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     if a.args.len() == 1 {
         let x = std::mem::take(&mut a.args[0]);
         return one(it.negate(x)?);
@@ -60,7 +60,7 @@ fn op_sub(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(it.binop(BinOp::Sub, x, y)?)
 }
 
-fn op_not(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn op_not(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     match &a.args[0] {
         Value::Bool(b) => boolv(!b),
         v => {
@@ -70,44 +70,44 @@ fn op_not(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     }
 }
 
-fn op_card(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn op_card(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let v = a.args[0].clone();
     one(it.cardinality(&v)?)
 }
 
-fn op_coerce(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn op_coerce(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (s, x) = (a.args[0].clone(), a.args[1].clone());
     one(it.coerce(&s, &x)?)
 }
 
-fn op_image(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn op_image(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (x, m) = (a.args[0].clone(), a.args[1].clone());
     one(it.image(&x, &m)?)
 }
 
-fn op_preimage(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn op_preimage(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (x, m) = (a.args[0].clone(), a.args[1].clone());
     one(it.preimage(&x, &m)?)
 }
 
-fn op_index(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn op_index(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let base = a.args[0].clone();
     let idx: Vec<Value> = a.args[1..].to_vec();
     one(it.index_multi(base, &idx)?)
 }
 
-fn op_dot(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn op_dot(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = a.args[0].clone();
     Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}, {}", it.type_name(&s), it.type_name(&a.args[1]))))
 }
 
 // ----- types --------------------------------------------------------------
 
-fn type_of(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn type_of(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::Cat(a.args[0].type_id()))
 }
 
-fn extended_type_of(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn extended_type_of(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let v = a.args[0].clone();
     let tv = it.shown_extended_type(&v).unwrap_or(TypeVal::Cat(v.type_id()));
     one(Value::ECat(Rc::new(tv)))
@@ -121,7 +121,7 @@ fn as_typeval(v: &Value) -> Option<TypeVal> {
     }
 }
 
-fn isa(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn isa(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (Some(x), Some(y)) = (as_typeval(&a.args[0]), as_typeval(&a.args[1])) else {
         return Err(RuntimeError::runtime("Arguments must be types"));
     };
@@ -136,12 +136,12 @@ fn isa(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     boolv(r)
 }
 
-fn base_type(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn base_type(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let tv = as_typeval(&a.args[0]).unwrap();
     one(Value::Cat(tv.base()))
 }
 
-fn make_type(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn make_type(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = a.str(0)?;
     match it.types.lookup(s) {
         Some(t) => one(Value::Cat(t)),
@@ -149,7 +149,7 @@ fn make_type(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     }
 }
 
-fn element_type(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn element_type(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = a.args[0].clone();
     let tv = it.element_type_of(&s);
     one(match tv {
@@ -158,58 +158,58 @@ fn element_type(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     })
 }
 
-fn covering_structure(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn covering_structure(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     match it.common_universe(&a.args[0], &a.args[1]) {
         Some(c) => one(c),
         None => Err(RuntimeError::runtime("No covering structure exists")),
     }
 }
 
-fn exists_covering_structure(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn exists_covering_structure(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     match it.common_universe(&a.args[0], &a.args[1]) {
-        Some(c) => Ok(vec![Value::Bool(true), c]),
-        None => Ok(vec![Value::Bool(false), Value::Undef]),
+        Some(c) => Ok(vals![Value::Bool(true), c]),
+        None => Ok(vals![Value::Bool(false), Value::Undef]),
     }
 }
 
-fn parent(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn parent(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let v = a.args[0].clone();
     one(it.parent_of(&v)?)
 }
 
-fn is_coercible(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_coercible(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (s, x) = (a.args[0].clone(), a.args[1].clone());
     match it.try_coerce(&s, &x)? {
-        Ok(v) => Ok(vec![Value::Bool(true), v]),
-        Err(_) => Ok(vec![Value::Bool(false), Value::Undef]),
+        Ok(v) => Ok(vals![Value::Bool(true), v]),
+        Err(_) => Ok(vals![Value::Bool(false), Value::Undef]),
     }
 }
 
-fn integers(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn integers(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::integers())
 }
 
-fn rationals(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn rationals(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::rationals())
 }
 
-fn booleans(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn booleans(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::booleans())
 }
 
-fn zero(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn zero(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = a.args[0].clone();
     one(it.coerce(&s, &Value::int(0))?)
 }
 
-fn one_of(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn one_of(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = a.args[0].clone();
     one(it.coerce(&s, &Value::int(1))?)
 }
 
 // ----- random -------------------------------------------------------------
 
-fn random_elt(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn random_elt(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = a.args[0].clone();
     match &s {
         // Infinite rings have no Random.
@@ -222,40 +222,40 @@ fn random_elt(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     }
 }
 
-fn random_bool(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn random_bool(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     boolv(it.rng.below_u64(2) == 1)
 }
 
-fn set_seed(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn set_seed(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = a.int(0)?.to_u64().filter(|&s| s < (1 << 32)).ok_or_else(|| RuntimeError::runtime("Seed must be in the range [0, 2^32)"))?;
     let c = if a.args.len() > 1 { a.int(1)?.to_u64().ok_or_else(|| RuntimeError::runtime("Step count must be non-negative"))? } else { 0 };
     it.rng.set_seed(s, c);
     none()
 }
 
-fn get_seed(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn get_seed(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     let (s, c) = it.rng.seed();
-    Ok(vec![Value::Int(Integer::from_u64(s)), Value::Int(Integer::from_u64(c))])
+    Ok(vals![Value::Int(Integer::from_u64(s)), Value::Int(Integer::from_u64(c))])
 }
 
 // ----- misc -----------------------------------------------------------------
 
-fn is_intrinsic(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_intrinsic(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = Sym::new(a.str(0)?);
-    if it.intrinsics.contains(s) { Ok(vec![Value::Bool(true), Value::Intr(s)]) } else { Ok(vec![Value::Bool(false), Value::Undef]) }
+    if it.intrinsics.contains(s) { Ok(vals![Value::Bool(true), Value::Intr(s)]) } else { Ok(vals![Value::Bool(false), Value::Undef]) }
 }
 
-fn error_obj(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn error_obj(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::Err(Rc::new(ErrObj { object: a.args[0].clone(), kind: Rc::from("ErrUser"), position: None, traceback: None })))
 }
 
-fn nresults(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn nresults(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     let n = it.nresults_stack.last().copied().unwrap_or(1);
     let b = Value::seq(Some(Value::booleans()), vec![Value::Bool(true); n]);
-    Ok(vec![Value::int(n as i64), b])
+    Ok(vals![Value::int(n as i64), b])
 }
 
-fn hash(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn hash(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     use std::hash::{Hash, Hasher};
     let mut h = rustc_hash::FxHasher::default();
     a.args[0].hash(&mut h);
@@ -265,7 +265,7 @@ fn hash(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     intv(Integer::from_u64(h.finish() & ((1 << 62) - 1)))
 }
 
-fn new_object(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn new_object(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let Value::Cat(ty) = &a.args[0] else {
         return Err(RuntimeError::runtime("Argument must be a type"));
     };
@@ -275,14 +275,14 @@ fn new_object(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(Value::Obj(Rc::new(UserObj { ty: *ty, attrs: Default::default(), id: next_object_id() })))
 }
 
-fn clone_object(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn clone_object(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     match &a.args[0] {
         Value::Obj(o) => one(Value::Obj(Rc::new(UserObj { ty: o.ty, attrs: std::cell::RefCell::new(o.attrs.borrow().clone()), id: next_object_id() }))),
         other => one(other.clone()),
     }
 }
 
-fn add_attribute(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn add_attribute(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let Value::Cat(ty) = &a.args[0] else {
         return Err(RuntimeError::runtime("Argument 1 must be a type"));
     };
@@ -291,7 +291,7 @@ fn add_attribute(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     none()
 }
 
-fn get_attributes(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn get_attributes(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let Value::Cat(ty) = &a.args[0] else {
         return Err(RuntimeError::runtime("Argument must be a type"));
     };
@@ -300,7 +300,7 @@ fn get_attributes(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(Value::seq(Some(Value::strings()), names.iter().map(|s| Value::str(s)).collect()))
 }
 
-fn list_attributes(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn list_attributes(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let r = get_attributes(it, a)?;
     let Value::Seq(s) = &r[0] else { unreachable!() };
     for v in &s.elems {
@@ -315,20 +315,20 @@ fn unknown_attribute(name: Sym) -> RuntimeError {
     RuntimeError::runtime(format!("Unknown attribute \"{name}\" for this object"))
 }
 
-fn has_attribute(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn has_attribute(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let v = a.args[0].clone();
     let name = Sym::new(a.str(1)?);
     if let Value::Cat(ty) = v {
         let x = it.category_attr(ty, name).ok_or_else(|| unknown_attribute(name))?;
-        return Ok(vec![Value::Bool(true), x]);
+        return Ok(vals![Value::Bool(true), x]);
     }
     match it.attr_assigned(&v, name) {
-        Ok(true) => Ok(vec![Value::Bool(true), it.get_attr(&v, name)?]),
-        _ => Ok(vec![Value::Bool(false), Value::Undef]),
+        Ok(true) => Ok(vals![Value::Bool(true), it.get_attr(&v, name)?]),
+        _ => Ok(vals![Value::Bool(false), Value::Undef]),
     }
 }
 
-fn assert_attribute(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn assert_attribute(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let name = Sym::new(a.str(1)?);
     let value = a.args[2].clone();
     match &a.args[0] {
@@ -357,11 +357,11 @@ fn assert_attribute(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     none()
 }
 
-fn assign_names(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn assign_names(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     none()
 }
 
-fn ngens(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn ngens(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     Err(RuntimeError::runtime(format!("Objects of type {} have no generators", it.type_name(&a.args[0]))))
 }
 

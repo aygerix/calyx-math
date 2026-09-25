@@ -20,21 +20,21 @@ pub use assign::seq_index;
 pub use call::CallArgs;
 pub use iter::ValueIter;
 
-use crate::error::{ErrKind, RResult, RuntimeError, TraceFrame};
+use crate::error::{RResult, RuntimeError, TraceFrame};
 use crate::intrinsics::IntrinsicTable;
 use crate::ir::{FuncCode, Slot};
 use crate::output::Output;
 use crate::random::Rng;
 use crate::sym::Sym;
 use crate::types::TypeRegistry;
-use crate::value::Value;
+use crate::value::{Vals, Value};
 
 /// Control flow out of a statement.
 pub enum Flow {
     Normal,
     Break(Option<Sym>),
     Continue(Option<Sym>),
-    Return(Vec<Value>),
+    Return(Vals),
 }
 
 /// The activation record of a running function or top-level unit.
@@ -125,8 +125,9 @@ pub struct Interp {
     pub groups: crate::perms::GroupCache,
     /// The identifier a function is being called through.
     pub pending_call_name: Option<Sym>,
-    /// Emptied argument vectors of finished calls, for reuse.
-    pub arg_buffers: Vec<Vec<Value>>,
+    /// Emptied vectors of finished calls (arguments and frame slots), for
+    /// reuse.
+    pub spare_vecs: Vec<Vec<Value>>,
 }
 
 impl Interp {
@@ -175,7 +176,7 @@ impl Interp {
             rings: Default::default(),
             groups: Default::default(),
             pending_call_name: None,
-            arg_buffers: Vec::new(),
+            spare_vecs: Vec::new(),
         };
         crate::intrinsics::register_all(&mut it);
         it
@@ -266,7 +267,7 @@ impl Interp {
             crate::ir::Body::Block(stmts) => self.exec_block(stmts, &mut frame),
             crate::ir::Body::Expr(e) => {
                 let v = self.eval(e, &mut frame)?;
-                Ok(Flow::Return(vec![v]))
+                Ok(Flow::Return(vals![v]))
             }
         }
     }
@@ -280,7 +281,7 @@ impl Interp {
     }
 
     pub fn user_error(msg: impl Into<String>) -> RuntimeError {
-        RuntimeError { kind: ErrKind::User, ..RuntimeError::runtime(msg) }
+        RuntimeError::user(msg)
     }
 }
 

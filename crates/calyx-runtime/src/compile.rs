@@ -881,7 +881,7 @@ impl<'a> Compiler<'a> {
         for p in params {
             ps.push((Sym::new(&p.name), self.expr(&p.value)?));
         }
-        Ok(CallEx { func, args: cargs, params: ps })
+        Ok(CallEx { func, args: cargs, params: ps, site: Default::default() })
     }
 
     fn comprehension(&mut self, c: &ast::Comprehension, is_seq: bool) -> CResult<ComprEx> {

@@ -1,5 +1,10 @@
 //! The calyx interpreter: values, types, evaluation and intrinsics.
 
+/// The results of a call, like `vec!` but without allocating for one value.
+macro_rules! vals {
+    ($($x:tt)*) => { smallvec::smallvec![$($x)*] };
+}
+
 pub mod coerce;
 pub mod compile;
 pub mod error;

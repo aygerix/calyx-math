@@ -17,11 +17,11 @@ use crate::value::*;
 /// of an operation that modifies its first argument in place.
 macro_rules! both_forms {
     ($proc:ident, $func:ident, $imp:ident) => {
-        fn $proc(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+        fn $proc(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
             $imp(it, a)?;
             none()
         }
-        fn $func(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+        fn $func(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
             $imp(it, a)?;
             one(std::mem::take(&mut a.args[0]))
         }
@@ -71,23 +71,23 @@ fn set_value(universe: Option<Value>, mut elems: Vec<Value>) -> Value {
 
 // ----- power structures ------------------------------------------------------
 
-fn power_set(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn power_set(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::structure(StructKind::PowerSet(Some(a.args[0].clone()))))
 }
 
-fn power_iset(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn power_iset(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::structure(StructKind::PowerISet(Some(a.args[0].clone()))))
 }
 
-fn power_mset(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn power_mset(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::structure(StructKind::PowerMSet(Some(a.args[0].clone()))))
 }
 
-fn power_seq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn power_seq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::structure(StructKind::PowerSeq(Some(a.args[0].clone()))))
 }
 
-fn set_of(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn set_of(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let v = a.args[0].clone();
     let u = match universe_of(&v) {
         Some(u) => u,
@@ -101,7 +101,7 @@ fn set_of(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(set_value(u, uniq.into_iter().collect()))
 }
 
-fn universe(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn universe(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     match universe_of(&a.args[0]) {
         Some(Some(u)) => one(u),
         Some(None) => Err(RuntimeError::runtime("The null sequence or set has no universe")),
@@ -111,21 +111,21 @@ fn universe(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
 
 // ----- predicates ------------------------------------------------------------
 
-fn is_null(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_null(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(matches!(universe_of(&a.args[0]), Some(None)))
 }
 
-fn is_empty(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_empty(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let v = a.args[0].clone();
     let n = it.cardinality(&v)?;
     boolv(matches!(n, Value::Int(i) if i.is_zero()))
 }
 
-fn is_complete(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_complete(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(a.seq(0)?.is_complete())
 }
 
-fn is_defined(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_defined(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     match &a.args[0] {
         Value::Seq(s) => {
             let k = seq_index(&a.args[1], "Sequence")?;
@@ -141,21 +141,21 @@ fn is_defined(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
                     let u = u.clone();
                     match it.try_coerce_into_universe(&u, &a.args[1])? {
                         Some(k) => k,
-                        None => return Ok(vec![Value::Bool(false), Value::Undef]),
+                        None => return Ok(vals![Value::Bool(false), Value::Undef]),
                     }
                 }
                 None => a.args[1].clone(),
             };
             match m.map.get(&key).or(m.default.as_ref()) {
-                Some(v) => Ok(vec![Value::Bool(true), v.clone()]),
-                None => Ok(vec![Value::Bool(false), Value::Undef]),
+                Some(v) => Ok(vals![Value::Bool(true), v.clone()]),
+                None => Ok(vals![Value::Bool(false), Value::Undef]),
             }
         }
         other => Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}", it.type_name(other)))),
     }
 }
 
-fn is_disjoint(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_disjoint(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (x, y) = (a.args[0].clone(), a.args[1].clone());
     for e in elements(it, &x)? {
         if it.contains(&y, &e)? {
@@ -165,7 +165,7 @@ fn is_disjoint(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     boolv(true)
 }
 
-fn is_subsequence(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_subsequence(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = a.seq(0)?.clone();
     let t = a.seq(1)?.clone();
     let kind = match a.param("Kind") {
@@ -225,7 +225,7 @@ fn is_subsequence(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
 
 // ----- selection ---------------------------------------------------------------
 
-fn rep(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn rep(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let v = a.args[0].clone();
     if let Value::Struct(st) = &v {
         if matches!(st.kind, StructKind::Booleans) {
@@ -255,7 +255,7 @@ fn rep(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     }
 }
 
-fn extract_rep(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn extract_rep(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let Value::Set(s) = &mut a.args[0] else {
         return Err(RuntimeError::runtime("Argument 1 must be a set"));
     };
@@ -268,7 +268,7 @@ fn extract_rep(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     none()
 }
 
-fn min_max(it: &mut Interp, a: &mut CallArgs, want: Ordering) -> RResult<Vec<Value>> {
+fn min_max(it: &mut Interp, a: &mut CallArgs, want: Ordering) -> RResult<Vals> {
     let v = a.args[0].clone();
     let with_index = matches!(v, Value::Seq(_) | Value::ISet(_));
     let mut iter = it.iter_value(&v, false)?;
@@ -284,18 +284,18 @@ fn min_max(it: &mut Interp, a: &mut CallArgs, want: Ordering) -> RResult<Vec<Val
             best_i = i;
         }
     }
-    if with_index { Ok(vec![best, Value::int(best_i)]) } else { one(best) }
+    if with_index { Ok(vals![best, Value::int(best_i)]) } else { one(best) }
 }
 
-fn minimum(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn minimum(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     min_max(it, a, Ordering::Less)
 }
 
-fn maximum(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn maximum(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     min_max(it, a, Ordering::Greater)
 }
 
-fn index_of(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn index_of(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let x = a.args[1].clone();
     match &a.args[0] {
         Value::Seq(s) => {
@@ -333,23 +333,23 @@ fn index_of(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     }
 }
 
-fn cop_index(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn cop_index(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     match &a.args[0] {
         Value::CopElt(c) => one(Value::int(c.index as i64 + 1)),
         _ => unreachable!(),
     }
 }
 
-fn explode(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn explode(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     match &a.args[0] {
-        Value::Seq(s) => Ok(s.elems.clone()),
-        Value::Tuple(t) => Ok(t.elems.clone()),
-        Value::List(l) => Ok((**l).clone()),
+        Value::Seq(s) => Ok(s.elems.iter().cloned().collect()),
+        Value::Tuple(t) => Ok(t.elems.iter().cloned().collect()),
+        Value::List(l) => Ok(l.iter().cloned().collect()),
         _ => unreachable!(),
     }
 }
 
-fn eltseq_seq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn eltseq_seq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(a.args[0].clone())
 }
 
@@ -720,7 +720,7 @@ fn perm_value(it: &mut Interp, idx: &[usize]) -> Value {
     it.perm(idx.iter().map(|&i| i as u32).collect())
 }
 
-fn sort_proc(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn sort_proc(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let cmp = if a.args.len() > 1 && !matches!(a.args[1], Value::Undef) && matches!(a.args[1], Value::Func(_) | Value::Intr(_)) { Some(a.args[1].clone()) } else { None };
     let Value::Seq(s) = &mut a.args[0] else { unreachable!() };
     let s = Rc::make_mut(s);
@@ -738,7 +738,7 @@ fn sort_proc(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     none()
 }
 
-fn sort_func(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn sort_func(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let cmp = a.args.get(1).cloned();
     match &a.args[0] {
         Value::Seq(s) => {
@@ -752,7 +752,7 @@ fn sort_func(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
             if cmp.is_none() {
                 return one(sorted);
             }
-            Ok(vec![sorted, perm_value(it, &idx)])
+            Ok(vals![sorted, perm_value(it, &idx)])
         }
         Value::Set(s) => {
             let mut v: Vec<Value> = s.iter().collect();
@@ -768,7 +768,7 @@ fn sort_func(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     }
 }
 
-fn parallel_sort(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn parallel_sort(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (Value::Seq(s), Value::Seq(t)) = (&a.args[0], &a.args[1]) else { unreachable!() };
     if s.elems.len() != t.elems.len() {
         return Err(RuntimeError::runtime("Sequences must have the same length"));
@@ -806,46 +806,46 @@ fn change_universe_imp(it: &mut Interp, a: &mut CallArgs) -> RResult<()> {
 }
 both_forms!(change_universe_proc, change_universe_func, change_universe_imp);
 
-fn can_change_universe(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn can_change_universe(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     match change_universe_imp(it, a) {
-        Ok(()) => Ok(vec![Value::Bool(true), std::mem::take(&mut a.args[0])]),
-        Err(_) => Ok(vec![Value::Bool(false), Value::Undef]),
+        Ok(()) => Ok(vals![Value::Bool(true), std::mem::take(&mut a.args[0])]),
+        Err(_) => Ok(vals![Value::Bool(false), Value::Undef]),
     }
 }
 
 // ----- conversions -------------------------------------------------------------------
 
-fn to_kind(it: &mut Interp, a: &mut CallArgs, kind: AggKind) -> RResult<Vec<Value>> {
+fn to_kind(it: &mut Interp, a: &mut CallArgs, kind: AggKind) -> RResult<Vals> {
     let v = a.args[0].clone();
     let u = universe_of(&v).flatten();
     let elems = elements(it, &v)?;
     one(it.build_aggregate(kind, u, elems, true)?)
 }
 
-fn to_seq(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn to_seq(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     to_kind(it, a, AggKind::Seq)
 }
 
-fn to_set(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn to_set(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     to_kind(it, a, AggKind::Set)
 }
 
-fn to_iset(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn to_iset(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     to_kind(it, a, AggKind::ISet)
 }
 
-fn to_mset(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn to_mset(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     to_kind(it, a, AggKind::MSet)
 }
 
-fn multiset_to_set(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn multiset_to_set(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let Value::MSet(m) = &a.args[0] else { unreachable!() };
     let u = m.universe.clone();
     let elems: Vec<Value> = m.elems.keys().cloned().collect();
     one(it.build_aggregate(AggKind::Set, u, elems, true)?)
 }
 
-fn to_list(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn to_list(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     match &a.args[0] {
         Value::Seq(s) => one(Value::list(s.elems.clone())),
         Value::Tuple(t) => one(Value::list(t.elems.clone())),
@@ -856,7 +856,7 @@ fn to_list(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
 
 // ----- set operations ------------------------------------------------------------------
 
-fn multiplicity(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn multiplicity(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let Value::MSet(m) = &a.args[0] else { unreachable!() };
     let m = m.clone();
     let x = match &m.universe {
@@ -866,7 +866,7 @@ fn multiplicity(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(Value::Int(Integer::from_u64(m.elems.get(&x).copied().unwrap_or(0))))
 }
 
-fn multiplicities(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn multiplicities(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let Value::MSet(m) = &a.args[0] else { unreachable!() };
     let mut pairs: Vec<(Value, u64)> = m.elems.iter().map(|(k, v)| (k.clone(), *v)).collect();
     let mut keys: Vec<Value> = pairs.iter().map(|p| p.0.clone()).collect();
@@ -922,7 +922,7 @@ fn set_elements_sorted(s: &SetEnum) -> Vec<Value> {
     v
 }
 
-fn subsets(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn subsets(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let Value::Set(s) = &a.args[0] else { unreachable!() };
     let k = if a.args.len() > 1 { Some(a.usize(1)?) } else { None };
     if k.is_none() && s.len() > 24 {
@@ -935,7 +935,7 @@ fn subsets(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(set_value(pu, subs))
 }
 
-fn random_subset(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn random_subset(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let Value::Set(s) = &a.args[0] else { unreachable!() };
     let k = a.usize(1)?;
     let mut elems: Vec<Value> = s.iter().collect();
@@ -950,7 +950,7 @@ fn random_subset(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(set_value(s.universe.clone(), elems))
 }
 
-fn multisets(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn multisets(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let Value::Set(s) = &a.args[0] else { unreachable!() };
     let k = a.usize(1)?;
     let elems = set_elements_sorted(s);
@@ -993,7 +993,7 @@ fn multisets(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(Value::Set(Rc::new(SetEnum::new(pu, set))))
 }
 
-fn subsequences(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn subsequences(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let Value::Set(s) = &a.args[0] else { unreachable!() };
     let k = a.usize(1)?;
     let elems = set_elements_sorted(s);
@@ -1034,7 +1034,7 @@ fn permutations_of(elems: &[Value], k: usize, out: &mut Vec<Vec<Value>>, cur: &m
     }
 }
 
-fn permutations(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn permutations(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let Value::Set(s) = &a.args[0] else { unreachable!() };
     let elems = set_elements_sorted(s);
     let k = if a.args.len() > 1 { a.usize(1)? } else { elems.len() };
@@ -1053,7 +1053,7 @@ fn permutations(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
 
 // ----- sequences of booleans ----------------------------------------------------------
 
-fn bool_seq_op(a: &mut CallArgs, f: fn(bool, bool) -> bool) -> RResult<Vec<Value>> {
+fn bool_seq_op(a: &mut CallArgs, f: fn(bool, bool) -> bool) -> RResult<Vals> {
     let (Value::Seq(s), Value::Seq(t)) = (&a.args[0], &a.args[1]) else { unreachable!() };
     if s.elems.len() != t.elems.len() {
         return Err(RuntimeError::runtime("Sequences must have the same length"));
@@ -1068,19 +1068,19 @@ fn bool_seq_op(a: &mut CallArgs, f: fn(bool, bool) -> bool) -> RResult<Vec<Value
     one(Value::seq(Some(Value::booleans()), out))
 }
 
-fn seq_and(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn seq_and(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     bool_seq_op(a, |x, y| x && y)
 }
 
-fn seq_or(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn seq_or(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     bool_seq_op(a, |x, y| x || y)
 }
 
-fn seq_xor(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn seq_xor(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     bool_seq_op(a, |x, y| x != y)
 }
 
-fn seq_not(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn seq_not(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let Value::Seq(s) = &a.args[0] else { unreachable!() };
     let mut out = Vec::new();
     for x in &s.elems {
@@ -1092,27 +1092,27 @@ fn seq_not(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(Value::seq(Some(Value::booleans()), out))
 }
 
-fn seq_and_proc(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn seq_and_proc(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     a.args[0] = seq_and(it, a)?.remove(0);
     none()
 }
 
-fn seq_or_proc(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn seq_or_proc(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     a.args[0] = seq_or(it, a)?.remove(0);
     none()
 }
 
-fn seq_xor_proc(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn seq_xor_proc(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     a.args[0] = seq_xor(it, a)?.remove(0);
     none()
 }
 
-fn seq_not_proc(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn seq_not_proc(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     a.args[0] = seq_not(it, a)?.remove(0);
     none()
 }
 
-fn partition(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn partition(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let Value::Seq(s) = &a.args[0] else { unreachable!() };
     let sizes: Vec<usize> = match &a.args[1] {
         Value::Int(p) => {
@@ -1155,7 +1155,7 @@ fn partition(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
 
 // ----- tuples and Cartesian products ---------------------------------------------------
 
-fn cartesian_product(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn cartesian_product(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let parts: Vec<Value> = if a.args.len() == 1 {
         match &a.args[0] {
             Value::Seq(s) => s.elems.clone(),
@@ -1169,7 +1169,7 @@ fn cartesian_product(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(it.cartesian_product(parts)?)
 }
 
-fn cartesian_power(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn cartesian_power(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let k = a.usize(1)?;
     one(it.cartesian_product(vec![a.args[0].clone(); k])?)
 }
@@ -1204,7 +1204,7 @@ fn flat_values(v: &[Value], out: &mut Vec<Value>, tuples: bool) {
     }
 }
 
-fn flat(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn flat(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     match &a.args[0] {
         Value::Tuple(t) => {
             let mut out = Vec::new();
@@ -1226,7 +1226,7 @@ fn flat(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
             }
             let c = Value::structure(StructKind::Coproduct(out));
             let inj = _it.call_intrinsic_named(crate::sym::Sym::new("Injections"), vec![c.clone()])?;
-            Ok(vec![c, inj])
+            Ok(vals![c, inj])
         }
         Value::Seq(s) => {
             let mut out = Vec::new();
@@ -1245,25 +1245,25 @@ fn flat(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     }
 }
 
-fn number_of_components(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn number_of_components(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     match car_parts(&a.args[0]).or_else(|| cop_parts(&a.args[0])) {
         Some(p) => one(Value::int(p.len() as i64)),
         None => Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}", it.type_name(&a.args[0])))),
     }
 }
 
-fn component(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn component(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let i = seq_index(&a.args[1], "Component")?;
     let parts = car_parts(&a.args[0]).or_else(|| cop_parts(&a.args[0])).ok_or_else(|| RuntimeError::runtime("Argument 1 must be a Cartesian product or coproduct"))?;
-    parts.get(i - 1).cloned().map(|v| vec![v]).ok_or_else(|| RuntimeError::runtime(format!("Component {i} is out of range")))
+    parts.get(i - 1).cloned().map(|v| vals![v]).ok_or_else(|| RuntimeError::runtime(format!("Component {i} is out of range")))
 }
 
-fn components(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn components(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let parts = car_parts(&a.args[0]).ok_or_else(|| RuntimeError::runtime("Argument must be a Cartesian product"))?;
     one(Value::list(parts.clone()))
 }
 
-fn car_random(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn car_random(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let parts = car_parts(&a.args[0]).cloned().unwrap();
     let mut elems = Vec::new();
     for p in &parts {
@@ -1273,7 +1273,7 @@ fn car_random(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(Value::Tuple(Rc::new(Tuple { elems, parent: Some(a.args[0].clone()) })))
 }
 
-fn car_rep(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn car_rep(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let parts = car_parts(&a.args[0]).cloned().unwrap();
     let mut elems = Vec::new();
     for p in &parts {
@@ -1288,13 +1288,13 @@ fn car_rep(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
 
 // ----- associative arrays --------------------------------------------------------------
 
-fn assoc_new(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn assoc_new(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let universe = a.args.first().cloned();
     let default = a.param("Default").filter(|v| !v.is_undef()).cloned();
     one(Value::Assoc(Rc::new(Assoc { universe, map: VMap::default(), default })))
 }
 
-fn assoc_keys(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn assoc_keys(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let Value::Assoc(m) = &a.args[0] else { unreachable!() };
     let keys: Vec<Value> = m.map.keys().cloned().collect();
     let u = m.universe.clone();
@@ -1304,35 +1304,35 @@ fn assoc_keys(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(it.build_aggregate(AggKind::Set, u, keys, true)?)
 }
 
-fn assoc_values(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn assoc_values(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let Value::Assoc(m) = &a.args[0] else { unreachable!() };
     one(Value::list(m.map.values().cloned().collect()))
 }
 
-fn is_in_keys(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_in_keys(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let Value::Assoc(m) = &a.args[0] else { unreachable!() };
     let m = m.clone();
     let key = match &m.universe {
         Some(u) => match it.try_coerce_into_universe(u, &a.args[1])? {
             Some(k) => k,
-            None => return Ok(vec![Value::Bool(false), Value::Undef]),
+            None => return Ok(vals![Value::Bool(false), Value::Undef]),
         },
         None => a.args[1].clone(),
     };
     match m.map.get(&key) {
-        Some(v) => Ok(vec![Value::Bool(true), v.clone()]),
-        None => Ok(vec![Value::Bool(false), Value::Undef]),
+        Some(v) => Ok(vals![Value::Bool(true), v.clone()]),
+        None => Ok(vals![Value::Bool(false), Value::Undef]),
     }
 }
 
 // ----- records -----------------------------------------------------------------------
 
-fn record_format(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn record_format(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let Value::Rec(r) = &a.args[0] else { unreachable!() };
     one(Value::Struct(r.format.clone()))
 }
 
-fn record_names(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn record_names(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let fmt = match &a.args[0] {
         Value::Rec(r) => r.format.clone(),
         Value::Struct(s) if matches!(s.kind, StructKind::RecFormat(_)) => s.clone(),
@@ -1344,23 +1344,23 @@ fn record_names(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
 
 // ----- coproducts --------------------------------------------------------------------
 
-fn injections(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn injections(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let c = a.args[0].clone();
     let parts = cop_parts(&c).ok_or_else(|| RuntimeError::runtime("Argument must be a coproduct"))?;
     let maps: Vec<Value> = parts.iter().enumerate().map(|(i, p)| Value::Map(Rc::new(MapObj { kind: MapKind::Map, domain: p.clone(), codomain: c.clone(), imp: MapImpl::Injection(i) }))).collect();
     one(Value::seq(None, maps))
 }
 
-fn constituent(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn constituent(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     component(it, a)
 }
 
-fn retrieve(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn retrieve(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let Value::CopElt(c) = &a.args[0] else { unreachable!() };
     one(c.value.clone())
 }
 
-fn universal_map(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn universal_map(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let c = a.args[0].clone();
     let s = a.args[1].clone();
     let Value::Seq(ms) = &a.args[2] else { unreachable!() };

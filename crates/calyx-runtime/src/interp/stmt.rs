@@ -6,11 +6,11 @@ use std::time::Instant;
 use calyx_flint::Integer;
 
 use super::{Flow, Frame, Interp};
-use crate::error::{ErrKind, RResult, RuntimeError};
+use crate::error::{ErrKind, ErrorInfo, RResult, RuntimeError};
 use crate::ir::*;
 use crate::print::Level;
 use crate::sym::Sym;
-use crate::value::{ErrObj, Value};
+use crate::value::{ErrObj, Vals, Value};
 
 impl Interp {
     pub fn exec_block(&mut self, stmts: &[S], f: &mut Frame) -> RResult<Flow> {
@@ -53,7 +53,7 @@ impl Interp {
                         vals.pop();
                     }
                     self.print_values(&vals, level)?;
-                    self.push_previous(vals);
+                    self.push_previous(vals.into_vec());
                 }
             }
             St::Printf(es) => {
@@ -173,7 +173,7 @@ impl Interp {
             St::Break(l) => return Ok(Flow::Break(*l)),
             St::Continue(l) => return Ok(Flow::Continue(*l)),
             St::Return(es) => {
-                let mut vals = Vec::with_capacity(es.len());
+                let mut vals = Vals::new();
                 for e in es {
                     if es.len() == 1 {
                         vals.extend(self.eval_multi(e, f, f.nresults.max(1))?);
@@ -207,7 +207,7 @@ impl Interp {
                         vals.push(self.eval(e, f)?);
                     }
                     let msg = self.format_print_list(&vals, Level::Default)?;
-                    return Err(RuntimeError { kind: ErrKind::Runtime, at_caller: true, ..RuntimeError::runtime(msg) }.in_context(self.current_function_name()));
+                    return Err(RuntimeError::runtime(msg).at_caller().in_context(self.current_function_name()));
                 }
             }
             St::RequireRange(v, lo, hi, name) => {
@@ -218,7 +218,8 @@ impl Interp {
                     return Err(RuntimeError::runtime(format!("Argument '{name}' must be an integer")).in_context(self.current_function_name()));
                 };
                 if x < lo || x > hi {
-                    return Err(RuntimeError { at_caller: true, ..RuntimeError::runtime(format!("Argument '{name}' ({x}) should be in the range [{lo}..{hi}]")) }.in_context(self.current_function_name()));
+                    let msg = format!("Argument '{name}' ({x}) should be in the range [{lo}..{hi}]");
+                    return Err(RuntimeError::runtime(msg).at_caller().in_context(self.current_function_name()));
                 }
             }
             St::RequireGe(v, lo, name) => {
@@ -228,7 +229,8 @@ impl Interp {
                     return Err(RuntimeError::runtime(format!("Argument '{name}' must be an integer")).in_context(self.current_function_name()));
                 };
                 if x < lo {
-                    return Err(RuntimeError { at_caller: true, ..RuntimeError::runtime(format!("Argument '{name}' ({x}) should be at least {lo}")) }.in_context(self.current_function_name()));
+                    let msg = format!("Argument '{name}' ({x}) should be at least {lo}");
+                    return Err(RuntimeError::runtime(msg).at_caller().in_context(self.current_function_name()));
                 }
             }
             St::Try(body, var, handler) => {
@@ -354,7 +356,7 @@ impl Interp {
                     None => 0,
                 };
                 self.quit = Some(c);
-                return Err(RuntimeError { kind: ErrKind::Interrupt, message: "quit".into(), ..RuntimeError::runtime("") });
+                return Err(ErrorInfo { kind: ErrKind::Interrupt, ..ErrorInfo::runtime("quit") }.into());
             }
             St::Clear => {
                 self.globals.clear();
@@ -399,12 +401,12 @@ impl Interp {
                     o => self.to_string_default(o)?,
                 };
                 let kind = if &*e.kind == "Err" { ErrKind::Runtime } else { ErrKind::User };
-                return Ok(RuntimeError { kind, object: Some(e.object.clone()), style: crate::error::ErrStyle::Object, ..RuntimeError::runtime(msg) });
+                return Ok(ErrorInfo { kind, object: Some(e.object.clone()), style: crate::error::ErrStyle::Object, ..ErrorInfo::runtime(msg) }.into());
             }
         }
         let msg = self.format_print_list(&vals, Level::Default)?;
         let object = if vals.len() == 1 { vals[0].clone() } else { Value::str(&msg) };
-        Ok(RuntimeError { kind: ErrKind::User, object: Some(object), style: crate::error::ErrStyle::Bare, ..RuntimeError::runtime(msg) })
+        Ok(ErrorInfo { kind: ErrKind::User, object: Some(object), style: crate::error::ErrStyle::Bare, ..ErrorInfo::runtime(msg) }.into())
     }
 
     /// The `Err` object bound by `catch e`.

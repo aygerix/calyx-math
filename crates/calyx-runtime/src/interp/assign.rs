@@ -723,7 +723,7 @@ impl Interp {
             let mask = [true, false];
             match self.select_signature(sym, &args, &mask, true) {
                 Some(_) => {
-                    self.call_intrinsic(sym, &mut args, &mask, Vec::new(), 0, true, calyx_syntax::Span::default())?;
+                    self.call_intrinsic(sym, &mut args, &mask, Vec::new(), 0, true, calyx_syntax::Span::default(), None)?;
                     return Ok(std::mem::take(&mut args[0]));
                 }
                 None => return Ok(std::mem::take(&mut args[0])),

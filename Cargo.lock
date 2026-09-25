@@ -59,6 +59,7 @@ dependencies = [
  "indexmap",
  "regex",
  "rustc-hash",
+ "smallvec",
 ]
 
 [[package]]

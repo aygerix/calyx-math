@@ -51,7 +51,7 @@ pub fn ints_of(v: &Value) -> RResult<Vec<Integer>> {
         .collect()
 }
 
-fn abs(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn abs(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(match &a.args[0] {
         Value::Int(n) => Value::Int(n.abs()),
         Value::Rat(q) => Value::rat(q.abs()),
@@ -60,7 +60,7 @@ fn abs(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     })
 }
 
-fn sign(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn sign(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = match &a.args[0] {
         Value::Int(n) => n.sign(),
         Value::Rat(q) => q.sign(),
@@ -70,7 +70,7 @@ fn sign(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(Value::int(s as i64))
 }
 
-fn is_zero(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_zero(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(match &a.args[0] {
         Value::Int(n) => n.is_zero(),
         Value::Rat(q) => q.is_zero(),
@@ -79,7 +79,7 @@ fn is_zero(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     })
 }
 
-fn is_one(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_one(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(match &a.args[0] {
         Value::Int(n) => n.is_one(),
         Value::Rat(q) => q.is_one(),
@@ -87,7 +87,7 @@ fn is_one(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     })
 }
 
-fn is_minus_one(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_minus_one(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(match &a.args[0] {
         Value::Int(n) => n.to_i64() == Some(-1),
         Value::Rat(q) => q.is_integral() && q.numerator().to_i64() == Some(-1),
@@ -95,46 +95,46 @@ fn is_minus_one(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     })
 }
 
-fn is_even(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_even(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(a.int(0)?.is_even())
 }
 
-fn is_odd(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_odd(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(a.int(0)?.is_odd())
 }
 
-fn is_regular(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_regular(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(!a.int(0)?.is_zero())
 }
 
-fn is_single_precision(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_single_precision(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(a.int(0)?.abs() < Integer::from_i64(1 << 30))
 }
 
 /// The ring-theoretic functions that are the identity (or absolute value)
 /// on the integers.
-fn identity(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn identity(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(a.args[0].clone())
 }
 
-fn minimal_polynomial(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn minimal_polynomial(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int(0)?.clone();
     let px = it.poly_ring(&Value::integers(), true)?;
     one(it.coerce(&px, &Value::int_seq([-n, Integer::one()]))?)
 }
 
-fn eltseq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn eltseq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(int_seq(vec![a.int(0)?.clone()]))
 }
 
 // ----- division -----------------------------------------------------------------
 
-fn quotrem(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn quotrem(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (q, r) = a.int(0)?.fdiv_qr(a.int(1)?).ok_or_else(|| RuntimeError::runtime("Division by zero"))?;
-    Ok(vec![Value::Int(q), Value::Int(r)])
+    Ok(vals![Value::Int(q), Value::Int(r)])
 }
 
-fn exact_quotient(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn exact_quotient(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (n, d) = (a.int(0)?, a.int(1)?);
     if d.is_zero() {
         return Err(RuntimeError::runtime("Division by zero"));
@@ -145,7 +145,7 @@ fn exact_quotient(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     intv(n.divexact(d))
 }
 
-fn is_divisible_by(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_divisible_by(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (n, d) = (a.int(0)?, a.int(1)?);
     if d.is_zero() {
         return Err(RuntimeError::runtime("Division by zero"));
@@ -155,44 +155,44 @@ fn is_divisible_by(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     if a.nresults < 2 {
         return boolv(yes);
     }
-    Ok(vec![Value::Bool(yes), if yes { Value::Int(n.divexact(d)) } else { Value::Undef }])
+    Ok(vals![Value::Bool(yes), if yes { Value::Int(n.divexact(d)) } else { Value::Undef }])
 }
 
-fn shift_left(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn shift_left(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let b = a.small_ge(1, 0)?;
     intv(a.int(0)?.mul_2exp(b))
 }
 
-fn shift_right(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn shift_right(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let b = a.small_ge(1, 0)?;
     intv(a.int(0)?.fdiv_2exp(b))
 }
 
-fn mod_by_power_of_2(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn mod_by_power_of_2(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let b = a.small_ge(1, 0)?;
     let n = a.int(0)?;
     intv(n - &n.fdiv_2exp(b).mul_2exp(b))
 }
 
-fn bitwise_not(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn bitwise_not(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(a.int(0)?.bitnot())
 }
 
-fn bitwise_and(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn bitwise_and(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(a.int(0)?.bitand(a.int(1)?))
 }
 
-fn bitwise_or(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn bitwise_or(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(a.int(0)?.bitor(a.int(1)?))
 }
 
-fn bitwise_xor(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn bitwise_xor(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(a.int(0)?.bitxor(a.int(1)?))
 }
 
 // ----- gcd and lcm ----------------------------------------------------------------
 
-fn gcd(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn gcd(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (x, y) = (rat_arg(a, 0)?, rat_arg(a, 1)?);
     if x.is_integral() && y.is_integral() {
         return intv(x.numerator().gcd(&y.numerator()));
@@ -207,7 +207,7 @@ fn null_seq() -> RuntimeError {
     RuntimeError::runtime("Illegal null set/sequence")
 }
 
-fn gcd_seq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn gcd_seq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = ints_of(&a.args[0])?;
     if s.is_empty() {
         return Err(null_seq());
@@ -215,11 +215,11 @@ fn gcd_seq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     intv(s.iter().fold(Integer::zero(), |g, n| g.gcd(n)))
 }
 
-fn lcm(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn lcm(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(int_arg(a, 0)?.lcm(&int_arg(a, 1)?))
 }
 
-fn lcm_seq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn lcm_seq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = ints_of(&a.args[0])?;
     if s.is_empty() {
         return Err(null_seq());
@@ -227,9 +227,9 @@ fn lcm_seq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     intv(s.iter().fold(Integer::one(), |l, n| l.lcm(n)))
 }
 
-fn xgcd(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn xgcd(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (g, s, t) = a.int(0)?.xgcd(a.int(1)?);
-    Ok(vec![Value::Int(g), Value::Int(s), Value::Int(t)])
+    Ok(vals![Value::Int(g), Value::Int(s), Value::Int(t)])
 }
 
 /// `x / y` rounded to the nearest integer (halves upwards).
@@ -313,52 +313,52 @@ pub fn xgcd_seq_of(a: &[Integer]) -> (Integer, Vec<Integer>) {
     (g, x)
 }
 
-fn xgcd_seq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn xgcd_seq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = ints_of(&a.args[0])?;
     let (g, x) = xgcd_seq_of(&s);
-    Ok(vec![Value::Int(g), int_seq(x)])
+    Ok(vals![Value::Int(g), int_seq(x)])
 }
 
 // ----- roots, powers and logarithms ---------------------------------------------
 
-fn isqrt(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn isqrt(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     match a.int(0)?.isqrt() {
         Some(r) => intv(r),
         None => Err(arg_not(1, "non-negative")),
     }
 }
 
-fn iroot(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn iroot(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int_ge(0, 1)?;
     let k = a.small_ge(1, 2)?;
     intv(n.root(k).unwrap().0)
 }
 
-fn is_square(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_square(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     match &a.args[0] {
         Value::Int(n) => {
             if n.sign() >= 0 && n.is_square() {
-                Ok(vec![Value::Bool(true), Value::Int(n.isqrt().unwrap())])
+                Ok(vals![Value::Bool(true), Value::Int(n.isqrt().unwrap())])
             } else {
-                Ok(vec![Value::Bool(false), Value::Undef])
+                Ok(vals![Value::Bool(false), Value::Undef])
             }
         }
         Value::Rat(q) => {
             let (n, d) = (q.numerator(), q.denominator());
             if n.sign() >= 0 && n.is_square() && d.is_square() {
-                Ok(vec![Value::Bool(true), Value::rat(Rational::new(&n.isqrt().unwrap(), &d.isqrt().unwrap()).unwrap())])
+                Ok(vals![Value::Bool(true), Value::rat(Rational::new(&n.isqrt().unwrap(), &d.isqrt().unwrap()).unwrap())])
             } else {
-                Ok(vec![Value::Bool(false), Value::Undef])
+                Ok(vals![Value::Bool(false), Value::Undef])
             }
         }
         _ => unreachable!(),
     }
 }
 
-fn is_power(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_power(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     if a.args.len() == 2 {
         let n = a.int(0)?.clone();
-        let no = Ok(vec![Value::Bool(false), Value::Undef]);
+        let no = Ok(vals![Value::Bool(false), Value::Undef]);
         let k = a.int(1)?;
         if k.sign() <= 0 {
             return no;
@@ -368,18 +368,18 @@ fn is_power(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
             return no;
         }
         return match n.abs().root(k) {
-            Some((r, true)) => Ok(vec![Value::Bool(true), Value::Int(if n.sign() < 0 { -r } else { r })]),
+            Some((r, true)) => Ok(vals![Value::Bool(true), Value::Int(if n.sign() < 0 { -r } else { r })]),
             _ => no,
         };
     }
     let n = a.int_ge(0, 2)?;
     match n.perfect_power() {
-        Some((b, e)) => Ok(vec![Value::Bool(true), Value::Int(b), Value::Int(Integer::from_u64(e))]),
-        None => Ok(vec![Value::Bool(false), Value::Undef, Value::Undef]),
+        Some((b, e)) => Ok(vals![Value::Bool(true), Value::Int(b), Value::Int(Integer::from_u64(e))]),
+        None => Ok(vals![Value::Bool(false), Value::Undef, Value::Undef]),
     }
 }
 
-fn is_squarefree(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_squarefree(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int(0)?;
     if n.is_zero() {
         return Err(arg_not(1, "non-zero"));
@@ -387,17 +387,17 @@ fn is_squarefree(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     boolv(super::factseq::factor(n).iter().all(|(_, e)| *e == 1))
 }
 
-fn squarefree_factorization(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn squarefree_factorization(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int(0)?;
     if n.is_zero() {
         return Err(arg_not(1, "non-zero"));
     }
     let (x, y) = super::factseq::squarefree_split(&super::factseq::factor(n));
     let x = super::factseq::fact_int(&x);
-    Ok(vec![Value::Int(if n.sign() < 0 { -x } else { x }), Value::Int(super::factseq::fact_int(&y))])
+    Ok(vals![Value::Int(if n.sign() < 0 { -x } else { x }), Value::Int(super::factseq::fact_int(&y))])
 }
 
-fn valuation(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn valuation(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (n, p) = (a.int(0)?.clone(), a.int(1)?.clone());
     if p.sign() <= 0 {
         return Err(arg_not(2, "positive"));
@@ -406,17 +406,17 @@ fn valuation(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
         return Err(super::arg_prime(2, &p));
     }
     if n.is_zero() {
-        return Ok(vec![Value::Infinity(true)]);
+        return Ok(vals![Value::Infinity(true)]);
     }
     let (v, rest) = n.remove(&p);
     // The cofactor is returned only when asked for.
     if a.nresults < 2 {
         return intv(Integer::from_u64(v));
     }
-    Ok(vec![Value::Int(Integer::from_u64(v)), Value::Int(rest)])
+    Ok(vals![Value::Int(Integer::from_u64(v)), Value::Int(rest)])
 }
 
-fn ilog(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn ilog(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let b = a.int_ge(0, 2)?;
     let n = a.int_ge(1, 1)?;
     // Count the divisions by b that stay above 1.
@@ -432,14 +432,14 @@ fn ilog(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     intv(Integer::from_u64(k))
 }
 
-fn ilog2(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn ilog2(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int_ge(0, 1)?;
     intv(Integer::from_u64(n.bits() - 1))
 }
 
 // ----- digits -------------------------------------------------------------------
 
-fn intseq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn intseq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int_ge(0, 0)?;
     let b = if a.args.len() > 1 { a.int_ge(1, 2)? } else { Integer::from_i64(10) };
     let mut digits = Vec::new();
@@ -459,7 +459,7 @@ fn intseq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(int_seq(digits))
 }
 
-fn seqint(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn seqint(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = a.seq(0)?.clone();
     let b = if a.args.len() > 1 { a.int_ge(1, 2)? } else { Integer::from_i64(10) };
     let mut n = Integer::zero();
@@ -486,7 +486,7 @@ fn check_max_args(it: &Interp, x: &Value, y: &Value) -> RResult<()> {
     Ok(())
 }
 
-fn max2(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn max2(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (x, y) = (a.args[0].clone(), a.args[1].clone());
     check_max_args(it, &x, &y)?;
     let o = it.compare_for_sort(&x, &y)?;
@@ -504,7 +504,7 @@ fn in_common_structure(it: &mut Interp, x: &Value, y: &Value, r: Value) -> RResu
     }
 }
 
-fn min2(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn min2(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (x, y) = (a.args[0].clone(), a.args[1].clone());
     check_max_args(it, &x, &y)?;
     let o = it.compare_for_sort(&x, &y)?;
@@ -514,15 +514,15 @@ fn min2(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
 
 // ----- rationals ----------------------------------------------------------------
 
-fn numerator(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn numerator(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(rat_arg(a, 0)?.numerator())
 }
 
-fn denominator(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn denominator(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(rat_arg(a, 0)?.denominator())
 }
 
-fn floor(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn floor(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(match &a.args[0] {
         Value::Int(n) => n.clone(),
         Value::Rat(q) => q.floor(),
@@ -531,7 +531,7 @@ fn floor(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     })
 }
 
-fn ceiling(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn ceiling(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(match &a.args[0] {
         Value::Int(n) => n.clone(),
         Value::Rat(q) => q.ceil(),
@@ -540,7 +540,7 @@ fn ceiling(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     })
 }
 
-fn round(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn round(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(match &a.args[0] {
         Value::Int(n) => n.clone(),
         Value::Rat(q) => q.round(),
@@ -549,7 +549,7 @@ fn round(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     })
 }
 
-fn truncate(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn truncate(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(match &a.args[0] {
         Value::Int(n) => n.clone(),
         Value::Rat(q) => q.trunc(),
@@ -558,7 +558,7 @@ fn truncate(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     })
 }
 
-fn is_integral(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_integral(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(match &a.args[0] {
         Value::Int(_) => true,
         Value::Rat(q) => q.is_integral(),
@@ -568,7 +568,7 @@ fn is_integral(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
 
 // ----- random integers -------------------------------------------------------------
 
-fn random_range(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn random_range(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (lo, hi) = (a.int(0)?.clone(), a.int(1)?.clone());
     if lo > hi {
         return Err(RuntimeError::runtime(format!("Argument 2 ({hi}) should be >= argument 1 ({lo})")));
@@ -576,7 +576,7 @@ fn random_range(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     intv(it.rng.range(&lo, &hi))
 }
 
-fn random_upto(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn random_upto(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let hi = a.int_ge(0, 0)?;
     intv(it.rng.range(&Integer::zero(), &hi))
 }
@@ -589,7 +589,7 @@ fn random_bits_of(it: &mut Interp, n: u64) -> Integer {
     it.rng.below(&Integer::one().mul_2exp(n))
 }
 
-fn random_bits(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn random_bits(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int(0)?;
     if n.sign() < 0 {
         // Magma numbers this argument 0.
@@ -599,7 +599,7 @@ fn random_bits(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     intv(random_bits_of(it, n))
 }
 
-fn random_prime(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn random_prime(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     // n is small and non-negative (positive with a congruence).
     let n = a.int_ge(0, if a.args.len() == 1 { 0 } else { 1 })?;
     let n = n.to_u64().filter(|&n| n < 1 << 30).ok_or_else(|| super::arg_le(1, &n, (1 << 30) - 1))?;
@@ -627,14 +627,14 @@ fn random_prime(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
         for _ in 0..tries {
             let p = &r + &(&m * &it.rng.below(&count));
             if p.is_probable_prime() && p.is_prime() {
-                return Ok(vec![Value::Bool(true), Value::Int(p)]);
+                return Ok(vals![Value::Bool(true), Value::Int(p)]);
             }
         }
     }
-    Ok(vec![Value::Bool(false), Value::Undef])
+    Ok(vals![Value::Bool(false), Value::Undef])
 }
 
-fn random_consecutive_bits(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn random_consecutive_bits(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int(0)?.clone();
     if n.sign() <= 0 {
         return Err(arg_ge(1, &n, 0));
@@ -663,20 +663,20 @@ fn random_consecutive_bits(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Val
     intv(x)
 }
 
-fn integers(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn integers(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::integers())
 }
 
-fn identity_z(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn identity_z(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     intv(Integer::one())
 }
 
-fn field_of_fractions(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn field_of_fractions(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::rationals())
 }
 
-fn signature(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
-    Ok(vec![Value::int(1), Value::int(0)])
+fn signature(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
+    Ok(vals![Value::int(1), Value::int(0)])
 }
 
 pub fn register(it: &mut Interp) {

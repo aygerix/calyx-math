@@ -787,7 +787,7 @@ impl Interp {
         self.out.begin_capture();
         let mut args: Vec<Value> = if use_level { with_level.to_vec() } else { vec![v.clone()] };
         let mask = vec![false; args.len()];
-        let r = self.call_intrinsic(sym, &mut args, &mask, Vec::new(), 0, true, calyx_syntax::Span::default());
+        let r = self.call_intrinsic(sym, &mut args, &mask, Vec::new(), 0, true, calyx_syntax::Span::default(), None);
         let text = self.out.end_capture();
         r?;
         p.write(&text);

@@ -40,7 +40,7 @@ fn open_for_write(name: &str, overwrite: bool) -> RResult<std::fs::File> {
     o.open(name).map_err(|e| RuntimeError::runtime(format!("Could not open file \"{name}\": {e}")))
 }
 
-fn print_file(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn print_file(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let name = a.str(0)?.to_string();
     let x = a.args[1].clone();
     let level = if a.args.len() > 2 {
@@ -55,7 +55,7 @@ fn print_file(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     none()
 }
 
-fn print_file_magma(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn print_file_magma(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let name = a.str(0)?.to_string();
     let x = a.args[1].clone();
     let text = it.format_value(&x, Level::Magma)?;
@@ -64,38 +64,38 @@ fn print_file_magma(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     none()
 }
 
-fn set_output_file(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn set_output_file(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = open_for_write(a.str(0)?, a.param_bool("Overwrite")?)?;
     it.out.redirect_to_file(f);
     none()
 }
 
-fn unset_output_file(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn unset_output_file(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     it.out.unredirect();
     none()
 }
 
-fn has_output_file(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn has_output_file(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     boolv(it.out.has_redirect())
 }
 
-fn set_log_file(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn set_log_file(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     it.out.log = Some(open_for_write(a.str(0)?, a.param_bool("Overwrite")?)?);
     none()
 }
 
-fn unset_log_file(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn unset_log_file(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     it.out.log = None;
     none()
 }
 
-fn read_file(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn read_file(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let name = a.str(0)?;
     let text = std::fs::read_to_string(name).map_err(|e| RuntimeError::runtime(format!("Could not read file \"{name}\": {e}")))?;
     one(Value::str(&text))
 }
 
-fn open(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn open(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let name = a.str(0)?.to_string();
     let mode = a.str(1)?.to_string();
     let state = open_state(&name, &mode)?;
@@ -111,12 +111,12 @@ fn open_state(name: &str, mode: &str) -> RResult<IoState> {
     })
 }
 
-fn open_test(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn open_test(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let name = a.str(0)?.to_string();
     let mode = a.str(1)?.to_string();
     match open_state(&name, &mode) {
-        Ok(state) => Ok(vec![Value::Bool(true), Value::Io(Rc::new(IoObj { name, mode, state: std::cell::RefCell::new(state) }))]),
-        Err(_) => Ok(vec![Value::Bool(false), Value::Undef]),
+        Ok(state) => Ok(vals![Value::Bool(true), Value::Io(Rc::new(IoObj { name, mode, state: std::cell::RefCell::new(state) }))]),
+        Err(_) => Ok(vals![Value::Bool(false), Value::Undef]),
     }
 }
 
@@ -127,7 +127,7 @@ fn io_arg(a: &CallArgs, i: usize) -> Rc<IoObj> {
     }
 }
 
-fn read_io(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn read_io(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let io = io_arg(a, 0);
     let mut st = io.state.borrow_mut();
     let IoState::Reader { data, pos } = &mut *st else {
@@ -142,7 +142,7 @@ fn read_io(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(Value::str(&s))
 }
 
-fn gets(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn gets(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let io = io_arg(a, 0);
     let mut st = io.state.borrow_mut();
     let IoState::Reader { data, pos } = &mut *st else {
@@ -161,7 +161,7 @@ fn gets(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(Value::str(&s))
 }
 
-fn getc(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn getc(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let io = io_arg(a, 0);
     let mut st = io.state.borrow_mut();
     let IoState::Reader { data, pos } = &mut *st else {
@@ -175,7 +175,7 @@ fn getc(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(Value::str(&c.to_string()))
 }
 
-fn ungetc(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn ungetc(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let io = io_arg(a, 0);
     if let IoState::Reader { pos, .. } = &mut *io.state.borrow_mut() {
         *pos = pos.saturating_sub(1);
@@ -183,21 +183,21 @@ fn ungetc(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     none()
 }
 
-fn puts(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn puts(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let text = format!("{}\n", a.str(1)?);
     let t = a.args[0].clone();
     it.write_to_file_value(&t, &text)?;
     none()
 }
 
-fn put(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn put(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let text = a.str(1)?.to_string();
     let t = a.args[0].clone();
     it.write_to_file_value(&t, &text)?;
     none()
 }
 
-fn flush(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn flush(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     if let Some(Value::Io(io)) = a.args.first() {
         if let IoState::Writer(f) = &mut *io.state.borrow_mut() {
             let _ = f.flush();
@@ -207,7 +207,7 @@ fn flush(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     none()
 }
 
-fn tell(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn tell(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let io = io_arg(a, 0);
     let p = match &mut *io.state.borrow_mut() {
         IoState::Reader { pos, .. } => *pos as i64,
@@ -217,7 +217,7 @@ fn tell(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(Value::int(p))
 }
 
-fn seek(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn seek(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let io = io_arg(a, 0);
     let off = a.usize(1)?;
     if let IoState::Reader { pos, data } = &mut *io.state.borrow_mut() {
@@ -226,7 +226,7 @@ fn seek(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     none()
 }
 
-fn rewind(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn rewind(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let io = io_arg(a, 0);
     if let IoState::Reader { pos, .. } = &mut *io.state.borrow_mut() {
         *pos = 0;
@@ -234,15 +234,15 @@ fn rewind(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     none()
 }
 
-fn eof(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn eof(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::str(EOF_MARKER))
 }
 
-fn is_eof(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn is_eof(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(a.str(0)? == EOF_MARKER)
 }
 
-fn at_eof(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn at_eof(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let io = io_arg(a, 0);
     let r = match &*io.state.borrow() {
         IoState::Reader { data, pos } => *pos >= data.len(),
@@ -251,18 +251,18 @@ fn at_eof(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     boolv(r)
 }
 
-fn io_type(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn io_type(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let _ = io_arg(a, 0);
     one(Value::str("File"))
 }
 
-fn system(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn system(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     it.out.flush();
     let status = std::process::Command::new("sh").arg("-c").arg(a.str(0)?).status().map_err(|e| RuntimeError::runtime(e.to_string()))?;
     one(Value::int(status.code().unwrap_or(-1) as i64 * 256))
 }
 
-fn pipe(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn pipe(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let cmd = a.str(0)?.to_string();
     let input = a.str(1)?.to_string();
     let mut child = std::process::Command::new("sh")
@@ -279,37 +279,37 @@ fn pipe(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     one(Value::str(&String::from_utf8_lossy(&out.stdout)))
 }
 
-fn get_env(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn get_env(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::str(&std::env::var(a.str(0)?).unwrap_or_default()))
 }
 
-fn change_directory(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn change_directory(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     std::env::set_current_dir(a.str(0)?).map_err(|e| RuntimeError::runtime(e.to_string()))?;
     none()
 }
 
-fn get_current_directory(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn get_current_directory(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::str(&std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default()))
 }
 
-fn getpid(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn getpid(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::int(std::process::id() as i64))
 }
 
-fn getuid(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn getuid(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     unsafe extern "C" {
         fn getuid() -> u32;
     }
     one(Value::int(unsafe { getuid() } as i64))
 }
 
-fn tempname(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn tempname(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let prefix = a.str(0)?.to_string();
     let r = it.rng.next_u64();
     one(Value::str(&format!("{prefix}{:06x}{}", r & 0xffffff, std::process::id())))
 }
 
-fn load(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn load(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     match &a.args[0] {
         Value::Str(s) => {
             let s = s.to_string();
@@ -327,31 +327,31 @@ fn load(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     none()
 }
 
-fn attach(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn attach(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = a.str(0)?.to_string();
     it.attach(&s)?;
     none()
 }
 
-fn detach(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn detach(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = a.str(0)?.to_string();
     it.detach(&s)?;
     none()
 }
 
-fn attach_spec(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn attach_spec(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = a.str(0)?.to_string();
     it.attach_spec(&s, false)?;
     none()
 }
 
-fn detach_spec(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn detach_spec(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = a.str(0)?.to_string();
     it.attach_spec(&s, true)?;
     none()
 }
 
-fn show_previous(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn show_previous(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let entries: Vec<(usize, Vec<Value>)> = if a.args.is_empty() {
         it.previous.iter().cloned().enumerate().map(|(i, v)| (i + 1, v)).collect()
     } else {
@@ -368,12 +368,12 @@ fn show_previous(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     none()
 }
 
-fn clear_previous(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn clear_previous(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     it.previous.clear();
     none()
 }
 
-fn set_previous_size(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn set_previous_size(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     it.previous_size = a.usize(0)?;
     while it.previous.len() > it.previous_size {
         it.previous.pop_back();
@@ -381,17 +381,17 @@ fn set_previous_size(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     none()
 }
 
-fn get_previous_size(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn get_previous_size(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::int(it.previous_size as i64))
 }
 
-fn indent_push(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn indent_push(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let c = if a.args.is_empty() { 1 } else { a.usize(0)? };
     it.indent_level += c;
     none()
 }
 
-fn indent_pop(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn indent_pop(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let c = if a.args.is_empty() { 1 } else { a.usize(0)? };
     if it.indent_level < c {
         return Err(RuntimeError::runtime("The indentation level is already zero"));
@@ -400,7 +400,7 @@ fn indent_pop(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     none()
 }
 
-fn set_echo_input(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
+fn set_echo_input(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     it.echo_input = a.bool(0)?;
     none()
 }
