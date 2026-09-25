@@ -21,3 +21,4 @@ r := RandomConsecutiveBits(20, 1, 3); r ge 0 and r lt 2^20;
 RandomConsecutiveBits(0, 1, 3);
 RandomConsecutiveBits(10, 3, 1);
 r := RandomConsecutiveBits(10, 0, 1); r ge 0 and r lt 2^10;
+RandomPrime(2^30);

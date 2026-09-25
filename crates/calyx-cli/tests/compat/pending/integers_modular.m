@@ -37,3 +37,6 @@ NormEquation(1, 25); NormEquation(1, 3); NormEquation(2, 9); NormEquation(3, 7);
 NormEquation(1, 25: Factorization := [<5, 2>]);
 NormEquation(0, 4);
 NormEquation(1, -4);
+// Norm equations where d and m share square factors, or whose solutions
+// need every square root modulo p^k.
+NormEquation(6875, 1953125); NormEquation(28561, 371293); NormEquation(25, 3125); NormEquation(16, 16000); NormEquation(18, 3011499);

@@ -19,3 +19,12 @@ NthPrime(0);
 NthPrime(-1);
 PrimeBasis(360); PrimeBasis(-360); PrimeBasis(1); PrimeDivisors(97); PrimeDivisors(2^32+1);
 PrimeBasis(0);
+// The limits of the prime listing functions (2.22 lists primes up to at
+// least 2^30; the handbook limits PrimesUpTo to 2^30 - 1).
+PrimesUpTo(2^30);
+PrimesInInterval(2, 2^30 + 1);
+PrimesInInterval(2^57 - 100, 2^57);
+PrimesInInterval(-10, -5);
+PrimesInInterval(2^57 - 100, 2^57 - 1); PrimesInInterval(2^40, 2^40 + 100); PrimesInInterval(1, 1);
+NthPrime(5761455); NthPrime(5761456); NthPrime(455052511);
+NthPrime(455052512);

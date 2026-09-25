@@ -600,9 +600,15 @@ fn random_bits(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
 }
 
 fn random_prime(it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let n = a.small_ge(0, 2)?;
+    // n is small and non-negative (positive with a congruence).
+    let n = a.int_ge(0, if a.args.len() == 1 { 0 } else { 1 })?;
+    let n = n.to_u64().filter(|&n| n < 1 << 30).ok_or_else(|| super::arg_le(1, &n, (1 << 30) - 1))?;
     let bound = Integer::one().mul_2exp(n);
     if a.args.len() == 1 {
+        // There are no primes below 2^0 or 2^1.
+        if n < 2 {
+            return intv(Integer::zero());
+        }
         loop {
             let p = it.rng.below(&bound);
             if p.is_probable_prime() && p.is_prime() {

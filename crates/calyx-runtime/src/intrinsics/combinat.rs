@@ -155,45 +155,31 @@ fn bell(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     intv(Integer::bell(n))
 }
 
+/// F_n for any integer n (F_(-n) = (-1)^(n+1) F_n).
+fn fibonacci_any(n: i64) -> Integer {
+    let f = Integer::fibonacci(n.unsigned_abs());
+    if n < 0 && n % 2 == 0 { -f } else { f }
+}
+
 /// The n-th term of the sequence with G_0 = g0, G_1 = g1 and
-/// G_n = G_(n-1) + G_(n-2), for any integer n.
+/// G_n = G_(n-1) + G_(n-2), for any integer n: g0 F_(n-1) + g1 F_n.
 fn generalized_fibonacci(g0: &Integer, g1: &Integer, n: i64) -> Integer {
-    if n >= 0 {
-        if n == 0 {
-            return g0.clone();
-        }
-        // G_n = g0 F_(n-1) + g1 F_n.
-        let n = n as u64;
-        return &(g0 * &Integer::fibonacci(n - 1)) + &(g1 * &Integer::fibonacci(n));
-    }
-    // Run the recursion backwards: G_(n-2) = G_n - G_(n-1).
-    let (mut a, mut b) = (g0.clone(), g1.clone());
-    for _ in 0..(-n) {
-        let prev = &b - &a;
-        b = a;
-        a = prev;
-    }
-    a
+    &(g0 * &fibonacci_any(n - 1)) + &(g1 * &fibonacci_any(n))
 }
 
 fn fibonacci(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let n = a.i64(0)?;
-    if n >= 0 {
-        return intv(Integer::fibonacci(n as u64));
-    }
-    let f = Integer::fibonacci((-n) as u64);
-    intv(if n % 2 == 0 { -f } else { f })
+    intv(fibonacci_any(a.small(0)?))
 }
 
 fn lucas(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let n = a.i64(0)?;
+    let n = a.small(0)?;
     let m = n.unsigned_abs();
     let l = if m == 0 { Integer::from_i64(2) } else { &Integer::fibonacci(m - 1) + &Integer::fibonacci(m + 1) };
     intv(if n < 0 && m % 2 == 1 { -l } else { l })
 }
 
 fn generalized_fibonacci_number(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let n = a.i64(2)?;
+    let n = a.small(2)?;
     intv(generalized_fibonacci(a.int(0)?, a.int(1)?, n))
 }
 

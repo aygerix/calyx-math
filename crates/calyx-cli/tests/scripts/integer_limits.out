@@ -1,0 +1,111 @@
+[]
+[ 2, 3, 5, 7, 11, 13, 17, 19, 23, 29 ]
+78498
+
+>> PrimesUpTo(0);
+             ^
+Runtime error in 'PrimesUpTo': Limit must be positive
+
+
+>> PrimesUpTo(2^30);
+             ^
+Runtime error in 'PrimesUpTo': Limit is too large
+
+[]
+[ 2, 3, 5, 7, 11, 13, 17, 19, 23, 29 ]
+[ 1000003, 1000033, 1000037, 1000039, 1000081, 1000099 ]
+[ 1099511627791, 1099511627803, 1099511627831, 1099511627873 ]
+[ 144115188075855803, 144115188075855811, 144115188075855823, 
+144115188075855847, 144115188075855859 ]
+46612
+
+>> PrimesInInterval(10, 5);
+                   ^
+Runtime error in 'PrimesInInterval': Upper limit < Lower Limit !
+
+
+>> PrimesInInterval(-10, -5);
+                   ^
+Runtime error in 'PrimesInInterval': Upper limit must be positive
+
+
+>> PrimesInInterval(0, 10);
+                   ^
+Runtime error in 'PrimesInInterval': Lower limit must be positive
+
+
+>> PrimesInInterval(2^57 - 100, 2^57);
+                   ^
+Runtime error in 'PrimesInInterval': Limits are too large
+
+
+>> PrimesInInterval(2, 2^30 + 1);
+                   ^
+Runtime error in 'PrimesInInterval': Interval is too large
+
+1
+2
+29
+99999989
+100000007
+9999999967
+
+>> NthPrime(455052512);
+           ^
+Runtime error in 'NthPrime': Integer is too large
+
+
+>> NthPrime(-1);
+           ^
+Runtime error in 'NthPrime': Argument 1 (-1) should be >= 0
+
+89
+-55
+-199
+123
+-180510493
+[ 95, -59, 36, -23, 13, -10, 3, -7, -4, -11, -15, -26, -41 ]
+
+>> Fibonacci(2^30);
+            ^
+Runtime error in 'Fibonacci': Argument 1 (1073741824) is not small
+
+
+>> Fibonacci(-2^63);
+            ^
+Runtime error in 'Fibonacci': Argument 1 (-9223372036854775808) is not small
+
+
+>> Lucas(-2^30);
+        ^
+Runtime error in 'Lucas': Argument 1 (-1073741824) is not small
+
+
+>> GeneralizedFibonacciNumber(1, 1, 2^30);
+                             ^
+Runtime error in 'GeneralizedFibonacciNumber': Argument 3 (1073741824) is not 
+small
+
+0
+0
+true
+
+>> RandomPrime(-1);
+              ^
+Runtime error in 'RandomPrime': Argument 1 (-1) should be >= 0
+
+
+>> RandomPrime(2^30);
+              ^
+Runtime error in 'RandomPrime': Argument 1 (1073741824) should be <= 1073741823
+
+
+>> RandomPrime(0, 1, 4, 100);
+              ^
+Runtime error in 'RandomPrime': Argument 1 (0) should be >= 1
+
+true 1125 10
+true 507 2
+true 55 2
+true 104 18
+true 21 409

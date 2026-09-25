@@ -66,3 +66,8 @@ Bell(-1);
 Fibonacci(0); Fibonacci(10); Fibonacci(-10); Fibonacci(-11); Fibonacci(100);
 Lucas(0); Lucas(10); Lucas(-10); Lucas(-11);
 GeneralizedFibonacciNumber(0, 1, 10); GeneralizedFibonacciNumber(2, 1, 10); GeneralizedFibonacciNumber(3, 7, 5); GeneralizedFibonacciNumber(3, 7, -5); GeneralizedFibonacciNumber(3, 7, 0); GeneralizedFibonacciNumber(3, 7, 1);
+GeneralizedFibonacciNumber(2, 5, -40); [ GeneralizedFibonacciNumber(3, -7, n) : n in [-6..6] ];
+Fibonacci(2^30);
+Fibonacci(-2^30);
+Lucas(2^30);
+GeneralizedFibonacciNumber(1, 1, 2^30);

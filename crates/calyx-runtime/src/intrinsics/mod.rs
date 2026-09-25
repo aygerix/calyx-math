@@ -334,6 +334,12 @@ impl CallArgs {
         self.int(i)?.to_i64().ok_or_else(|| RuntimeError::runtime(format!("Argument {} is too large", i + 1)))
     }
 
+    /// Argument `i` as one of Magma's small integers, |n| < 2^30.
+    pub fn small(&self, i: usize) -> RResult<i64> {
+        let n = self.int(i)?;
+        n.to_i64().filter(|v| v.unsigned_abs() < 1 << 30).ok_or_else(|| RuntimeError::runtime(format!("Argument {} ({n}) is not small", i + 1)))
+    }
+
     pub fn usize(&self, i: usize) -> RResult<usize> {
         let n = self.int(i)?;
         if n.sign() < 0 {
