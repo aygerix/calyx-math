@@ -387,7 +387,7 @@ impl Interp {
     }
 
     pub fn current_function_name(&self) -> String {
-        self.trace.last().map(|t| t.name.clone()).unwrap_or_default()
+        self.trace.last().map(|t| t.name.to_string()).unwrap_or_default()
     }
 
     /// Build the error for an `error` statement.
@@ -436,7 +436,7 @@ impl Interp {
     pub fn format_trace(&self, e: &RuntimeError) -> String {
         let mut out = String::new();
         for fr in &e.trace {
-            out.push_str(&fr.name);
+            out.push_str(&fr.name.as_rc());
             if let Some(sp) = fr.span {
                 out.push_str(&format!(" ({})", self.describe_position(sp)));
             }

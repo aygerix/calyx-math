@@ -296,7 +296,7 @@ fn assign_names(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vec<Value>> {
     let mut out = Vec::new();
     for v in names.elems.iter() {
         match v {
-            Value::Str(s) => out.push(s.clone()),
+            Value::Str(s) => out.push(Rc::from(s.as_str())),
             _ => return Err(RuntimeError::runtime("Names must be strings")),
         }
     }

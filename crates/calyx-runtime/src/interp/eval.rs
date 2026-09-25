@@ -386,7 +386,7 @@ impl Interp {
             let _ = i;
             vals.push(v);
         }
-        Ok(Value::Func(Rc::new(Closure { code: code.clone(), captures: vals.into_boxed_slice() })))
+        Ok(Value::Func(Rc::new(Closure { code: code.clone(), captures: vals.into() })))
     }
 
     /// A user variable (not an intrinsic or type) visible at top level.

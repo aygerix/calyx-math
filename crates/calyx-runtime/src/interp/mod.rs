@@ -124,7 +124,9 @@ pub struct Interp {
     /// The symmetric groups, one per degree.
     pub groups: crate::perms::GroupCache,
     /// The identifier a function is being called through.
-    pub pending_call_name: Option<String>,
+    pub pending_call_name: Option<Sym>,
+    /// Emptied argument vectors of finished calls, for reuse.
+    pub arg_buffers: Vec<Vec<Value>>,
 }
 
 impl Interp {
@@ -173,6 +175,7 @@ impl Interp {
             rings: Default::default(),
             groups: Default::default(),
             pending_call_name: None,
+            arg_buffers: Vec::new(),
         };
         crate::intrinsics::register_all(&mut it);
         it

@@ -647,7 +647,7 @@ impl Interp {
                 Ok(false)
             }
             Value::Str(hay) => match x {
-                Value::Str(needle) => Ok(hay.contains(&**needle)),
+                Value::Str(needle) => Ok(hay.contains(needle.as_str())),
                 _ => Err(RuntimeError::runtime("Bad argument types").in_context("in")),
             },
             Value::Formal(fs) => {

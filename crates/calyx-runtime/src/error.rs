@@ -2,6 +2,7 @@
 
 use calyx_syntax::Span;
 
+use crate::sym::Sym;
 use crate::value::Value;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,7 +20,7 @@ pub enum ErrKind {
 /// A frame of the call stack at the time an error was raised.
 #[derive(Clone, Debug)]
 pub struct TraceFrame {
-    pub name: String,
+    pub name: Sym,
     pub span: Option<Span>,
     /// Parameter names and their printed values.
     pub args: Vec<(String, String)>,

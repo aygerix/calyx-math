@@ -115,7 +115,9 @@ pub struct TypeInfo {
 pub struct TypeRegistry {
     types: Vec<TypeInfo>,
     by_name: FxHashMap<Rc<str>, TypeId>,
-    isa_cache: RefCell<FxHashMap<(TypeId, TypeId), bool>>,
+    /// Known answers of `isa`, an n by n table for n types (0 unknown,
+    /// 1 no, 2 yes), dropped when types are added or change.
+    isa_cache: RefCell<(usize, Vec<u8>)>,
 }
 
 impl Default for TypeRegistry {
@@ -175,7 +177,7 @@ impl TypeRegistry {
                     info.parents.push(p);
                 }
             }
-            self.isa_cache.borrow_mut().clear();
+            *self.isa_cache.borrow_mut() = (0, Vec::new());
             return id;
         }
         let parents = if parents.is_empty() { vec![t::ANY] } else { parents };
@@ -211,11 +213,20 @@ impl TypeRegistry {
         if a == b || b == t::ANY {
             return true;
         }
-        if let Some(&r) = self.isa_cache.borrow().get(&(a, b)) {
-            return r;
+        let n = self.types.len();
+        let cell = a.0 as usize * n + b.0 as usize;
+        {
+            let cache = self.isa_cache.borrow();
+            if cache.0 == n && cache.1[cell] != 0 {
+                return cache.1[cell] == 2;
+            }
         }
         let r = self.types[a.0 as usize].parents.iter().any(|&p| self.isa(p, b));
-        self.isa_cache.borrow_mut().insert((a, b), r);
+        let mut cache = self.isa_cache.borrow_mut();
+        if cache.0 != n {
+            *cache = (n, vec![0; n * n]);
+        }
+        cache.1[cell] = 1 + r as u8;
         r
     }
 

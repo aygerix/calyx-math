@@ -234,10 +234,7 @@ impl Interp {
                 return Ok(());
             }
             (BinOp::Cat, Value::Str(s), Value::Str(t)) => {
-                let mut n = String::with_capacity(s.len() + t.len());
-                n.push_str(s);
-                n.push_str(t);
-                *s = Rc::from(n);
+                Rc::make_mut(s).push_text(t);
                 return Ok(());
             }
             _ => {}
@@ -460,7 +457,7 @@ impl Interp {
             Value::Set(s) => s.len(),
             Value::ISet(s) => s.elems.len(),
             Value::MSet(s) => return Ok(Value::Int(Integer::from_u64(s.total()))),
-            Value::Str(s) => s.chars().count(),
+            Value::Str(s) => s.len(),
             Value::Tuple(t) => t.elems.len(),
             Value::List(l) => l.len(),
             Value::Assoc(a) => a.map.len(),

@@ -447,10 +447,11 @@ impl Interp {
     /// The active user functions, outermost first, with their arguments.
     fn push_frames(&self, out: &mut String, e: &RuntimeError) {
         for fr in e.trace.iter().rev() {
-            if fr.name.is_empty() || fr.name.starts_with('<') {
+            let name = fr.name.as_rc();
+            if name.is_empty() || name.starts_with('<') {
                 continue;
             }
-            out.push_str(&fr.name);
+            out.push_str(&name);
             out.push_str("(\n");
             for (i, (n, v)) in fr.args.iter().enumerate() {
                 out.push_str(&format!("    {n}: {v}"));

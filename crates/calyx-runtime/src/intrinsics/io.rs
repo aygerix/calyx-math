@@ -17,7 +17,7 @@ impl Interp {
     pub fn write_to_file_value(&mut self, target: &Value, text: &str) -> RResult<()> {
         match target {
             Value::Str(name) => {
-                let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&**name).map_err(|e| RuntimeError::runtime(format!("Could not open file \"{name}\": {e}")))?;
+                let mut f = std::fs::OpenOptions::new().create(true).append(true).open(name.as_str()).map_err(|e| RuntimeError::runtime(format!("Could not open file \"{name}\": {e}")))?;
                 f.write_all(text.as_bytes()).map_err(|e| RuntimeError::runtime(e.to_string()))
             }
             Value::Io(io) => match &mut *io.state.borrow_mut() {

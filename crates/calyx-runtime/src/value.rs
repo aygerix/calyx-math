@@ -32,7 +32,7 @@ pub enum Value {
     Int(Integer),
     Rat(Rc<Rational>),
     Real(Rc<RealV>),
-    Str(Rc<str>),
+    Str(Rc<Text>),
     Seq(Rc<SeqEnum>),
     Set(Rc<SetEnum>),
     ISet(Rc<SetIndx>),
@@ -60,6 +60,59 @@ pub enum Value {
     Perm(Rc<Perm>),
     /// `Infinity()` (`true`) or `-Infinity()` (`false`).
     Infinity(bool),
+}
+
+/// The contents of a string. Strings grow in place under `cat:=` when not
+/// shared, and remember whether they are ASCII so that lengths and
+/// indices of ASCII text take constant time.
+#[derive(Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Text {
+    s: String,
+    ascii: bool,
+}
+
+impl Text {
+    pub fn new(s: String) -> Text {
+        Text { ascii: s.is_ascii(), s }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.s
+    }
+
+    pub fn push_str(&mut self, t: &str) {
+        self.ascii &= t.is_ascii();
+        self.s.push_str(t);
+    }
+
+    pub fn push_text(&mut self, t: &Text) {
+        self.ascii &= t.ascii;
+        self.s.push_str(&t.s);
+    }
+
+    /// The number of characters.
+    pub fn len(&self) -> usize {
+        if self.ascii { self.s.len() } else { self.s.chars().count() }
+    }
+
+    /// The `k`th character (from 0).
+    pub fn char_at(&self, k: usize) -> Option<&str> {
+        if self.ascii { self.s.get(k..k + 1) } else { self.s.char_indices().nth(k).map(|(i, c)| &self.s[i..i + c.len_utf8()]) }
+    }
+}
+
+impl std::fmt::Display for Text {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.s)
+    }
+}
+
+impl std::ops::Deref for Text {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.s
+    }
 }
 
 /// A real number with the decimal precision of its real field.
@@ -299,7 +352,7 @@ pub struct Assoc {
 /// A user function or procedure value.
 pub struct Closure {
     pub code: Rc<FuncCode>,
-    pub captures: Box<[Value]>,
+    pub captures: Rc<[Value]>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -483,7 +536,11 @@ impl Value {
     }
 
     pub fn str(s: &str) -> Value {
-        Value::Str(Rc::from(s))
+        Value::Str(Rc::new(Text::new(s.to_string())))
+    }
+
+    pub fn string(s: String) -> Value {
+        Value::Str(Rc::new(Text::new(s)))
     }
 
     /// A rational, normalised to an integer if it is integral... but kept as

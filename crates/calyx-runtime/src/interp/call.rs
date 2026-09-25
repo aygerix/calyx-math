@@ -33,8 +33,9 @@ impl Interp {
     /// With `stmt` set, a procedure call is allowed.
     pub fn call_expr(&mut self, c: &CallEx, f: &mut Frame, nres: usize, stmt: bool, span: Span) -> RResult<Option<Vec<Value>>> {
         let func = self.eval(&c.func, f)?;
-        let mut args = Vec::with_capacity(c.args.len());
-        let mut refs: Vec<Option<super::assign::RefTarget>> = Vec::with_capacity(c.args.len());
+        let mut args = self.arg_buffers.pop().unwrap_or_default();
+        let has_refs = c.args.iter().any(|a| matches!(a, CArg::Ref(..)));
+        let mut refs: Vec<Option<super::assign::RefTarget>> = Vec::new();
         // Evaluate value arguments first; take references afterwards so a
         // referenced variable is not shared while the callee modifies it.
         for a in &c.args {
@@ -48,7 +49,9 @@ impl Interp {
                 }
                 CArg::Ref(..) => args.push(Value::Undef),
             }
-            refs.push(None);
+        }
+        if has_refs {
+            refs.resize_with(c.args.len(), || None);
         }
         for (i, a) in c.args.iter().enumerate() {
             if let CArg::Ref(lv, sp) = a {
@@ -68,8 +71,17 @@ impl Interp {
         for (n, e) in &c.params {
             params.push((*n, self.eval(e, f)?));
         }
-        let refmask: Vec<bool> = c.args.iter().map(|a| matches!(a, CArg::Ref(..))).collect();
-        let has_refs = refmask.iter().any(|&b| b);
+        let mut buf = [false; 32];
+        let mask: Vec<bool>;
+        let refmask = if c.args.len() <= buf.len() {
+            for (b, a) in buf.iter_mut().zip(&c.args) {
+                *b = matches!(a, CArg::Ref(..));
+            }
+            &buf[..c.args.len()]
+        } else {
+            mask = c.args.iter().map(|a| matches!(a, CArg::Ref(..))).collect();
+            &mask[..]
+        };
         if has_refs && !stmt {
             self.restore_refs(&mut refs, &mut args, f)?;
             return Err(RuntimeError::runtime("Reference arguments may only be used in procedure calls"));
@@ -77,12 +89,16 @@ impl Interp {
         // Anonymous functions are named after the identifier they are called
         // through (for error reports).
         self.pending_call_name = match &c.func.kind {
-            Ex::Global(n) | Ex::Local(_, n) | Ex::Capture(_, n) => Some(n.to_string()),
+            Ex::Global(n) | Ex::Local(_, n) | Ex::Capture(_, n) => Some(*n),
             _ => None,
         };
-        let result = self.call_value_full(&func, &mut args, &refmask, params, nres, stmt, span);
+        let result = self.call_value_full(&func, &mut args, refmask, params, nres, stmt, span);
         // Write back reference arguments, even if the call failed.
         let wb = self.restore_refs(&mut refs, &mut args, f);
+        if self.arg_buffers.len() < 64 {
+            args.clear();
+            self.arg_buffers.push(args);
+        }
         let r = result?;
         wb?;
         Ok(r)
@@ -109,7 +125,7 @@ impl Interp {
     pub fn call_value_full(
         &mut self,
         func: &Value,
-        args: &mut [Value],
+        args: &mut Vec<Value>,
         refmask: &[bool],
         params: Vec<(Sym, Value)>,
         nres: usize,
@@ -180,11 +196,11 @@ impl Interp {
         params: Vec<(Sym, Value)>,
         nres: usize,
         span: Span,
-        trace_name: Option<String>,
+        trace_name: Option<Sym>,
     ) -> RResult<Vec<Value>> {
         let code = &clo.code;
         let np = code.params.len();
-        let name = trace_name.unwrap_or_else(|| code.name.map(|n| n.to_string()).unwrap_or_else(|| "<function>".to_string()));
+        let name = trace_name.or(code.name).unwrap_or_else(|| Sym::new("<function>"));
         if code.variadic {
             if args.len() + 1 < np {
                 return Err(RuntimeError::statement("procedure call", format!("Number of arguments ({}) is less than the minimum number of arguments ({})", args.len(), np.saturating_sub(1))));
@@ -202,11 +218,13 @@ impl Interp {
         if self.depth >= self.max_depth {
             return Err(RuntimeError::runtime("Recursion depth exceeded"));
         }
-        let mut frame = Frame::new(code.n_slots);
-        frame.captures = Rc::from(clo.captures.as_ref());
-        frame.self_fn = Some(Value::Func(clo.clone()));
-        frame.code = Some(code.clone());
-        frame.nresults = nres;
+        let mut frame = Frame {
+            slots: vec![Value::Undef; code.n_slots as usize],
+            captures: clo.captures.clone(),
+            self_fn: Some(Value::Func(clo.clone())),
+            code: Some(code.clone()),
+            nresults: nres,
+        };
         for (slot, ci) in &code.local_inits {
             frame.slots[*slot as usize] = clo.captures[*ci as usize].clone();
         }
@@ -228,7 +246,7 @@ impl Interp {
         }
         self.depth += 1;
         self.nresults_stack.push(nres);
-        self.trace.push(TraceFrame { name: name.clone(), span: Some(span), args: Vec::new() });
+        self.trace.push(TraceFrame { name, span: Some(span), args: Vec::new() });
         let result = (|| -> RResult<Vec<Value>> {
             for (pname, slot, default) in &code.opt_params {
                 let v = match params.iter().find(|(n, _)| n == pname) {
@@ -278,7 +296,7 @@ impl Interp {
                         let text = if v.is_undef() { "undef".to_string() } else { self.format_flat(&v, crate::print::Level::Default).unwrap_or_default() };
                         targs.push((p.name.to_string(), text));
                     }
-                    e.trace.push(TraceFrame { name: name.clone(), span: Some(span), args: targs });
+                    e.trace.push(TraceFrame { name, span: Some(span), args: targs });
                 }
                 self.trace.pop();
                 Err(e)
@@ -315,6 +333,9 @@ impl Interp {
     /// Find the best signature of `name` for these arguments.
     pub fn select_signature(&self, name: Sym, args: &[Value], refmask: &[bool], stmt: bool) -> Option<Rc<Signature>> {
         let sigs = self.intrinsics.get(name)?;
+        // The first match is kept apart so that the usual single match
+        // allocates nothing.
+        let mut first = None;
         let mut candidates: Vec<&Rc<Signature>> = Vec::new();
         for sig in sigs {
             if self.signature_matches(sig, args, refmask) {
@@ -322,12 +343,18 @@ impl Interp {
                     // Prefer function forms in expression context.
                     continue;
                 }
-                candidates.push(sig);
+                if first.is_none() {
+                    first = Some(sig);
+                } else {
+                    candidates.push(sig);
+                }
             }
         }
+        let first = first?;
         if candidates.is_empty() {
-            return None;
+            return Some(first.clone());
         }
+        candidates.insert(0, first);
         // Keep the candidates not dominated by a more specific one.
         let undominated: Vec<&Rc<Signature>> = candidates
             .iter()
@@ -386,7 +413,7 @@ impl Interp {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn call_intrinsic(&mut self, name: Sym, args: &mut [Value], refmask: &[bool], params: Vec<(Sym, Value)>, nres: usize, stmt: bool, span: Span) -> RResult<Option<Vec<Value>>> {
+    pub fn call_intrinsic(&mut self, name: Sym, args: &mut Vec<Value>, refmask: &[bool], params: Vec<(Sym, Value)>, nres: usize, stmt: bool, span: Span) -> RResult<Option<Vec<Value>>> {
         let Some(sig) = self.select_signature(name, args, refmask, stmt) else {
             if !self.intrinsics.contains(name) {
                 return Err(self.unassigned_error(name));
@@ -418,20 +445,17 @@ impl Interp {
                     full_params.push((p.name, v));
                 }
                 // Move the arguments so referenced values stay uniquely owned.
-                let owned: Vec<Value> = args.iter_mut().map(std::mem::take).collect();
-                let mut ca = CallArgs { args: owned, params: full_params, nresults: nres, name, span };
+                let n = args.len();
+                let mut ca = CallArgs { args: std::mem::take(args), params: full_params, nresults: nres, name, span };
                 let r = fun(self, &mut ca);
-                for (i, v) in ca.args.into_iter().enumerate() {
-                    if i < args.len() {
-                        args[i] = v;
-                    }
-                }
+                *args = ca.args;
+                args.resize_with(n, Value::default);
                 r.map_err(|e| if e.span.is_none() && e.kind != ErrKind::Syntax { e.in_context(name.to_string()) } else { e })
             }
             Imp::User(clo) => {
                 let clo = clo.clone();
                 let user_params: Vec<(Sym, Value)> = params;
-                self.call_closure(&clo, args, refmask, user_params, nres, span, Some(name.to_string()))
+                self.call_closure(&clo, args, refmask, user_params, nres, span, Some(name))
             }
         };
         let vals = result?;

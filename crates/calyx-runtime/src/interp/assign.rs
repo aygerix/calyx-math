@@ -524,9 +524,9 @@ impl Interp {
             }
             Value::Err(e) => match &*name.as_rc() {
                 "Object" => Ok(e.object.clone()),
-                "Type" => Ok(Value::Str(e.kind.clone())),
-                "Position" => e.position.clone().map(Value::Str).ok_or_else(|| RuntimeError::runtime("Attribute 'Position' is not assigned")),
-                "Traceback" => e.traceback.clone().map(Value::Str).ok_or_else(|| RuntimeError::runtime("Attribute 'Traceback' is not assigned")),
+                "Type" => Ok(Value::str(&e.kind)),
+                "Position" => e.position.as_deref().map(Value::str).ok_or_else(|| RuntimeError::runtime("Attribute 'Position' is not assigned")),
+                "Traceback" => e.traceback.as_deref().map(Value::str).ok_or_else(|| RuntimeError::runtime("Attribute 'Traceback' is not assigned")),
                 _ => Err(RuntimeError::runtime(format!("'{name}' is not an attribute of error objects"))),
             },
             Value::Struct(s) => {
@@ -812,7 +812,7 @@ impl Interp {
                     return Ok(Value::str(&out));
                 }
                 let k = seq_index(i, "String").map_err(|e| e.in_context(ctx))?;
-                s.chars().nth(k - 1).map(|c| Value::str(&c.to_string())).ok_or_else(|| RuntimeError::runtime(format!("String index {k} is out of range")).in_context(ctx))
+                s.char_at(k - 1).map(Value::str).ok_or_else(|| RuntimeError::runtime(format!("String index {k} is out of range")).in_context(ctx))
             }
             Value::Assoc(a) => {
                 let key = match &a.universe {
@@ -834,7 +834,7 @@ impl Interp {
                 let k = seq_index(i, "Extended type").map_err(|e| e.in_context(ctx))?;
                 match tv.args().get(k - 1) {
                     Some(crate::types::TypeArg::Type(t)) => Ok(Value::ECat(Rc::new(t.clone()))),
-                    Some(crate::types::TypeArg::Str(s)) => Ok(Value::Str(s.clone())),
+                    Some(crate::types::TypeArg::Str(s)) => Ok(Value::str(s)),
                     None => Err(RuntimeError::runtime(format!("Extended type index {k} is out of range")).in_context(ctx)),
                 }
             }

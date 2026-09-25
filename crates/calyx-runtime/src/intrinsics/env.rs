@@ -230,7 +230,7 @@ fn get_memory_usage(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> 
 }
 
 fn traceback(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vec<Value>> {
-    let frames: Vec<String> = it.trace.iter().rev().map(|f| f.name.clone()).collect();
+    let frames: Vec<String> = it.trace.iter().rev().map(|f| f.name.to_string()).collect();
     for f in frames {
         it.out.write(&format!("  {f}\n"));
     }
