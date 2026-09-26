@@ -104,6 +104,7 @@ builtin_types! {
     // own block below, so that their branches merge cleanly.
 
     // Rational field (#38).
+    POW_MAP_AUT = "PowMapAut": [POW_MAP],
 
     // Finite fields and nearfields (#39, #43).
 

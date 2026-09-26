@@ -211,7 +211,7 @@ pub fn context_style(ctx: &str) -> (&str, bool, bool) {
         "{* *}" => ("{* ... *}", false, true),
         "sequence construction" => ("sequence construction", false, false),
         "for" => ("for", false, false),
-        "ideal< ... >" | "quo< ... >" | "ext< ... >" | "sub< ... >" | "elt< ... >" => (ctx, false, true),
+        "ideal< ... >" | "quo< ... >" | "ext< ... >" | "sub< ... >" | "elt< ... >" | "hom< ... >" => (ctx, false, true),
         "[]:=" => (":=", false, false),
         _ => (ctx, true, true),
     }

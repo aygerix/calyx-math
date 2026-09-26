@@ -157,6 +157,16 @@ impl Rational {
         unsafe { sys::fmpq_get_d(&self.raw) }
     }
 
+    /// The fraction `n/d` with `|n| <= bound`, `0 < d <= bound` and
+    /// `n = a*d (mod m)`, if there is one. Requires `2*bound^2 < m`, which
+    /// makes it unique.
+    pub fn reconstruct(a: &Integer, m: &Integer, bound: &Integer) -> Option<Self> {
+        let a = a.div_rem_euclid(m)?.1;
+        let mut q = Rational::zero();
+        let found = unsafe { sys::fmpq_reconstruct_fmpz_2(&mut q.raw, a.as_raw(), m.as_raw(), bound.as_raw(), bound.as_raw()) };
+        if found != 0 { Some(q) } else { None }
+    }
+
     pub fn to_string_radix(&self, radix: u32) -> String {
         if self.is_integral() {
             return self.numerator().to_string_radix(radix);

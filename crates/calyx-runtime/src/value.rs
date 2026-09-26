@@ -410,6 +410,17 @@ pub enum MapImpl {
 pub trait NativeMap {
     fn apply(&self, it: &mut Interp, m: &MapObj, x: &Value) -> RResult<Value>;
     fn preimage(&self, it: &mut Interp, m: &MapObj, y: &Value) -> RResult<Value>;
+
+    /// The pairs `<x, y>` printed after a map that Magma defines by its
+    /// graph.
+    fn graph(&self, _m: &MapObj) -> Option<Vec<(Value, Value)>> {
+        None
+    }
+
+    /// Whether the map prints as given by a rule (with no inverse).
+    fn rule(&self) -> bool {
+        false
+    }
 }
 
 // ----- structures -----------------------------------------------------------
@@ -460,6 +471,8 @@ pub enum StructKind {
     UPolIdeal(Rc<crate::rings::Elt>),
     /// An abelian group; every construction makes a new group.
     AbGroup(Rc<AbGroup>),
+    /// The set of all automorphisms of a structure (`PowMapAut`).
+    Automorphisms(Value),
 }
 
 #[derive(Clone)]
@@ -679,6 +692,7 @@ impl Value {
                 StructKind::ResIdeal(..) => t::RNG_INT_RES,
                 StructKind::UPolIdeal(_) => t::RNG_UPOL,
                 StructKind::AbGroup(_) => t::GRP_AB,
+                StructKind::Automorphisms(_) => t::POW_MAP_AUT,
             },
             Value::Cat(_) => t::CAT,
             Value::ECat(_) => t::ECAT,
@@ -852,6 +866,10 @@ fn struct_hash<H: Hasher>(s: &Struct, state: &mut H) {
             g.hash_u64().hash(state);
         }
         StructKind::AbGroup(g) => (Rc::as_ptr(g) as usize).hash(state),
+        StructKind::Automorphisms(x) => {
+            state.write_u8(14);
+            x.hash(state);
+        }
     }
 }
 
@@ -918,6 +936,7 @@ pub fn struct_eq(a: &Rc<Struct>, b: &Rc<Struct>) -> bool {
         (ResIdeal(r, d), ResIdeal(s, e)) => struct_eq(r, s) && d == e,
         (UPolIdeal(f), UPolIdeal(g)) => f.same_as(g),
         (AbGroup(x), AbGroup(y)) => Rc::ptr_eq(x, y),
+        (Automorphisms(x), Automorphisms(y)) => x == y,
         _ => false,
     }
 }

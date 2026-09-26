@@ -399,21 +399,29 @@ fn squarefree_factorization(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals>
 
 fn valuation(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (n, p) = (a.int(0)?.clone(), a.int(1)?.clone());
+    valuation_of(&n, &p, a.nresults)
+}
+
+/// The valuation v of n at the prime p, and n/p^v when `nresults` asks for
+/// it (Infinity and 0 for n = 0).
+pub(super) fn valuation_of(n: &Integer, p: &Integer, nresults: usize) -> RResult<Vals> {
     if p.sign() <= 0 {
         return Err(arg_not(2, "positive"));
     }
     if !p.is_prime() {
-        return Err(super::arg_prime(2, &p));
+        return Err(super::arg_prime(2, p));
     }
-    if n.is_zero() {
-        return Ok(vals![Value::Infinity(true)]);
+    let (v, rest) = match n.is_zero() {
+        true => (Value::Infinity(true), Integer::zero()),
+        false => {
+            let (v, rest) = n.remove(p);
+            (Value::Int(Integer::from_u64(v)), rest)
+        }
+    };
+    if nresults < 2 {
+        return Ok(vals![v]);
     }
-    let (v, rest) = n.remove(&p);
-    // The cofactor is returned only when asked for.
-    if a.nresults < 2 {
-        return intv(Integer::from_u64(v));
-    }
-    Ok(vals![Value::Int(Integer::from_u64(v)), Value::Int(rest)])
+    Ok(vals![v, Value::Int(rest)])
 }
 
 fn ilog(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {

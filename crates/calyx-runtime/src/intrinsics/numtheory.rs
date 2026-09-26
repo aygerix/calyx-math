@@ -670,7 +670,12 @@ fn int_elems(v: &Value) -> RResult<Vec<Integer>> {
 }
 
 fn crt(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let (xs, ms) = (int_elems(&a.args[0])?, int_elems(&a.args[1])?);
+    intv(crt_of(&int_elems(&a.args[0])?, &int_elems(&a.args[1])?)?)
+}
+
+/// The least x >= 0 with x = xs[i] mod ms[i] for all i, or -1 if there is
+/// none.
+pub(super) fn crt_of(xs: &[Integer], ms: &[Integer]) -> RResult<Integer> {
     if xs.is_empty() {
         return Err(RuntimeError::runtime("Sequence argument 1 must be non-empty"));
     }
@@ -681,13 +686,13 @@ fn crt(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
         return Err(RuntimeError::runtime("Element of second argument (moduli M) is zero"));
     }
     let (mut x, mut big) = (Integer::zero(), Integer::one());
-    for (r, m) in xs.iter().zip(&ms) {
+    for (r, m) in xs.iter().zip(ms) {
         match crt_step(&x, &big, r, &m.abs()) {
             Some((nx, nb)) => (x, big) = (nx, nb),
-            None => return intv(Integer::from_i64(-1)),
+            None => return Ok(Integer::from_i64(-1)),
         }
     }
-    intv(x)
+    Ok(x)
 }
 
 fn solution_seq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {

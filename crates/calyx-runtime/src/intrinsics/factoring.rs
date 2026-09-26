@@ -7,11 +7,13 @@ use std::collections::HashMap;
 use calyx_flint::Integer;
 
 use super::factseq::{Fact, fact_mul, fact_value, factor};
-use super::numtheory::{modp, modsqrt, primes_up_to};
+use super::numtheory::{each_prime, modp, modsqrt, primes_up_to};
 use super::{arg_not, arg_range, intv, one};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
 use crate::value::*;
+
+mod siqs;
 
 fn int(v: i64) -> Integer {
     Integer::from_i64(v)
@@ -43,10 +45,16 @@ fn param_int(a: &CallArgs, name: &str) -> Option<Integer> {
 
 // ----- Factorization ------------------------------------------------------------------
 
+/// Whether the factors must be proven prime (the parameter Proof).
+fn proof(a: &CallArgs) -> bool {
+    !matches!(a.param("Proof"), Some(Value::Bool(false)))
+}
+
 /// Split `n` with one method until every part is prime or the method
 /// gives up. `method` returns a proper divisor of a composite, if it finds
-/// one. Powers of 2 and 3 and perfect powers are taken out first.
-fn split_with(n: &Integer, method: &mut dyn FnMut(&Integer) -> Option<Integer>) -> (Fact, Vec<Integer>) {
+/// one. Powers of 2 and 3 and perfect powers are taken out first. The parts
+/// left are listed with their multiplicities, as in Magma.
+fn split_with(n: &Integer, proof: bool, method: &mut dyn FnMut(&Integer) -> Option<Integer>) -> (Fact, Vec<Integer>) {
     let mut fact = Fact::new();
     let mut rest = Vec::new();
     let mut stack = vec![(n.abs(), 1u64)];
@@ -54,7 +62,7 @@ fn split_with(n: &Integer, method: &mut dyn FnMut(&Integer) -> Option<Integer>) 
         if m.is_one() {
             continue;
         }
-        if m.is_prime() {
+        if if proof { m.is_prime() } else { m.is_probable_prime() } {
             fact.push((m, e));
             continue;
         }
@@ -82,7 +90,7 @@ fn split_with(n: &Integer, method: &mut dyn FnMut(&Integer) -> Option<Integer>) 
                 stack.push((d, e));
                 stack.push((q, e));
             }
-            _ => rest.push(m),
+            _ => rest.extend(std::iter::repeat_n(m, e as usize)),
         }
     }
     rest.sort();
@@ -105,50 +113,112 @@ fn factorization(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
             m = r;
         }
     }
-    let ecm = param_int(a, "ECMLimit");
-    let mpqs = param_int(a, "MPQSLimit");
-    let limited = ecm.is_some() && mpqs.as_ref().is_some_and(|l| *l < int(25));
-    let mut rest = Vec::new();
-    if limited {
-        // Only trial division, SQUFOF, Pollard rho and the given number of
-        // ECM curves may be used.
-        let td = param_int(a, "TrialDivisionLimit").and_then(|b| b.to_u64()).unwrap_or(10000);
-        let (f, r) = trial_division(&m, td);
-        fact.extend(f);
-        let rho = param_int(a, "PollardRhoLimit").and_then(|b| b.to_u64()).unwrap_or(8191);
-        let sq = param_int(a, "SQUFOFLimit").and_then(|b| b.to_u64()).unwrap_or(24);
-        let curves = ecm.and_then(|c| c.to_u64()).unwrap_or(0);
-        let rng = &mut it.rng;
-        let (f, r) = split_with(&r, &mut |x: &Integer| {
-            if (x.to_string().len() as u64) <= sq {
-                if let Some(d) = squfof(x, 200_000) {
-                    return Some(d);
-                }
-            }
-            if let Some(d) = pollard_rho(x, &int(1), &int(1), rho) {
-                return Some(d);
-            }
-            let mut b1 = 500u64;
-            for _ in 0..curves {
-                let sigma = Integer::from_u64(6 + rng.below_u64((1 << 32) - 6));
-                if let Some(d) = ecm_curve(x, b1, 100 * b1, &sigma, None).found() {
-                    return Some(d);
-                }
-                b1 += 100;
-            }
-            None
-        });
-        fact.extend(f);
-        rest = r;
-    } else if !m.is_one() {
+    // Negative limits count as not given, as in Magma.
+    let given = |name: &str| param_int(a, name).filter(|b| b.sign() >= 0).map(|b| b.to_u64().unwrap_or(u64::MAX));
+    let stages = Stages {
+        squfof: given("SQUFOFLimit").unwrap_or(24),
+        rho: given("PollardRhoLimit").unwrap_or(8191),
+        ecm: given("ECMLimit"),
+        mpqs: given("MPQSLimit"),
+    };
+    if stages.ecm.is_none() && stages.mpqs.is_none() && stages.squfof >= 20 && m.bits() <= 64 {
+        // The stages would end with SQUFOF: FLINT's word methods are faster.
         fact.extend(factor(&m));
+        m = Integer::one();
     }
+    let (f, r) = trial_division(&m, given("TrialDivisionLimit").unwrap_or(10000));
+    fact.extend(f);
+    let proof = proof(a);
+    let (rng, stored) = (&mut it.rng, &mut it.stored_factors);
+    let (f, rest) = split_with(&r, proof, &mut |x: &Integer| {
+        let (d, by_ecm_or_mpqs) = stages.split(x, rng)?;
+        // The primes that ECM and MPQS split off are stored for later calls.
+        if by_ecm_or_mpqs {
+            for y in [d.clone(), x.divexact(&d)] {
+                if !stored.contains(&y) && if proof { y.is_prime() } else { y.is_probable_prime() } {
+                    stored.push(y);
+                }
+            }
+        }
+        Some(d)
+    });
+    fact.extend(f);
     let fact = sorted_fact(fact);
     // The sign and the unfactored part are returned only when asked for;
     // the latter stays unassigned when the factorization is complete.
     let mut out: Vals = vals![fact_value(&fact), sign, if rest.is_empty() { Value::Undef } else { Value::int_seq(rest) }];
     out.truncate(a.nresults.max(1));
     Ok(out)
+}
+
+/// The stages of Factorization after trial division, with their limits.
+struct Stages {
+    /// The most digits for SQUFOF.
+    squfof: u64,
+    /// The iterations of Pollard rho.
+    rho: u64,
+    /// The curves of ECM (by default as many as the size warrants).
+    ecm: Option<u64>,
+    /// The most digits for MPQS (by default no limit).
+    mpqs: Option<u64>,
+}
+
+impl Stages {
+    /// A proper divisor of the composite m (prime to 6 and not a perfect
+    /// power) from the first stage that finds one: SQUFOF, Pollard rho, ECM
+    /// and MPQS. Unless both ECM and MPQS are bounded, whatever it takes
+    /// follows: ECM without end when MPQS may not be used, or else FLINT's
+    /// factorization. With the divisor comes whether ECM or MPQS found it.
+    fn split(&self, m: &Integer, rng: &mut crate::random::Rng) -> Option<(Integer, bool)> {
+        let digits = m.to_string().len() as u64;
+        if digits <= self.squfof && m.bits() <= 125 {
+            if let Some(d) = squfof(m, 200_000) {
+                return Some((d, false));
+            }
+        }
+        if let Some(d) = pollard_rho(m, &int(1), &int(1), self.rho) {
+            return Some((d, false));
+        }
+        // MPQS is not used below 26 digits.
+        let mpqs = digits > 25 && self.mpqs.is_none_or(|l| digits <= l);
+        let complete = self.ecm.is_none() || self.mpqs.is_none();
+        // B1 grows from 500 by 100 a curve, or to the top of the default
+        // range for the size when MPQS follows.
+        let (curves, top) = match self.ecm {
+            Some(c) => (c, None),
+            None if mpqs || digits <= 25 => {
+                let (c, t) = default_ecm(digits);
+                (c, Some(t))
+            }
+            None => (u64::MAX, None),
+        };
+        for i in 0..curves {
+            let b1 = match top {
+                Some(t) => 500 + (t - 500) * i / (curves - 1).max(1),
+                None => 500u64.saturating_add(i.saturating_mul(100)),
+            };
+            if let Some(d) = m.ecm(1, b1, b1.saturating_mul(100), rng.below_u64(u64::MAX)) {
+                return Some((d, true));
+            }
+        }
+        if mpqs {
+            if let Some(d) = siqs::siqs(m) {
+                return Some((d, true));
+            }
+        }
+        if complete {
+            return factor(m).first().map(|(p, _)| (p.clone(), false));
+        }
+        None
+    }
+}
+
+/// Magma's default number of ECM curves before MPQS, and the largest B1:
+/// 2 curves with B1 up to 600 below 37 digits, growing to about 500 curves
+/// with B1 up to 10000 at 80 digits.
+fn default_ecm(digits: u64) -> (u64, u64) {
+    let t = (digits.saturating_sub(37) as f64 / 43.0).min(2.0);
+    ((2.0 * 250f64.powf(t)).round() as u64, (600.0 * (10000.0f64 / 600.0).powf(t)).round() as u64)
 }
 
 fn store_factor(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
@@ -183,28 +253,42 @@ fn clear_stored_factors(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
 
 // ----- trial division ---------------------------------------------------------------------
 
+/// The primes below 2^16, for trial division.
+fn small_primes() -> &'static [u64] {
+    static PRIMES: std::sync::OnceLock<Vec<u64>> = std::sync::OnceLock::new();
+    PRIMES.get_or_init(|| primes_up_to(1 << 16))
+}
+
 /// The primes up to `bound` dividing `n`, and the part of |n| left.
 fn trial_division(n: &Integer, bound: u64) -> (Fact, Integer) {
     let mut m = n.abs();
     let mut fact = Fact::new();
     let limit = bound.min(1 << 32);
-    let mut p = 2u64;
-    while p <= limit && !m.is_one() {
-        let pi = Integer::from_u64(p);
-        if &pi * &pi > m {
+    let mut word = m.to_u64();
+    // One prime: whether to go on.
+    let mut step = |p: u64| {
+        if m.is_one() {
+            return false;
+        }
+        if word.is_some_and(|w| p as u128 * p as u128 > w as u128) {
             // What is left is prime; keep it only if it is within the bound.
             if m <= Integer::from_u64(bound) {
-                fact.push((m.clone(), 1));
-                m = Integer::one();
+                fact.push((std::mem::replace(&mut m, Integer::one()), 1));
             }
-            break;
+            return false;
         }
-        let (k, r) = m.remove(&pi);
-        if k > 0 {
+        if m.mod_u64(p) == 0 {
+            let pi = Integer::from_u64(p);
+            let (k, r) = m.remove(&pi);
             fact.push((pi, k));
             m = r;
+            word = m.to_u64();
         }
-        p = if p == 2 { 3 } else { p + 2 };
+        true
+    };
+    let small = small_primes();
+    if small.iter().take_while(|&&p| p <= limit).all(|&p| step(p)) && limit > 1 << 16 {
+        each_prime((1 << 16) + 1, limit, &mut step);
     }
     (fact, m)
 }
@@ -279,7 +363,7 @@ fn pollard_rho_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
         return Err(RuntimeError::runtime("Argument 1 must be greater than 1"));
     }
     let (c, s, k) = if a.args.len() == 4 { (a.int(1)?.clone(), a.int(2)?.clone(), a.int(3)?.to_u64().unwrap_or(0)) } else { (int(1), int(1), 8191) };
-    let (f, r) = split_with(&n, &mut |m: &Integer| pollard_rho(m, &c, &s, k));
+    let (f, r) = split_with(&n, proof(a), &mut |m: &Integer| pollard_rho(m, &c, &s, k));
     Ok(fact_and_rest(&f, r))
 }
 
@@ -292,54 +376,144 @@ fn squfof(n: &Integer, limit: u64) -> Option<Integer> {
     }
     for k in [1i64, 3, 5, 7, 11, 15, 21, 33, 35, 55, 77, 105, 165, 231, 385, 1155] {
         let kn = n * &int(k);
-        let p0 = kn.isqrt()?;
-        let (mut qprev, mut q) = (Integer::one(), &kn - &(&p0 * &p0));
-        if q.is_zero() {
-            continue;
-        }
-        let mut p = p0.clone();
-        let mut found = false;
-        for i in 1..=limit {
-            let b = (&p0 + &p).fdiv_qr(&q)?.0;
-            let pn = &(&b * &q) - &p;
-            let qn = &qprev + &(&b * &(&p - &pn));
-            qprev = q;
-            q = qn;
-            p = pn;
-            // q is now Q_(i+1), which must be a square with even index.
-            if i % 2 == 1 && q.is_square() {
-                found = true;
-                break;
-            }
-        }
-        if !found {
-            continue;
-        }
-        let r = q.isqrt()?;
-        let b = (&p0 - &p).fdiv_qr(&r)?.0;
-        p = &(&b * &r) + &p;
-        qprev = r;
-        q = (&kn - &(&p * &p)).divexact(&qprev);
-        if q.is_zero() {
-            continue;
-        }
-        for _ in 0..limit {
-            let b = (&p0 + &p).fdiv_qr(&q)?.0;
-            let pn = &(&b * &q) - &p;
-            let qn = &qprev + &(&b * &(&p - &pn));
-            if pn == p {
-                break;
-            }
-            qprev = q;
-            q = qn;
-            p = pn;
-        }
+        let p = match kn.to_i128() {
+            Some(x) if x < 1 << 125 => squfof_word(x, limit).map(Integer::from_i128),
+            _ => squfof_big(&kn, limit),
+        };
+        let Some(p) = p else { continue };
         let f = n.gcd(&p);
         if !f.is_one() && f != *n {
             return Some(f);
         }
     }
     None
+}
+
+/// The P at which SQUFOF on kn finds its symmetry point, from a square form
+/// met within `limit` steps.
+fn squfof_big(kn: &Integer, limit: u64) -> Option<Integer> {
+    let p0 = kn.isqrt()?;
+    let (mut qprev, mut q) = (Integer::one(), kn - &(&p0 * &p0));
+    if q.is_zero() {
+        return None;
+    }
+    let mut p = p0.clone();
+    let mut found = false;
+    for i in 1..=limit {
+        let b = (&p0 + &p).fdiv_qr(&q)?.0;
+        let pn = &(&b * &q) - &p;
+        let qn = &qprev + &(&b * &(&p - &pn));
+        qprev = q;
+        q = qn;
+        p = pn;
+        // q is now Q_(i+1), which must be a square with even index.
+        if i % 2 == 1 && q.is_square() {
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        return None;
+    }
+    let r = q.isqrt()?;
+    let b = (&p0 - &p).fdiv_qr(&r)?.0;
+    p = &(&b * &r) + &p;
+    qprev = r;
+    q = (kn - &(&p * &p)).divexact(&qprev);
+    if q.is_zero() {
+        return None;
+    }
+    for _ in 0..limit {
+        let b = (&p0 + &p).fdiv_qr(&q)?.0;
+        let pn = &(&b * &q) - &p;
+        let qn = &qprev + &(&b * &(&p - &pn));
+        if pn == p {
+            break;
+        }
+        qprev = q;
+        q = qn;
+        p = pn;
+    }
+    Some(p)
+}
+
+/// squfof_big in machine words, for kn < 2^125: P stays below sqrt(kn) and
+/// Q below 2 sqrt(kn), so the quotients are taken in 64 bits.
+fn squfof_word(kn: i128, limit: u64) -> Option<i128> {
+    let p0 = isqrt_i128(kn);
+    let mut q = kn - p0 * p0;
+    if q == 0 {
+        return None;
+    }
+    let (mut p, mut qprev) = (p0, 1i128);
+    let mut found = false;
+    for i in 1..=limit {
+        let b = ((p0 + p) as u64 / q as u64) as i128;
+        let pn = b * q - p;
+        let qn = qprev + b * (p - pn);
+        qprev = q;
+        q = qn;
+        p = pn;
+        if i % 2 == 1 && square_root_u64(q as u64).is_some() {
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        return None;
+    }
+    let r = square_root_u64(q as u64)? as i128;
+    p += (p0 - p) / r * r;
+    qprev = r;
+    q = (kn - p * p) / qprev;
+    if q == 0 {
+        return None;
+    }
+    for _ in 0..limit {
+        let b = ((p0 + p) as u64 / q as u64) as i128;
+        let pn = b * q - p;
+        let qn = qprev + b * (p - pn);
+        if pn == p {
+            break;
+        }
+        qprev = q;
+        q = qn;
+        p = pn;
+    }
+    Some(p)
+}
+
+/// The floor of the square root of x >= 0.
+fn isqrt_i128(x: i128) -> i128 {
+    let mut r = (x as f64).sqrt() as i128;
+    if r > 0 {
+        r = (r + x / r) / 2;
+    }
+    while r * r > x {
+        r -= 1;
+    }
+    while (r + 1) * (r + 1) <= x {
+        r += 1;
+    }
+    r
+}
+
+/// The square root of q if q is a square.
+fn square_root_u64(q: u64) -> Option<u64> {
+    // The squares modulo 64 first.
+    const SQUARES: u64 = {
+        let (mut m, mut r) = (0u64, 0);
+        while r < 64 {
+            m |= 1 << (r * r % 64);
+            r += 1;
+        }
+        m
+    };
+    if SQUARES >> (q & 63) & 1 == 0 {
+        return None;
+    }
+    let r = (q as f64).sqrt() as u64;
+    (r.saturating_sub(1)..=r + 1).find(|&x| x.checked_mul(x) == Some(q))
 }
 
 fn squfof_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
@@ -351,7 +525,7 @@ fn squfof_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
         return Err(RuntimeError::runtime(format!("Argument 1 ({n}) is too large")));
     }
     let limit = if a.args.len() > 1 { a.int(1)?.to_u64().unwrap_or(0) } else { 200_000 };
-    let (f, r) = split_with(&n, &mut |m: &Integer| squfof(m, limit));
+    let (f, r) = split_with(&n, proof(a), &mut |m: &Integer| squfof(m, limit));
     Ok(fact_and_rest(&f, r))
 }
 
@@ -365,15 +539,6 @@ fn b1_primes(b1: u64) -> Vec<u64> {
 enum Attempt {
     Found(Integer),
     Failed,
-}
-
-impl Attempt {
-    fn found(self) -> Option<Integer> {
-        match self {
-            Attempt::Found(d) => Some(d),
-            Attempt::Failed => None,
-        }
-    }
 }
 
 /// A proper divisor of n from g = gcd(..., n), if g is one.
@@ -641,7 +806,17 @@ fn mpqs(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     if n <= Integer::one() {
         return Err(RuntimeError::runtime("Argument 1 must be greater than 1"));
     }
-    Ok(fact_and_rest(&factor(&n), Vec::new()))
+    let (f, r) = split_with(&n, proof(a), &mut qs_split);
+    Ok(fact_and_rest(&f, r))
+}
+
+/// A proper divisor of the composite m by the quadratic sieve (FLINT's word
+/// methods below 64 bits, where the sieve has no room).
+fn qs_split(m: &Integer) -> Option<Integer> {
+    if m.bits() <= 64 {
+        return factor(m).first().map(|(p, _)| p.clone());
+    }
+    siqs::siqs(m)
 }
 
 // ----- ECM curve orders ---------------------------------------------------------------------------------
@@ -1142,4 +1317,49 @@ pub fn register(it: &mut Interp) {
         partial_factorization_fn,
     );
     it.def("Cunningham", "b::RngIntElt, k::RngIntElt, c::RngIntElt -> RngIntEltFact", "The factorization of b^k + c for c = 1 or -1.", cunningham);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn squfof_in_words_matches_big_integers() {
+        let mut x = 0x1234_5678_9abc_def1u64;
+        for bits in [20u32, 40, 60, 80, 100, 120] {
+            for _ in 0..20 {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                let n = if bits < 64 { Integer::from_u64((x >> (64 - bits)) | 1) } else { &(&Integer::from_u64(x | 1) * &int(2).pow((bits - 64) as u64)) + &int(1) };
+                for k in [1i64, 3, 1155] {
+                    let kn = &n * &int(k);
+                    let Some(w) = kn.to_i128().filter(|&v| v < 1 << 125) else { continue };
+                    assert_eq!(squfof_word(w, 5000).map(Integer::from_i128), squfof_big(&kn, 5000), "{n} * {k}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn stages_respect_the_limits() {
+        let (p, q) = (int(100000000000031), int(300000000000089));
+        let n = &p * &q;
+        let mut rng = crate::random::Rng::new(1);
+        // Both ECM and MPQS bounded: nothing splits a 29-digit semiprime.
+        let bounded = Stages { squfof: 24, rho: 8191, ecm: Some(0), mpqs: Some(0) };
+        assert_eq!(split_with(&n, true, &mut |x: &Integer| bounded.split(x, &mut rng).map(|r| r.0)), (Fact::new(), vec![n.clone()]));
+        assert_eq!(split_with(&n.pow(2), true, &mut |x: &Integer| bounded.split(x, &mut rng).map(|r| r.0)).1, vec![n.clone(), n.clone()]);
+        // Either one unbounded: the factorization is complete.
+        for (ecm, mpqs) in [(None, Some(0)), (Some(0), None), (None, None)] {
+            let stages = Stages { squfof: 24, rho: 8191, ecm, mpqs };
+            let (f, rest) = split_with(&n, true, &mut |x: &Integer| stages.split(x, &mut rng).map(|r| r.0));
+            assert_eq!(f, vec![(p.clone(), 1), (q.clone(), 1)]);
+            assert!(rest.is_empty());
+        }
+        // SQUFOF alone splits 24 digits.
+        let m = &int(300000000077) * &int(700000000009);
+        let squfof_only = Stages { squfof: 24, rho: 0, ecm: Some(0), mpqs: Some(0) };
+        assert!(split_with(&m, true, &mut |x: &Integer| squfof_only.split(x, &mut rng).map(|r| r.0)).1.is_empty());
+    }
 }

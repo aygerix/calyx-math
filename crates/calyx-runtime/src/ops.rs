@@ -413,23 +413,32 @@ impl Interp {
                 Value::Real(Rc::new(RealV { x: r.x.pow(e).ok_or_else(|| div_by_zero().in_context("^"))?, digits: r.digits, fixed: r.fixed }))
             }
             Value::Int(x) => {
+                let too_large = || RuntimeError::runtime("Argument 2 is too large").in_context("^");
+                // 0, 1 and -1 take any power (0 even a huge negative one).
+                if x.bits() <= 1 && e.to_i64().is_none() {
+                    return Ok(Some(Value::Int(if x.sign() < 0 && e.is_odd() { Integer::from_i64(-1) } else { x.abs() })));
+                }
                 if e.sign() >= 0 {
-                    let e = e.to_u64().ok_or_else(|| RuntimeError::runtime("Exponent is too large").in_context("^"))?;
+                    let e = e.to_u64().ok_or_else(too_large)?;
                     if x.bits() > 1 && e > (1 << 36) {
-                        return Err(RuntimeError::runtime("Exponent is too large").in_context("^"));
+                        return Err(too_large());
                     }
                     Value::Int(x.pow(e))
                 } else {
                     if x.is_zero() {
                         return Err(RuntimeError::runtime("Illegal negative power of zero element").in_context("^"));
                     }
+                    // 1 and -1 take any power; others small ones only.
                     let q = Rational::from_integer(x);
-                    let e = e.to_i64().ok_or_else(|| RuntimeError::runtime("Exponent is too large").in_context("^"))?;
+                    let e = e.to_i64().filter(|v| x.bits() <= 1 || v.unsigned_abs() < 1 << 30).ok_or_else(too_large)?;
                     Value::rat(q.pow(e).ok_or_else(|| div_by_zero().in_context("^"))?)
                 }
             }
             Value::Rat(q) => {
-                let e = e.to_i64().ok_or_else(|| RuntimeError::runtime("Exponent is too large").in_context("^"))?;
+                if q.is_zero() && e.sign() < 0 {
+                    return Err(RuntimeError::runtime("Illegal negative power of zero element").in_context("^"));
+                }
+                let e = e.to_i64().filter(|v| v.unsigned_abs() < 1 << 30).ok_or_else(|| RuntimeError::runtime(format!("Argument 2 ({e}) is too large")).in_context("^"))?;
                 Value::rat(q.pow(e).ok_or_else(|| div_by_zero().in_context("^"))?)
             }
             Value::Str(s) => {

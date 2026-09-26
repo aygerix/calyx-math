@@ -69,6 +69,10 @@ impl Interp {
         };
         match attempt {
             Ok(v) => Ok(v),
+            // Magma names no types when the element of [a] fails.
+            Err(_) if s.is_rationals() && matches!(x, Value::Seq(q) if q.elems.len() == 1) => {
+                Err(crate::error::ErrorInfo { style: crate::error::ErrStyle::Plain, ..crate::error::ErrorInfo::runtime("Illegal coercion") }.into())
+            }
             Err(msg) => {
                 let msg_given = msg.is_some();
                 let reason = msg.unwrap_or_else(|| "Illegal coercion".to_string());
@@ -83,6 +87,32 @@ impl Interp {
                 Err(crate::error::ErrorInfo { style: crate::error::ErrStyle::Plain, ..crate::error::ErrorInfo::runtime(text) }.into())
             }
         }
+    }
+
+    /// `elt< S | a, b, ... >`. The integers take exactly one integer and the
+    /// rationals a numerator and a denominator; other structures coerce the
+    /// single argument, or the tuple of the arguments.
+    pub fn elt_constructor(&mut self, s: &Value, mut v: Vec<Value>) -> RResult<Value> {
+        match s.as_struct() {
+            Some(StructKind::Integers) => {
+                if v.len() != 1 {
+                    return Err(RuntimeError::runtime("Wrong number of arguments to Z element constructor (should be 1)"));
+                }
+                if !matches!(v[0], Value::Int(_)) {
+                    return Err(RuntimeError::runtime("Bad arguments"));
+                }
+            }
+            Some(StructKind::Rationals) => {
+                let [Value::Int(n), Value::Int(d)] = v.as_slice() else {
+                    let msg = if v.len() == 2 { "Bad arguments" } else { "Wrong number of arguments to Q element constructor (should be 2)" };
+                    return Err(RuntimeError::runtime(msg));
+                };
+                return Rational::new(n, d).map(Value::rat).ok_or_else(|| RuntimeError::runtime("Division by zero"));
+            }
+            _ => {}
+        }
+        let arg = if v.len() == 1 && !matches!(s.as_struct(), Some(StructKind::Cartesian(_))) { v.pop().unwrap() } else { Value::tuple(v) };
+        self.coerce(s, &arg)
     }
 
     /// How a coercion error names the type of the value coerced: aggregates
@@ -186,6 +216,25 @@ impl Interp {
                 StructKind::Rationals => match x {
                     Value::Int(i) => Ok(Ok(Value::rat(Rational::from_integer(i)))),
                     Value::Rat(_) => Ok(Ok(x.clone())),
+                    // [a] stands for a, and [a, b] for a/b.
+                    Value::Seq(q) if q.elems.len() == 1 => {
+                        let e = q.elems[0].clone();
+                        self.try_coerce(s, &e)
+                    }
+                    Value::Seq(q) if q.elems.len() == 2 => {
+                        let mut nd = Vec::with_capacity(2);
+                        for e in &q.elems {
+                            match self.try_coerce(&Value::integers(), e)? {
+                                Ok(Value::Int(n)) => nd.push(n),
+                                _ => return Ok(Err(Some("Should be a sequence of integers".into()))),
+                            }
+                        }
+                        match Rational::new(&nd[0], &nd[1]) {
+                            Some(r) => Ok(Ok(Value::rat(r))),
+                            None => Ok(Err(Some("Division by zero".into()))),
+                        }
+                    }
+                    Value::Seq(_) => Ok(Err(Some("Sequence must have length 2 to lift into this field".into()))),
                     _ => fail(),
                 },
                 StructKind::Reals(d) => {
@@ -308,6 +357,11 @@ impl Interp {
                 },
                 StructKind::Maps(..) => match x {
                     Value::Map(_) => Ok(Ok(x.clone())),
+                    _ => fail(),
+                },
+                // The automorphisms: maps from the structure to itself.
+                StructKind::Automorphisms(a) => match x {
+                    Value::Map(m) if &m.domain == a && &m.codomain == a => Ok(Ok(x.clone())),
                     _ => fail(),
                 },
             },
@@ -762,6 +816,10 @@ impl Interp {
                 }
                 Ok(true)
             }
+            // A rational is in no ring that Q does not embed in.
+            Value::Struct(st) if matches!((&st.kind, x), (StructKind::Ring(_), Value::Rat(_))) && !self.auto_coerces(&Value::rationals(), s) => {
+                Err(RuntimeError::runtime("Bad argument types").in_context("in"))
+            }
             Value::Struct(_) | Value::Obj(_) => {
                 if let Value::Obj(_) = s {
                     if let Some(v) = self.dispatch_user_operator("in", vec![x.clone(), s.clone()])? {
@@ -827,6 +885,7 @@ impl Interp {
                 StructKind::ResIdeal(..) => TypeVal::Cat(t::RNG_INT_RES_ELT),
                 StructKind::UPolIdeal(_) => TypeVal::Cat(t::RNG_UPOL_ELT),
                 StructKind::AbGroup(_) => TypeVal::Cat(t::GRP_AB_ELT),
+                StructKind::Automorphisms(_) => TypeVal::Cat(t::MAP),
             },
             Value::Seq(s) => match s.universe.clone() {
                 Some(u) => self.element_type_of(&u),
@@ -933,6 +992,7 @@ impl Interp {
                 StructKind::ResIdeal(..) => TypeVal::Cat(t::RNG_INT_RES_ELT),
                 StructKind::UPolIdeal(_) => TypeVal::Cat(t::RNG_UPOL_ELT),
                 StructKind::AbGroup(_) => TypeVal::Cat(t::GRP_AB_ELT),
+                StructKind::Automorphisms(_) => TypeVal::Cat(t::MAP),
             },
             Value::Seq(s) => s.universe.as_ref().map(|u| self.static_element_type(u)).unwrap_or(TypeVal::Cat(t::ANY)),
             Value::Set(s) => s.universe.as_ref().map(|u| self.static_element_type(u)).unwrap_or(TypeVal::Cat(t::ANY)),

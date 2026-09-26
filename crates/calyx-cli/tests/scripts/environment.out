@@ -36,10 +36,15 @@ true
 Abs(<FldRatElt> x) -> FldRatElt
 AbsoluteValue(<FldRatElt> x) -> FldRatElt
 Ceiling(<FldRatElt> x) -> RngIntElt
+ComplexConjugate(<FldRatElt> q) -> FldRatElt
+Conjugate(<FldRatElt> q) -> FldRatElt
+ContinuedFraction(<FldRatElt> q) -> [RngIntElt]
 Denominator(<FldRatElt> x) -> RngIntElt
 DickmanRho(<FldRatElt> u) -> FldReElt
 DicksonFirst(<RngIntElt> n, <RngElt> a) -> RngUPolElt
 DicksonSecond(<RngIntElt> n, <RngElt> a) -> RngUPolElt
+ElementToSequence(<FldRatElt> q) -> [FldRatElt]
+Eltseq(<FldRatElt> q) -> [FldRatElt]
 Evaluate(<RngUPolElt> f, <RngElt> r) -> RngElt
 Floor(<FldRatElt> x) -> RngIntElt
 GCD(<FldRatElt> x, <FldRatElt> y) -> FldRatElt
@@ -52,6 +57,9 @@ GegenbauerPolynomial(<RngIntElt> n, <RngElt> m) -> RngUPolElt
 GreatestCommonDivisor(<FldRatElt> x, <FldRatElt> y) -> FldRatElt
 GreatestCommonDivisor(<RngIntElt> x, <FldRatElt> y) -> FldRatElt
 GreatestCommonDivisor(<FldRatElt> x, <RngIntElt> y) -> FldRatElt
+HJContinuedFraction(<FldRatElt> q) -> [RngIntElt]
+Height(<FldRatElt> q) -> RngIntElt
+HirzebruchJungContinuedFraction(<FldRatElt> q) -> [RngIntElt]
 IsIdempotent(<RngElt> x) -> BoolElt
 IsIntegral(<FldRatElt> x) -> BoolElt
 IsIrreducible(<RngElt> x) -> BoolElt
@@ -59,13 +67,21 @@ IsMinusOne(<FldRatElt> x) -> BoolElt
 IsNilpotent(<RngElt> x) -> BoolElt, RngIntElt
 IsOne(<FldRatElt> x) -> BoolElt
 IsPrime(<RngElt> x) -> BoolElt
+IsRegular(<FldRatElt> q) -> BoolElt
 IsSquare(<FldRatElt> x) -> BoolElt, FldRatElt
 IsUnit(<FldRatElt> x) -> BoolElt
 IsZero(<FldRatElt> x) -> BoolElt
 IsZeroDivisor(<RngElt> x) -> BoolElt
 LaguerrePolynomial(<RngIntElt> n, <RngElt> m) -> RngUPolElt
+MinimalField(<FldRatElt> q) -> FldRat
+MinimalPolynomial(<FldRatElt> q) -> RngUPolElt
+Norm(<FldRatElt> q) -> FldRatElt
 Numerator(<FldRatElt> x) -> RngIntElt
+Qround(<FldRatElt> q, <RngIntElt> M) -> FldRatElt
 Round(<FldRatElt> x) -> RngIntElt
 Sign(<FldRatElt> x) -> RngIntElt
 Sqrt(<FldRatElt> x) -> FldReElt
+Trace(<FldRatElt> q) -> FldRatElt
 Truncate(<FldRatElt> x) -> RngIntElt
+Valuation(<FldRatElt> x, <RngIntElt> p) -> RngIntElt, FldRatElt
+Valuation(<FldRatElt> x, <RngInt> I) -> RngIntElt, FldRatElt
