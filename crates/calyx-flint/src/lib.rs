@@ -14,6 +14,7 @@ pub mod gr;
 pub mod mpoly;
 pub mod upoly;
 mod integer;
+mod lanes;
 mod packed;
 mod modular;
 pub mod mpfr;

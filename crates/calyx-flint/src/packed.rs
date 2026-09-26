@@ -1,7 +1,9 @@
 //! Finite fields of small characteristic with their elements packed into
-//! words, as FLINT generic-ring contexts implemented here. For now GF(2^n)
-//! with n up to 512, whose elements are the bits of their coordinates
-//! (`gf2x::Gf2Words`).
+//! words, as FLINT generic-ring contexts implemented here: GF(2^n) with n up
+//! to 512, whose elements are the bits of their coordinates
+//! (`gf2x::Gf2Words`), and GF(p^n) for odd p below 2^16 with n up to 64 (p
+//! below 2^8) or 32, whose coordinates take a byte or two each
+//! (`lanes::FpLanes`).
 //!
 //! An element takes at most eight words and holds no pointers, so an `Elem`
 //! keeps it inline and arithmetic never allocates (FLINT's `fq_nmod` keeps
@@ -17,6 +19,7 @@ use flint3_sys as sys;
 
 use crate::Integer;
 use crate::gf2x::Gf2Words;
+use crate::lanes::{FpLanes, Lane};
 use crate::gr::{Ctx, CtxKind, Elem, GrError, GrResult};
 
 type GrCtx = *mut sys::gr_ctx_struct;
@@ -132,12 +135,82 @@ impl<const W: usize> Kernel for Gf2Words<W> {
     }
 }
 
+impl<T: Lane, const N: usize> Kernel for FpLanes<T, N> {
+    type E = [T; N];
+
+    fn zero(&self) -> [T; N] {
+        [T::default(); N]
+    }
+
+    fn scalar(&self, c: u64) -> [T; N] {
+        FpLanes::scalar(self, c)
+    }
+
+    fn generator(&self) -> [T; N] {
+        FpLanes::generator(self)
+    }
+
+    fn add(&self, a: &[T; N], b: &[T; N]) -> [T; N] {
+        FpLanes::add(self, a, b)
+    }
+
+    fn sub(&self, a: &[T; N], b: &[T; N]) -> [T; N] {
+        FpLanes::sub(self, a, b)
+    }
+
+    fn neg(&self, a: &[T; N]) -> [T; N] {
+        FpLanes::neg(self, a)
+    }
+
+    fn mul(&self, a: &[T; N], b: &[T; N]) -> [T; N] {
+        FpLanes::mul(self, a, b)
+    }
+
+    fn mul_scalar(&self, a: &[T; N], c: u64) -> [T; N] {
+        FpLanes::mul_scalar(self, a, c)
+    }
+
+    fn sqr(&self, a: &[T; N]) -> [T; N] {
+        FpLanes::sqr(self, a)
+    }
+
+    fn inv(&self, a: &[T; N]) -> Option<[T; N]> {
+        FpLanes::inv(self, a)
+    }
+
+    fn pow(&self, a: &[T; N], e: &[u64]) -> [T; N] {
+        FpLanes::pow(self, a, e)
+    }
+
+    fn frobenius(&self, a: &[T; N], k: u64) -> [T; N] {
+        FpLanes::frobenius(self, a, k)
+    }
+
+    fn trace(&self, a: &[T; N]) -> u64 {
+        FpLanes::trace(self, a)
+    }
+
+    fn norm(&self, a: &[T; N]) -> u64 {
+        FpLanes::norm(self, a)
+    }
+
+    fn coords(&self, a: &[T; N]) -> Vec<u64> {
+        FpLanes::coords(self, a)
+    }
+
+    fn from_coords(&self, c: &[u64]) -> [T; N] {
+        FpLanes::from_coords(self, c)
+    }
+}
+
 /// What a packed field context holds whatever its kernel (the first word
 /// of the gr context points to it, and the kernel follows, in `Packed`).
 #[repr(C)]
 pub(crate) struct Head {
     p: u64,
     n: u64,
+    /// q - 1, which exponents of units reduce modulo.
+    qm1: Integer,
     /// The same field over FLINT's fq_nmod, with the same modulus.
     companion: Rc<Ctx>,
     methods: Box<[sys::gr_funcptr; TAB_SIZE]>,
@@ -390,12 +463,25 @@ unsafe fn pow_words<K: Kernel>(r: *mut c_void, x: *const c_void, e: &[u64], nega
     SUCCESS
 }
 
+/// Whether x is a unit, whose exponents reduce modulo q - 1.
+unsafe fn is_unit<K: Kernel>(x: *const c_void, ctx: GrCtx) -> bool {
+    unsafe { get::<K>(x) != kernel::<K>(ctx).zero() }
+}
+
 unsafe extern "C" fn pow_ui<K: Kernel>(r: *mut c_void, x: *const c_void, e: sys::ulong, ctx: GrCtx) -> c_int {
-    unsafe { pow_words::<K>(r, x, &[e as u64], false, ctx) }
+    let e = match unsafe { head(ctx).qm1.to_u64() } {
+        Some(m) if e as u64 >= m && unsafe { is_unit::<K>(x, ctx) } => e as u64 % m,
+        _ => e as u64,
+    };
+    unsafe { pow_words::<K>(r, x, &[e], false, ctx) }
 }
 
 unsafe extern "C" fn pow_si<K: Kernel>(r: *mut c_void, x: *const c_void, e: sys::slong, ctx: GrCtx) -> c_int {
-    unsafe { pow_words::<K>(r, x, &[e.unsigned_abs()], e < 0, ctx) }
+    let a = match unsafe { head(ctx).qm1.to_u64() } {
+        Some(m) if e.unsigned_abs() >= m && unsafe { is_unit::<K>(x, ctx) } => e.unsigned_abs() % m,
+        _ => e.unsigned_abs(),
+    };
+    unsafe { pow_words::<K>(r, x, &[a], e < 0, ctx) }
 }
 
 unsafe extern "C" fn pow_fmpz<K: Kernel>(r: *mut c_void, x: *const c_void, e: *const sys::fmpz, ctx: GrCtx) -> c_int {
@@ -403,6 +489,10 @@ unsafe extern "C" fn pow_fmpz<K: Kernel>(r: *mut c_void, x: *const c_void, e: *c
         let mut t: sys::fmpz = 0;
         sys::fmpz_init(&mut t);
         sys::fmpz_abs(&mut t, e);
+        let qm1 = head(ctx).qm1.raw_ptr();
+        if sys::fmpz_cmp(&t, qm1) >= 0 && is_unit::<K>(x, ctx) {
+            sys::fmpz_fdiv_r(&mut t, &t, qm1);
+        }
         let len = sys::fmpz_size(&t);
         let mut w = vec![0 as sys::ulong; len.max(1) as usize];
         if len > 0 {
@@ -608,7 +698,8 @@ unsafe fn init_ctx<K: Kernel>(c: GrCtx, head: Head, k: K) {
 
 fn build<K: Kernel>(p: u64, n: usize, companion: Rc<Ctx>, k: K) -> GrResult<Rc<Ctx>> {
     Ctx::try_build(CtxKind::FqPacked { p, degree: n as u64 }, None, move |c| {
-        let head = Head { p, n: n as u64, companion, methods: Box::new([None; TAB_SIZE]), coords: coords_of::<K>, from_coords: from_coords_of::<K> };
+        let qm1 = &Integer::from_u64(p).pow(n as u64) - &Integer::one();
+        let head = Head { p, n: n as u64, qm1, companion, methods: Box::new([None; TAB_SIZE]), coords: coords_of::<K>, from_coords: from_coords_of::<K> };
         unsafe { init_ctx(c, head, k) };
         SUCCESS
     })
@@ -619,17 +710,35 @@ fn head_of(ctx: &Ctx) -> Option<&Head> {
 }
 
 impl Ctx {
-    /// GF(p^n) = F_p[x]/(f) with its elements packed into words, for f monic
-    /// and irreducible of degree n, given by its coefficients below p
-    /// (constant term first). `Unable` when no packed representation covers
-    /// the field: for now p must be 2, and n at most 512.
+    /// GF(p^n) = F_p[x]/(f) with its elements packed into words, for a prime
+    /// p and f monic and irreducible of degree n, given by its coefficients
+    /// below p (constant term first). `Unable` when no packed representation
+    /// covers the field: p must be 2 with n at most 512, or odd and below 2^8
+    /// with n at most 64, or below 2^16 with n at most 32.
     pub fn packed_field(p: u64, modulus: &[u64]) -> GrResult<Rc<Ctx>> {
         let n = modulus.len().saturating_sub(1);
-        if p != 2 || !(1..=512).contains(&n) {
+        let most = match p {
+            2 => 512,
+            3..256 => 64,
+            256..65536 => 32,
+            _ => 0,
+        };
+        if !(1..=most).contains(&n) || modulus[n] % p != 1 || !Integer::from_u64(p).is_prime() {
             return Err(GrError::Unable);
         }
         let ints: Vec<Integer> = modulus.iter().map(|&c| Integer::from_u64(c % p)).collect();
         let companion = Ctx::flint_field(&Integer::from_u64(p), &ints, false)?;
+        if p != 2 {
+            let f = &modulus[..n];
+            return match (p < 256, n) {
+                (true, 1..=16) => build(p, n, companion, FpLanes::<u8, 16>::new(p, f)),
+                (true, 17..=32) => build(p, n, companion, FpLanes::<u8, 32>::new(p, f)),
+                (true, _) => build(p, n, companion, FpLanes::<u8, 64>::new(p, f)),
+                (false, 1..=8) => build(p, n, companion, FpLanes::<u16, 8>::new(p, f)),
+                (false, 9..=16) => build(p, n, companion, FpLanes::<u16, 16>::new(p, f)),
+                (false, _) => build(p, n, companion, FpLanes::<u16, 32>::new(p, f)),
+            };
+        }
         let mut g = [0u64; 8];
         for (i, &c) in modulus[..n].iter().enumerate() {
             g[i / 64] |= (c & 1) << (i % 64);
@@ -995,7 +1104,12 @@ mod tests {
         let ints: Vec<Integer> = cs.iter().map(|&c| Integer::from_u64(c)).collect();
         let pk = Ctx::packed_field(p, cs).unwrap();
         let fq = Ctx::flint_field(&Integer::from_u64(p), &ints, false).unwrap();
-        assert!(matches!(pk.kind(), CtxKind::FqPacked { .. }) && pk.elem_size() == 8 * n.div_ceil(64));
+        let size = match p {
+            2 => 8 * n.div_ceil(64),
+            3..256 => [16, 32, 64].into_iter().find(|&m| n <= m).unwrap(),
+            _ => 2 * [8, 16, 32].into_iter().find(|&m| n <= m).unwrap(),
+        };
+        assert!(matches!(pk.kind(), CtxKind::FqPacked { .. }) && pk.elem_size() == size);
         let rand = |rng: &mut Lcg| -> Vec<u64> { (0..n).map(|_| rng.next() % p).collect() };
         let q = Integer::from_u64(p).pow(n as u64);
         for i in 0..30 {
@@ -1028,8 +1142,10 @@ mod tests {
             assert_eq!(a.mul_integer(&Integer::from_i64(-3)).unwrap().fq_coords_u64(), fa.mul_integer(&Integer::from_i64(-3)).unwrap().fq_coords_u64());
             assert_eq!(a.to_flint_string(), fa.to_flint_string());
             assert_eq!(a.is_square(), fa.is_square());
-            let s = a.sqrt().unwrap();
-            same(&s.sqr().unwrap(), &a);
+            match a.sqrt() {
+                Ok(s) => same(&s.sqr().unwrap(), &a),
+                Err(e) => assert_eq!(fa.sqrt().err(), Some(e)),
+            }
         }
         same(&pk.generator().unwrap(), &fq.generator().unwrap());
         for v in [-1i64, 0, 1, 2, 5] {
@@ -1039,7 +1155,7 @@ mod tests {
         let fp = Ctx::residue_ring(&Integer::from_u64(p));
         same(&Elem::from_other(&pk, &Elem::from_i64(&fp, 1).unwrap()).unwrap(), &Elem::one(&fq).unwrap());
         assert_eq!(pk.fq_order(), fq.fq_order());
-        if n <= 64 {
+        if q.bits() <= 64 {
             let g = pk.generator().unwrap();
             let x = Elem::fq_from_coords_u64(&pk, &rand(rng));
             for y in [&g, &x] {
@@ -1102,8 +1218,29 @@ mod tests {
             let cs = dense(n, &mut rng);
             agree(2, &cs, &mut rng);
         }
-        assert_eq!(Ctx::packed_field(3, &[1, 0, 1]).err(), Some(GrError::Unable));
-        assert_eq!(Ctx::packed_field(2, &[1; 514]).err(), Some(GrError::Unable));
+        for (p, n) in [(3u64, 1usize), (3, 2), (3, 13), (3, 40), (3, 64), (5, 9), (7, 30), (251, 3), (251, 64), (257, 2), (1009, 9), (32003, 16), (65521, 32)] {
+            let cs = odd_modulus(p, n, &mut rng);
+            agree(p, &cs, &mut rng);
+        }
+        for (p, cs) in [(2, vec![1; 514]), (3, vec![1; 66]), (257, vec![1; 34]), (65537, vec![1, 0, 1]), (9, vec![1, 0, 1]), (3, vec![1, 0, 2])] {
+            assert_eq!(Ctx::packed_field(p, &cs).err(), Some(GrError::Unable));
+        }
+    }
+
+    /// A monic irreducible polynomial of degree n over F_p for odd p:
+    /// Conway's if known, else a random one.
+    fn odd_modulus(p: u64, n: usize, rng: &mut Lcg) -> Vec<u64> {
+        if let Some(c) = conway_polynomial(p, n as u64) {
+            return c.iter().map(|x| x.to_u64().unwrap()).collect();
+        }
+        for _ in 0..100 * n {
+            let cs: Vec<u64> = (0..n).map(|_| rng.next() % p).chain([1]).collect();
+            let ints: Vec<Integer> = cs.iter().map(|&c| Integer::from_u64(c)).collect();
+            if is_irreducible_mod_p(&Integer::from_u64(p), &ints) {
+                return cs;
+            }
+        }
+        panic!("no irreducible of degree {n} over F_{p}");
     }
 
     /// The coordinates of the coefficients of a univariate polynomial.
@@ -1165,16 +1302,23 @@ mod tests {
     #[test]
     fn polynomials_through_the_companion() {
         let mut rng = Lcg(0x2545_f491_4f6c_dd1d);
-        for n in [21u64, 70, 200] {
-            let cs: Vec<u64> = conway_polynomial(2, n).map(|c| c.iter().map(|x| x.to_u64().unwrap()).collect()).unwrap_or_else(|| {
-                let g = crate::gf2x::least_low_term(n as usize).unwrap();
-                (0..=n).map(|i| if i == n { 1 } else if i < 64 { g >> i & 1 } else { 0 }).collect()
-            });
+        for (p, n) in [(2u64, 21u64), (2, 70), (2, 200), (3, 17), (7, 30), (251, 3), (65521, 5)] {
+            let cs: Vec<u64> = match (p, conway_polynomial(p, n)) {
+                (_, Some(c)) => c.iter().map(|x| x.to_u64().unwrap()).collect(),
+                (2, None) => {
+                    let g = crate::gf2x::least_low_term(n as usize).unwrap();
+                    (0..=n).map(|i| if i == n { 1 } else if i < 64 { g >> i & 1 } else { 0 }).collect()
+                }
+                _ => odd_modulus(p, n as usize, &mut rng),
+            };
             let ints: Vec<Integer> = cs.iter().map(|&c| Integer::from_u64(c)).collect();
-            let pk = Ctx::finite_field(&Integer::from_u64(2), &ints, false).unwrap();
-            let fq = Ctx::flint_field(&Integer::from_u64(2), &ints, false).unwrap();
-            assert!(matches!(pk.kind(), CtxKind::FqPacked { .. }) && matches!(fq.kind(), CtxKind::FqNmod { .. }));
-            let r: Vec<Vec<u64>> = (0..6).map(|_| (0..n).map(|_| rng.next() & 1).collect()).collect();
+            let pk = Ctx::packed_field(p, &cs).unwrap();
+            let fq = Ctx::flint_field(&Integer::from_u64(p), &ints, false).unwrap();
+            assert!(matches!(fq.kind(), CtxKind::FqNmod { .. }));
+            if p == 2 {
+                assert!(matches!(Ctx::finite_field(&Integer::from_u64(2), &ints, false).unwrap().kind(), CtxKind::FqPacked { .. }));
+            }
+            let r: Vec<Vec<u64>> = (0..6).map(|_| (0..n).map(|_| rng.next() % p).collect()).collect();
             let e = Integer::from_i64(2).pow(n + 7);
             assert_eq!(poly_summary(&pk, &r, &e), poly_summary(&fq, &r, &e));
         }
