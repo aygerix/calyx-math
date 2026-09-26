@@ -21,7 +21,8 @@ use std::rc::Rc;
 
 use calyx_flint::Integer;
 use calyx_flint::gr::{Elem, Truth};
-use calyx_groebner::{self as gb, Order, Terms};
+use calyx_flint::mpoly as fm;
+use calyx_groebner::{self as gb, Order, Terms, Weights};
 use calyx_syntax::ast::BinOp;
 
 use super::groebner::{engine, shape, terms};
@@ -131,47 +132,73 @@ impl MPolIdeal {
     /// reduced Gröbner basis; else it is grevlex, weighted when weights make
     /// the generators homogeneous but for their constant terms.
     pub fn easy(&self) -> RResult<Rc<Easy>> {
+        let easy = self.find_easy()?;
+        self.keep_easy(&easy)?;
+        Ok(easy)
+    }
+
+    /// The kind and the order of the easy Gröbner basis.
+    fn easy_order(&self) -> (EasyKind, Order) {
+        if let Some(e) = &self.known.borrow().easy {
+            return (e.kind, e.order.clone());
+        }
+        let r = self.poly_ring();
+        let (_, n, order) = shape(r);
+        if matches!(order, Order::GRevLexW(_)) || coprime_leading(r, &self.gens) {
+            return (EasyKind::Ring, order.clone());
+        }
+        match homogeneous_weights(n, &exponents(&self.gens)) {
+            Some(w) if w.iter().any(|&x| x != 1) => (EasyKind::Weighted, Order::GRevLexW(w)),
+            _ => (EasyKind::GRevLex, Order::GRevLex),
+        }
+    }
+
+    /// The easy Gröbner basis, as known or computed (without keeping it).
+    fn find_easy(&self) -> RResult<Rc<Easy>> {
         if let Some(e) = &self.known.borrow().easy {
             return Ok(e.clone());
         }
         let r = self.poly_ring();
-        let (base, n, order) = shape(r);
-        let (kind, order) = if matches!(order, Order::GRevLexW(_)) || coprime_leading(r, &self.gens) {
-            (EasyKind::Ring, order.clone())
-        } else {
-            let polys: Vec<Vec<Vec<u64>>> = self.gens.iter().map(|g| (0..g.mpoly_len()).map(|i| g.mpoly_term(i).1).collect()).collect();
-            match homogeneous_weights(n, &polys) {
-                Some(w) if w.iter().any(|&x| x != 1) => (EasyKind::Weighted, Order::GRevLexW(w)),
-                _ => (EasyKind::GRevLex, Order::GRevLex),
-            }
-        };
-        let g = engine(r, gb::groebner(base, n, &order, &self.gens.iter().map(terms).collect::<Vec<_>>()))?;
-        let w = super::mpoly::weights(r);
-        let homogeneous = g.iter().all(|t| t.iter().all(|(_, e)| wdeg(&w, e) == wdeg(&w, &t[0].1)));
-        let dimension = dimension_class(n, &leading_monomials(&g));
-        let easy = Rc::new(Easy { kind, order, terms: g });
-        let groebner = match kind {
+        let (base, n, _) = shape(r);
+        let (kind, order) = self.easy_order();
+        let terms = engine(r, gb::groebner(base, n, &order, &self.gens.iter().map(terms).collect::<Vec<_>>()))?;
+        Ok(Rc::new(Easy { kind, order, terms }))
+    }
+
+    /// Keep the easy Gröbner basis `easy` and what it tells, unless one is
+    /// kept already.
+    fn keep_easy(&self, easy: &Rc<Easy>) -> RResult<()> {
+        if self.known.borrow().easy.is_some() {
+            return Ok(());
+        }
+        let r = self.poly_ring();
+        let groebner = match easy.kind {
             EasyKind::Ring => Some(elements(r, &easy.terms)?.into()),
             _ => None,
         };
         let mut k = self.known.borrow_mut();
-        k.homogeneous = Some(homogeneous);
-        k.dimension.get_or_insert(dimension);
+        k.homogeneous = Some(homogeneous_terms(r, &easy.terms));
+        k.dimension.get_or_insert(dimension_class(r.ngens(), &leading_monomials(&easy.terms)));
         if groebner.is_some() {
             k.groebner = groebner;
         }
         k.easy = Some(easy.clone());
-        Ok(easy)
+        Ok(())
     }
 
     /// The reduced Gröbner basis in the ring's order, computed once (from
-    /// the easy basis); it becomes the basis of the ideal.
+    /// the easy basis); it becomes the basis of the ideal. An easy basis in
+    /// the ring's order that a colon ideal was made with is it, but does not
+    /// replace the basis.
     pub fn groebner(&self) -> RResult<Rc<[Elem]>> {
         let easy = self.easy()?;
         if let Some(g) = &self.known.borrow().groebner {
             return Ok(g.clone());
         }
         let r = self.poly_ring();
+        if easy.kind == EasyKind::Ring {
+            return Ok(elements(r, &easy.terms)?.into());
+        }
         let g: Rc<[Elem]> = super::groebner::groebner_basis(r, &elements(r, &easy.terms)?)?.into();
         self.known.borrow_mut().groebner = Some(g.clone());
         Ok(g)
@@ -298,6 +325,22 @@ fn monic(r: &Ring, f: Elem) -> RResult<Elem> {
 /// The weighted degree of the monomial with exponents `e`.
 fn wdeg(w: &[u64], e: &[u64]) -> u128 {
     w.iter().zip(e).map(|(&w, &k)| w as u128 * k as u128).sum()
+}
+
+/// Whether the terms `t` of a polynomial have one degree for the weights `w`.
+fn homogeneous_in(w: &[u64], t: &Terms) -> bool {
+    t.iter().all(|(_, e)| wdeg(w, e) == wdeg(w, &t[0].1))
+}
+
+/// Whether the polynomials `ts` of `r` are homogeneous in its grading.
+fn homogeneous_terms(r: &Ring, ts: &[Terms]) -> bool {
+    let w = super::mpoly::weights(r);
+    ts.iter().all(|t| homogeneous_in(&w, t))
+}
+
+/// The exponents of the terms of the polynomials `gens`.
+fn exponents(gens: &[Elem]) -> Vec<Vec<Vec<u64>>> {
+    gens.iter().map(|g| (0..g.mpoly_len()).map(|i| g.mpoly_term(i).1).collect()).collect()
 }
 
 /// Whether the leading monomials of the non-zero polynomials `gens` of `r`
@@ -541,24 +584,55 @@ fn standard_monomials(n: usize, lms: &[&[u64]]) -> Integer {
     Integer::from_limbs(&[c as u64, (c >> 64) as u64], false)
 }
 
-/// The polynomials of `r` free of a new variable t in the ideal generated
-/// by t f for f in `fs` and (1 - t) g for g in `gs`: the intersection of the
-/// ideals that `fs` and `gs` generate, as its reduced Gröbner basis in
-/// grevlex (the order Magma gives it in).
-fn intersection(r: &Ring, fs: &[Elem], gs: &[Elem]) -> RResult<Vec<Elem>> {
+/// The terms of `f` with the exponent `k` of a new first variable.
+fn lift(f: &Elem, k: u64) -> Terms {
+    terms(f).into_iter().map(|(c, e)| (c, std::iter::once(k).chain(e).collect())).collect()
+}
+
+/// The order on a new first variable and `n` others that eliminates the
+/// first and orders the monomials in the others by `o`.
+fn eliminating(o: &Order, n: usize) -> Order {
+    match o {
+        Order::Lex => Order::Lex,
+        Order::GRevLex => Order::ElimK(1),
+        _ => {
+            let row = |first: u64, rest: Vec<Integer>| std::iter::once(Integer::from_u64(first)).chain(rest).collect::<Vec<_>>();
+            let mut rows = vec![row(1, vec![Integer::zero(); n])];
+            rows.extend(o.weight_vectors(n).into_iter().map(|w| row(0, w)));
+            Order::Weight(Weights::new(rows))
+        }
+    }
+}
+
+/// grevlex for the positive weights `w` with the variable `last` the least:
+/// the one whose exponent decides a tie first.
+fn bayer_order(w: &[u64], last: usize) -> Order {
+    let n = w.len();
+    let mut row: Vec<Integer> = w.iter().map(|&x| Integer::from_u64(x)).collect();
+    let mut rows = vec![row.clone()];
+    for i in std::iter::once(last).chain((0..n).rev().filter(|&i| i != last)).take(n - 1) {
+        row[i] = Integer::zero();
+        rows.push(row.clone());
+    }
+    Order::Weight(Weights::new(rows))
+}
+
+/// The intersection of the ideals of `r` that `fs` and `gs` generate, as its
+/// reduced Gröbner basis in the order `o`: the polynomials free of a new
+/// variable t in the ideal generated by t f for f in `fs` and (1 - t) g for
+/// g in `gs`.
+fn intersection(r: &Ring, o: &Order, fs: &[Elem], gs: &[Elem]) -> RResult<Vec<Terms>> {
     let (base, n, _) = shape(r);
-    let with_t = |f: &Elem, k: u64| -> Terms { terms(f).into_iter().map(|(c, e)| (c, std::iter::once(k).chain(e).collect())).collect() };
-    let mut gens: Vec<Terms> = fs.iter().map(|f| with_t(f, 1)).collect();
+    let mut gens: Vec<Terms> = fs.iter().map(|f| lift(f, 1)).collect();
     for g in gs {
-        let mut t = with_t(g, 0);
-        for (c, e) in with_t(g, 1) {
+        let mut t = lift(g, 0);
+        for (c, e) in lift(g, 1) {
             t.push((c.neg()?, e));
         }
         gens.push(t);
     }
-    let g = engine(r, gb::groebner(base, n + 1, &Order::ElimK(1), &gens))?;
-    let free: Vec<Terms> = g.into_iter().filter(|t| t.iter().all(|(_, e)| e[0] == 0)).map(|t| t.into_iter().map(|(c, e)| (c, e[1..].to_vec())).collect()).collect();
-    elements(r, &free)
+    let g = engine(r, gb::groebner(base, n + 1, &eliminating(o, n), &gens))?;
+    Ok(g.into_iter().filter(|t| t.iter().all(|(_, e)| e[0] == 0)).map(|t| t.into_iter().map(|(c, e)| (c, e[1..].to_vec())).collect()).collect())
 }
 
 /// Whether some power of `f` is in the ideal of `r` generated by `gens`:
@@ -566,9 +640,8 @@ fn intersection(r: &Ring, fs: &[Elem], gs: &[Elem]) -> RResult<Vec<Elem>> {
 /// variable t.
 fn in_radical(r: &Ring, f: &Elem, gens: &[Elem]) -> RResult<bool> {
     let (base, n, _) = shape(r);
-    let with_t = |f: &Elem, k: u64| -> Terms { terms(f).into_iter().map(|(c, e)| (c, std::iter::once(k).chain(e).collect())).collect() };
-    let mut ts: Vec<Terms> = gens.iter().map(|g| with_t(g, 0)).collect();
-    let mut t: Terms = with_t(f, 1).into_iter().map(|(c, e)| Ok((c.neg()?, e))).collect::<RResult<_>>()?;
+    let mut ts: Vec<Terms> = gens.iter().map(|g| lift(g, 0)).collect();
+    let mut t: Terms = lift(f, 1).into_iter().map(|(c, e)| Ok((c.neg()?, e))).collect::<RResult<_>>()?;
     t.push((Elem::one(base)?, vec![0; n + 1]));
     ts.push(t);
     let g = engine(r, gb::groebner(base, n + 1, &Order::GRevLex, &ts))?;
@@ -752,11 +825,212 @@ pub fn ideal_binop(it: &mut Interp, op: BinOp, a: &Value, b: &Value) -> RResult<
         (BinOp::Mul, _, _) => ideal_value(&r, products(it, &r, &generators_of(&r, &x)?, &generators_of(&r, &y)?)?, false),
         (BinOp::Eq | BinOp::Ne, _, _) => Value::Bool(ideals_equal(&x, &y).map_err(ctx)? == (op == BinOp::Eq)),
         (BinOp::Subset | BinOp::Notsubset, _, _) => Value::Bool(ideal_subset(&r, &x, &y).map_err(ctx)? == (op == BinOp::Subset)),
-        (BinOp::Meet, _, None) => a.clone(),
-        (BinOp::Meet, None, _) => b.clone(),
-        (BinOp::Meet, Some(x), Some(y)) => ideal_value(&r, intersection(x.poly_ring(), &x.basis(), &y.basis()).map_err(ctx)?, false),
+        (BinOp::Meet, _, _) => meet(a, b).map_err(ctx)?,
         _ => unreachable!("an operator on ideals"),
     }))
+}
+
+/// Whether the basis of the ideal is [1].
+fn unit_basis(id: &MPolIdeal) -> bool {
+    matches!(id.basis().as_slice(), [f] if f.is_one() == Truth::True)
+}
+
+/// `A meet B` for ideals of one ring (or the ring itself), as Magma gives
+/// it: A or B when the other is the ring, is the same ideal or has the basis
+/// [1]; else a new ideal with the reduced Gröbner basis of the intersection
+/// in grevlex, weighted if weights make the basis of A homogeneous.
+fn meet(a: &Value, b: &Value) -> RResult<Value> {
+    let (pst, x) = operand(a).expect("a polynomial ring or ideal");
+    let (x, y) = match (x, operand(b).expect("a polynomial ring or ideal").1) {
+        (_, None) => return Ok(a.clone()),
+        (None, _) => return Ok(b.clone()),
+        (Some(x), Some(y)) => (x, y),
+    };
+    if Rc::ptr_eq(&x, &y) || unit_basis(&y) {
+        return Ok(a.clone());
+    }
+    if unit_basis(&x) {
+        return Ok(b.clone());
+    }
+    let r = x.poly_ring();
+    let fs = x.basis();
+    // The weights of the easy order ignore constant terms; these may not.
+    let exps = exponents(&fs);
+    let constant = exps.iter().any(|p| p.len() > 1 && p.iter().any(|e| e.iter().all(|&k| k == 0)));
+    let o = match homogeneous_weights(r.ngens(), &exps) {
+        Some(w) if !constant && w.iter().any(|&k| k != 1) => Order::GRevLexW(w),
+        _ => Order::GRevLex,
+    };
+    let ts = intersection(r, &o, &fs, &y.basis())?;
+    Ok(ideal_value(&pst, elements(r, &ts)?, false))
+}
+
+// ----- colon ideals and saturation -------------------------------------------------
+
+/// Whether two values are the same structure.
+fn same_value(a: &Value, b: &Value) -> bool {
+    matches!((a, b), (Value::Struct(x), Value::Struct(y)) if Rc::ptr_eq(x, y))
+}
+
+/// Whether `f` is a constant polynomial.
+fn is_constant(f: &Elem) -> bool {
+    (0..f.mpoly_len()).all(|i| f.mpoly_term(i).1.iter().all(|&k| k == 0))
+}
+
+/// The number of the variable that the polynomial `f` is, if it is one.
+fn variable(f: &Elem) -> Option<usize> {
+    if f.mpoly_len() != 1 {
+        return None;
+    }
+    let (c, e) = f.mpoly_term(0);
+    if c.is_one() != Truth::True || e.iter().sum::<u64>() != 1 {
+        return None;
+    }
+    e.iter().position(|&k| k == 1)
+}
+
+/// `I : g` for an ideal I (or the ring), the value `iv`, and a polynomial g
+/// of its ring, as Magma gives it: the ring for g = 0; I itself if I : g is
+/// I, which leaves I as it was; else a new ideal with the reduced Gröbner
+/// basis of I : g in the easy order of I, its easy basis (and I keeps its
+/// own).
+fn colon(iv: &Value, g: &Elem) -> RResult<Value> {
+    let (pst, id) = operand(iv).expect("a polynomial ring or ideal");
+    let Some(id) = id else { return Ok(iv.clone()) };
+    if g.mpoly_len() == 0 {
+        return Ok(Value::Struct(pst));
+    }
+    if is_constant(g) {
+        return Ok(iv.clone());
+    }
+    let r = id.poly_ring();
+    let (base, n, _) = shape(r);
+    let (kind, order) = id.easy_order();
+    // The intersection of I and (g) is g (I : g).
+    let mut quotients = Vec::new();
+    for t in intersection(r, &order, &id.basis(), std::slice::from_ref(g))? {
+        let q = fm::divides(&Elem::mpoly_from_terms(&r.ctx, &t)?, g)?.expect("a multiple of g");
+        quotients.push(terms(&q));
+    }
+    let quotients = engine(r, gb::groebner(base, n, &order, &quotients))?;
+    let easy = id.find_easy()?;
+    if same_terms(&quotients, &easy.terms) {
+        return Ok(iv.clone());
+    }
+    id.keep_easy(&easy)?;
+    // The basis is monic in the ring's order.
+    let basis = elements(r, &quotients)?.into_iter().map(|f| monic(r, f)).collect::<RResult<_>>()?;
+    let colon = MPolIdeal::new(pst.clone(), basis, false);
+    {
+        let mut k = colon.known.borrow_mut();
+        k.homogeneous = Some(homogeneous_terms(r, &quotients));
+        k.dimension = Some(dimension_class(n, &leading_monomials(&quotients)));
+        k.easy = Some(Rc::new(Easy { kind, order, terms: quotients }));
+    }
+    Ok(Value::structure(StructKind::MPolIdeal(Rc::new(colon))))
+}
+
+/// I : f^∞ by the colons I : f, (I : f) : f and so on until one is the
+/// ideal it was taken of: that ideal, and the number of colons that grew.
+fn colon_iterated(iv: &Value, f: &Elem) -> RResult<(Value, u64)> {
+    let (mut cur, mut s) = (iv.clone(), 0);
+    loop {
+        let next = colon(&cur, f)?;
+        if same_value(&next, &cur) {
+            return Ok((cur, s));
+        }
+        (cur, s) = (next, s + 1);
+    }
+}
+
+/// The homogenization of the polynomial with the terms `t` for the weights
+/// `w`, by a new first variable of weight 1.
+fn homogenized(w: &[u64], t: &Terms) -> Terms {
+    let d = t.iter().map(|(_, e)| wdeg(w, e)).max().unwrap_or(0);
+    t.iter().map(|(c, e)| (c.clone(), std::iter::once((d - wdeg(w, e)) as u64).chain(e.iter().copied()).collect())).collect()
+}
+
+/// I : x^∞ for an ideal I (or the ring), the value `iv`, and the variable x
+/// with number `i`, by Bayer's method as Magma uses it: the reduced Gröbner
+/// basis of I in weighted grevlex with x the least variable, each polynomial
+/// divided by the highest power of x that divides it. The weights are the
+/// grading if I is homogeneous, else those of its easy order if they make I
+/// homogeneous, else I is first homogenized by a new first variable (and
+/// the basis dehomogenized). The ideal, I itself if x divides none of the
+/// polynomials, and the highest power of x divided out.
+fn bayer(iv: &Value, i: usize) -> RResult<(Value, u64)> {
+    let (pst, id) = operand(iv).expect("a polynomial ring or ideal");
+    let Some(id) = id else { return Ok((iv.clone(), 0)) };
+    let r = id.poly_ring();
+    let (base, n, _) = shape(r);
+    let grading = super::mpoly::weights(r);
+    let basis = id.basis();
+    let (gens, w, homogenize) = if homogeneous_basis(r, &basis) {
+        (basis.iter().map(terms).collect(), grading, false)
+    } else {
+        let easy = id.easy()?;
+        let homogeneous = id.known.borrow().homogeneous == Some(true);
+        match &easy.order {
+            _ if homogeneous => (easy.terms.clone(), grading, false),
+            Order::GRevLexW(w) => (easy.terms.clone(), w.clone(), !easy.terms.iter().all(|t| homogeneous_in(w, t))),
+            Order::GRevLex => (easy.terms.clone(), vec![1; n], true),
+            _ => (engine(r, gb::groebner(base, n, &Order::GRevLex, &easy.terms))?, vec![1; n], true),
+        }
+    };
+    let (gens, w, last) = match homogenize {
+        true => (gens.iter().map(|t| homogenized(&w, t)).collect(), std::iter::once(1).chain(w).collect::<Vec<_>>(), i + 1),
+        false => (gens, w, i),
+    };
+    let g = engine(r, gb::groebner(base, w.len(), &bayer_order(&w, last), &gens))?;
+    let power = |t: &Terms| t.iter().map(|(_, e)| e[last]).min().unwrap_or(0);
+    let k = g.iter().map(power).max().unwrap_or(0);
+    if k == 0 {
+        return Ok((iv.clone(), 0));
+    }
+    let mut out = Vec::with_capacity(g.len());
+    for t in &g {
+        let d = power(t);
+        let t: Terms = t
+            .iter()
+            .map(|(c, e)| {
+                let mut e = e.clone();
+                e[last] -= d;
+                if homogenize {
+                    e.remove(0);
+                }
+                (c.clone(), e)
+            })
+            .collect();
+        out.push(Elem::mpoly_from_terms(&r.ctx, &t)?);
+    }
+    Ok((ideal_value(&pst, out, false), k))
+}
+
+/// I : f^∞ for an ideal I (or the ring), the value `iv`, and a polynomial f
+/// of its ring, as Magma computes it: by the irreducible factors p of f in
+/// increasing order, by Bayer's method for variables and by colons for the
+/// others. The ideal (I itself for a constant f), and each factor with the
+/// power of it that the saturation took.
+fn saturate(it: &mut Interp, iv: &Value, f: &Elem) -> RResult<(Value, Vec<(Elem, u64)>)> {
+    if is_constant(f) {
+        return Ok((iv.clone(), Vec::new()));
+    }
+    let (pst, _) = operand(iv).expect("a polynomial ring or ideal");
+    let mut ps = Vec::new();
+    for (p, _) in fm::factor(f, false)?.1 {
+        ps.push(super::mpoly::normalized(it, &Elt { parent: pst.clone(), x: p })?);
+    }
+    let mut cur = iv.clone();
+    let mut powers = Vec::with_capacity(ps.len());
+    for p in sort_dedup(it, &pst, ps)? {
+        let (next, k) = match variable(&p) {
+            Some(i) => bayer(&cur, i)?,
+            None => colon_iterated(&cur, &p)?,
+        };
+        cur = next;
+        powers.push((p, k));
+    }
+    Ok((cur, powers))
 }
 
 /// `x in I`: for x coercing into the ring, whether it is in I; a polynomial
@@ -1026,6 +1300,89 @@ fn jacobian_ideal(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     Ok(vals![ideal.clone(), coercion_map(ideal, Value::Struct(f.parent.clone()))])
 }
 
+/// Argument `i`, a polynomial, in the ring `pst` of the ideal argument.
+fn element_arg(it: &mut Interp, a: &CallArgs, pst: &Rc<Struct>, i: usize) -> RResult<Elem> {
+    it.to_ring_elem(pst, &a.args[i], false)?.ok_or_else(|| RuntimeError::runtime("Arguments are not compatible"))
+}
+
+/// The fold by `meet` of the ideals `ks`, the ring for none.
+fn meet_all(pst: &Rc<Struct>, ks: impl Iterator<Item = RResult<Value>>) -> RResult<Value> {
+    let mut out: Option<Value> = None;
+    for k in ks {
+        let k = k?;
+        out = Some(match out {
+            Some(m) => meet(&m, &k)?,
+            None => k,
+        });
+    }
+    Ok(out.unwrap_or_else(|| Value::Struct(pst.clone())))
+}
+
+/// `ColonIdeal(I, J)`: the intersection of the colons I : g for g in the
+/// reduced Gröbner basis of J (which J keeps).
+fn colon_ideal(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let ((r, x), (s, y)) = (operand_arg(a, 0), operand_arg(a, 1));
+    if !struct_eq(&r, &s) {
+        return Err(RuntimeError::runtime(format!("Arguments are not compatible\nArgument types given: {}, {}", it.type_name_ext(&a.args[0]), it.type_name_ext(&a.args[1]))));
+    }
+    let (Some(_), Some(y)) = (x, y) else { return one(a.args[0].clone()) };
+    let g = y.groebner()?;
+    one(meet_all(&r, g.iter().map(|g| colon(&a.args[0], g)))?)
+}
+
+/// `ColonIdeal(I, f)`: the saturation I : f^∞, and if asked for, the least
+/// s with I : f^s = I : f^∞ (which the colons then find).
+fn colon_element(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let (pst, _) = operand_arg(a, 0);
+    let f = element_arg(it, a, &pst, 1)?;
+    if a.nresults >= 2 {
+        let (c, s) = colon_iterated(&a.args[0], &f)?;
+        return Ok(vals![c, Value::int(s as i64)]);
+    }
+    one(saturate(it, &a.args[0], &f)?.0)
+}
+
+/// `ColonIdealEquivalent(I, f)`: the saturation I : f^∞ and a product g of
+/// powers of the irreducible factors of f with I : g = I : f^∞ (only the
+/// saturation unless both are asked for).
+fn colon_ideal_equivalent(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let (pst, _) = operand_arg(a, 0);
+    let f = element_arg(it, a, &pst, 1)?;
+    let (c, powers) = saturate(it, &a.args[0], &f)?;
+    if a.nresults < 2 {
+        return one(c);
+    }
+    if f.mpoly_len() == 0 {
+        return Ok(vals![c, make_elt(&pst, f)]);
+    }
+    let mut g = unit(&pst)?;
+    for (p, k) in powers {
+        g = g.mul(&p.pow(&Integer::from_u64(k))?)?;
+    }
+    Ok(vals![c, make_elt(&pst, g)])
+}
+
+/// `Saturation(I, J)`: the intersection of the saturations I : g^∞ for the
+/// non-zero g in the basis of J.
+fn saturation_by(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let ((r, x), (s, y)) = (operand_arg(a, 0), operand_arg(a, 1));
+    if !struct_eq(&r, &s) {
+        return Err(super::bare(RuntimeError::runtime("I and J must be ideals of the same ring")));
+    }
+    let (Some(_), Some(y)) = (x, y) else { return one(a.args[0].clone()) };
+    let iv = a.args[0].clone();
+    let basis: Vec<Elem> = y.basis().into_iter().filter(|g| g.mpoly_len() > 0).collect();
+    one(meet_all(&r, basis.iter().map(|g| Ok(saturate(it, &iv, g)?.0)))?)
+}
+
+/// `Saturation(I)`: the saturation by the ideal of the variables, the
+/// intersection of the saturations by each (by Bayer's method).
+fn saturation(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let (r, x) = operand_arg(a, 0);
+    let Some(x) = x else { return one(a.args[0].clone()) };
+    one(meet_all(&r, (0..x.poly_ring().ngens()).map(|i| Ok(bayer(&a.args[0], i)?.0)))?)
+}
+
 pub fn register(it: &mut Interp) {
     it.def("Ideal", "B::[RngMPolElt] -> RngMPol", "The ideal generated by the polynomials B, with basis B.", ideal_from);
     it.def("Ideal", "B::{RngMPolElt} -> RngMPol", "The ideal generated by the polynomials B, with basis B.", ideal_from);
@@ -1050,6 +1407,17 @@ pub fn register(it: &mut Interp) {
     it.def("HasGrevlexOrder", "I::RngMPol -> BoolElt", "Whether the monomial order of the ideal I is grevlex.", has_grevlex_order);
     it.def("IsInRadical", "f::RngMPolElt, I::RngMPol -> BoolElt", "Whether f is in the radical of the ideal I.", is_in_radical);
     it.def("JacobianIdeal", "f::RngMPolElt -> RngMPol, Map", "The ideal generated by the partial derivatives of f, and its inclusion.", jacobian_ideal);
+    for name in ["ColonIdeal", "IdealQuotient"] {
+        it.def(name, "I::RngMPol, J::RngMPol -> RngMPol", "The colon ideal I : J of the polynomials f with f J in I.", colon_ideal);
+        let doc = "The saturation I : f^∞ of the ideal I, and if asked for, the least s with I : f^s = I : f^∞.";
+        it.def(name, "I::RngMPol, f::RngMPolElt -> RngMPol, RngIntElt", doc, colon_element);
+    }
+    for name in ["ColonIdealEquivalent", "Saturation"] {
+        let doc = "The saturation I : f^∞ of the ideal I and a product g of powers of the factors of f with I : g = I : f^∞.";
+        it.def(name, "I::RngMPol, f::RngMPolElt -> RngMPol, RngMPolElt", doc, colon_ideal_equivalent);
+    }
+    it.def("Saturation", "I::RngMPol, J::RngMPol -> RngMPol", "The saturation I : J^∞ of the ideal I by the ideal J.", saturation_by);
+    it.def("Saturation", "I::RngMPol -> RngMPol", "The saturation of the ideal I by the ideal of the variables.", saturation);
 }
 
 #[cfg(test)]

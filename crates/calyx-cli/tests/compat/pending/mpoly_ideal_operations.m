@@ -4,8 +4,8 @@
 // line on homogeneity and dimension, and the Groebner basis in the ring's
 // order, which replaces the basis.
 
-// H116E1 but ColonIdeal (the intersection is compared rather than printed:
-// its basis depends on the algorithm).
+// H116E1, but M is not printed: Magma finds weights for the grevlex order
+// of its basis where calyx finds none.
 P<x,y,z> := PolynomialRing(RationalField(), 3);
 I := ideal<P | x*y - 1, x^3*z^2 - y^2, x*z^3 - x - 1>;
 J := ideal<P | x*y - 1, x^2*z - y, x*z^3 - x - 1>;
@@ -14,7 +14,9 @@ A;
 M := I meet J;
 A eq M;
 QuotientDimension(A);
+ColonIdeal(I, J);
 I;
+J;
 
 // H116E2 (the element operations but NormalForm).
 P<x, y, z> := PolynomialRing(RationalField(), 3);
@@ -143,7 +145,8 @@ P subset I, I subset P, P subset P, I subset I;
 I notsubset ideal<P | x, y>, ideal<P | x^2 + y> subset I, ideal<P | x^2 + y> notsubset I;
 ideal<P | x*z + y^2> subset I, ideal<P | x*z + y^2, x> subset I, ideal<P | > subset I, I subset ideal<P | >;
 
-// Intersections.
+// Intersections: the reduced Groebner basis in grevlex, weighted when
+// weights make the basis of the first ideal homogeneous.
 I := ideal<P | x^2, x*y>; J := ideal<P | y^2>; M := I meet J; show(I); show(J); M;
 I := ideal<P | x^2, x*y>; J := ideal<P | y^2, x*z>; I meet J;
 I := ideal<P | x^2, x*y>; I meet P; P meet I; P meet P;
@@ -153,8 +156,24 @@ I meet ideal<P | >;
 ideal<P | x - 1> meet ideal<P | x - 2>;
 ideal<P | x - 1, y> meet ideal<P | x - 2, y>;
 I := ideal<P | x^2 + y, x*y - z>; J := ideal<P | x - y>;
-M := I meet J; M subset I, M subset J, I * J subset M;
-M eq ideal<P | x^3 - x*y + x*z - y^2 + y*z, x^2*y - x*y + y^2, x^2*z - x*y + y*z>;
+M := I meet J; M; M subset I, M subset J, I * J subset M;
+J meet I;
+show(ideal<P | x^3 + y, x^2*z> meet ideal<P | z>);
+show(ideal<P | x^2 + y, x*y> meet ideal<P | z>);
+show(ideal<P | x^2 + y, z> meet ideal<P | y^2, x*z>);
+show(ideal<P | x> meet ideal<P | y, z^2>);
+show(ideal<P | x^2, y^3> meet ideal<P | x*y>);
+show(ideal<P | x - 1, y^2 - 1, z> meet ideal<P | x - 2, y, z^2 - 3>);
+show(ideal<P | x^2 + y, x*y - z, z^2 - x> meet ideal<P | x - 1, y + 1, z - 1>);
+A := ideal<P | x^2 + y, x*y - z>; B := ideal<P | x^2 + y, x*y - z>; show(A meet B); show(A); show(B);
+show(A meet A); show(A meet ideal<P | 1>); show(ideal<P | 1> meet A); show(A meet ideal<P | 2>); show(ideal<P | 2> meet A);
+show(A meet ideal<P | 1, x>); show(A meet ideal<P | x - x>);
+A := ideal<P | x^2 + y, x*y - z>; _ := x in A; show(A meet ideal<P | x>); show(A meet ideal<P | x> meet ideal<P | y>);
+W<u, v, w> := PolynomialRing(RationalField(), [1, 2, 3]);
+show(ideal<W | u, v> meet ideal<W | w>);
+show(ideal<W | u^3 + w, v> meet ideal<W | u>);
+show(ideal<W | u^2 + v, u*v> meet ideal<W | w + u^3>);
+show(ideal<W | u^2 + v, u*v + w> meet ideal<W | w, v>);
 
 // Predicates and dimensions.
 IsProper(ideal<P | x^2 + y, x*y - z>), IsProper(ideal<P | x, x + 1>), IsProper(ideal<P | >), IsProper(P);
@@ -195,3 +214,172 @@ I := ideal<R | s^2 - r, t^3 - r*s>;
 s^2 in I, r*s^4 in I, s in I;
 QuotientDimension(I);
 I meet ideal<R | s>;
+
+// Colon ideals: I : g for each g in the Groebner basis of J (which J
+// keeps), in the easy order of I, which I then keeps; I itself if I : g is
+// I, and I is then left as it was; for several g, their intersection.
+P<x, y, z> := PolynomialRing(RationalField(), 3);
+col := procedure(I, J)
+    C := ColonIdeal(I, J);
+    show(C); show(I); show(J);
+end procedure;
+col(ideal<P | x^2 + y, x*y - z>, ideal<P | x>);
+col(ideal<P | x^2 + y, x*y - z>, ideal<P | x^2>);
+col(ideal<P | x*y, x*z>, ideal<P | y>);
+col(ideal<P | x*y, x*z>, ideal<P | y, z>);
+col(ideal<P | x*y, x*z>, ideal<P | y + z, y*z>);
+col(ideal<P | x*y, x*z>, ideal<P | x + y>);
+col(ideal<P | x*y, x*z>, ideal<P | x, y + 1>);
+col(ideal<P | x*y, x*z>, ideal<P | y + 1, z>);
+col(ideal<P | x^2 + y, x*y>, ideal<P | x>);
+col(ideal<P | x^2 + y, x*y - z, z^2 - x>, ideal<P | y>);
+col(ideal<P | x^3 - x*y, x^2*z - y*z>, ideal<P | x^2 - y>);
+col(ideal<P | (x^2 + y)*(x - 1), (x^2 + y)*(z + 2)>, ideal<P | x^2 + y>);
+col(ideal<P | (x^2 + y)*(x - 1), (x^2 + y)*(z + 2)>, ideal<P | x - 1, z + 2>);
+col(ideal<P | x^2 + y, x*y - z>, ideal<P | x, z>);
+col(ideal<P | x^2 + y, x*y - z>, ideal<P | x + 1, z + 1>);
+col(ideal<P | x^3 + y, x^2*z>, ideal<P | z>);
+col(ideal<P | x^2, y^3>, ideal<P | x*y>);
+col(ideal<P | x^2 + z, y^3>, ideal<P | x*y>);
+col(ideal<P | x^2, y^3>, ideal<P | x*y, x^2*y>);
+col(ideal<P | x^2, y^3>, ideal<P | x, y>);
+col(ideal<P | x^2 - y^2, x*z>, ideal<P | x - y>);
+col(ideal<P | x^2*y, x*y^2>, ideal<P | x*y>);
+col(ideal<P | x^2, x*y>, ideal<P | x^2, x*y>);
+I := ideal<P | x^2, x*y>; ColonIdeal(I, P); ColonIdeal(P, I); ColonIdeal(I, ideal<P | >); ColonIdeal(P, P);
+IdealQuotient(ideal<P | x^2, y>, ideal<P | 2>); IdealQuotient(ideal<P | x, y>, ideal<P | 1>);
+ColonIdeal(ideal<P | >, ideal<P | x>); ColonIdeal(ideal<P | 0>, ideal<P | x, y>); ColonIdeal(ideal<P | 1>, ideal<P | x>);
+C := ColonIdeal(ideal<P | x^2, y^3>, ideal<P | x*y>); _ := x in C; show(C); _ := C eq ideal<P | x, y^2>; show(C);
+C := ColonIdeal(ideal<P | x^3 + y, x^2*z>, ideal<P | z>); _ := x in C; show(C); _ := C eq ideal<P | x^2, y>; show(C);
+W<u, v, w> := PolynomialRing(RationalField(), [1, 2, 3]);
+col(ideal<W | u^2 + v, u*v>, ideal<W | u>);
+col(ideal<W | u^3, u*v>, ideal<W | u^2>);
+
+// H116E1: I : g is I for two of the three g, and the ideal [1] for the other.
+I := ideal<P | x*y - 1, x^3*z^2 - y^2, x*z^3 - x - 1>;
+J := ideal<P | x*y - 1, x^2*z - y, x*z^3 - x - 1>;
+_ := ColonIdeal(I, J);
+for g in Basis(J) do
+    I := ideal<P | x*y - 1, x^3*z^2 - y^2, x*z^3 - x - 1>; C := ColonIdeal(I, ideal<P | g>); show(C); show(I);
+end for;
+I := ideal<P | x*y - 1, x^3*z^2 - y^2, x*z^3 - x - 1>;
+C := ColonIdeal(I, J); _ := I eq ideal<P | x>; show(C);
+
+// Saturation by a polynomial: with one return value by its irreducible
+// factors in turn, by Bayer's method for variables (the Groebner basis with
+// the variable the least in grevlex, each polynomial divided by the highest
+// power of it, after homogenizing an inhomogeneous ideal) and by colons for
+// the others; with two by colons, and their number.
+sat := procedure(I, f)
+    C := ColonIdeal(I, f);
+    show(C); show(I);
+end procedure;
+sat(ideal<P | x^2*y, x^3*z>, x);
+sat(ideal<P | x^2*y + z^3, x^3*z>, x);
+sat(ideal<P | x^2*y + z^3, y^3*z>, y);
+sat(ideal<P | x^2*y + z^3, x*z^3>, z);
+sat(ideal<P | x*y^2 + z^3, x^3*z, y^4>, x);
+sat(ideal<P | x^2*y, x*y^2*z>, y);
+sat(ideal<P | x^2 + y^2 + z^2, x*y + y*z + z*x>, x);
+sat(ideal<P | x^2*y - z, x^3*z>, x);
+sat(ideal<P | x*y - z, x*z - y>, x);
+sat(ideal<P | x*y - 1, x^2*z>, x);
+sat(ideal<P | x*z - x, x*y + x, y^2 - 1>, x);
+sat(ideal<P | x*z - x, x*y + x, y^2 - 1>, y);
+sat(ideal<P | x^2*z - x, x*y^2 + x, y^3 - 1>, x);
+sat(ideal<P | x^2 + y, x*y + 1>, x);
+sat(ideal<P | x^2*z + y*z, x*y*z + z>, z);
+sat(ideal<P | x^3*z + y*z, x^2*z>, z);
+sat(ideal<P | x^2*y + z, x*z^2 + y^3>, y);
+sat(ideal<P | x^2*y + z, x*z^2 + y^3>, x);
+sat(ideal<P | x^2*y + z, x*z^2 + y^3>, x*y);
+sat(ideal<P | x^2*y, x*z^2 + y^3>, x*y);
+sat(ideal<P | x*y, x*z>, x*y);
+sat(ideal<P | x*y, x*z>, x + y);
+sat(ideal<P | (z + 1)*x, (z + 1)*y^2>, z + 1);
+sat(ideal<P | (x + z)*x, (x + z)*y^2>, x + z);
+sat(ideal<P | (x + 1)^2*y, (x + 1)^3*z>, x + 1);
+sat(ideal<P | (x^2 + y)*(x - 1), (x^2 + y)*(z + 2)>, x^2 + y);
+sat(ideal<P | x^2*y*(z + 1), x*(z + 1)^2>, x*(z + 1));
+sat(ideal<P | x^2*y*(z + 1), x*(z + 1)^2>, (z + 1)*x^2);
+sat(ideal<P | x^2*y, x^3*z>, -3*x);
+sat(ideal<P | x^2*y, x^3*z>, x^2);
+ColonIdeal(ideal<P | x^2*y, x^3*z>, P!2);
+ColonIdeal(ideal<P | x^2*y, x^3*z>, P!0);
+ColonIdeal(ideal<P | >, x);
+ColonIdeal(P, x);
+satn := procedure(I, f)
+    C, s := ColonIdeal(I, f);
+    show(C); show(I); s;
+end procedure;
+satn(ideal<P | x^2*y, x^3*z>, x);
+satn(ideal<P | x^2 + y, x*y - z>, x);
+satn(ideal<P | x^3*y^2, x*y^4 + z^5>, x*y);
+satn(ideal<P | (z + 1)*x, (z + 1)*y^2>, z + 1);
+satn(ideal<P | (x^2 + y)*(x - 1), (x^2 + y)*(z + 2)>, x^2 + y);
+satn(ideal<P | x*y, x*z>, x + y);
+satn(ideal<P | x^3 + y, x^2*z>, z);
+satn(ideal<P | x^2*y, x*y^2*z>, y);
+satn(ideal<P | x*y - 1, x^2*z>, x);
+satn(ideal<P | x^2 + y^2 + z^2, x*y + y*z + z*x>, x);
+C, s := ColonIdeal(ideal<P | x^2*y, x^3*z>, P!0); C; s;
+C, s := IdealQuotient(ideal<P | x^2*y, x^3*z>, P!2); show(C); s;
+C, s := ColonIdeal(ideal<P | >, x); show(C); s;
+
+// ColonIdealEquivalent and Saturation(I, f): the saturation, and the
+// product of the powers of the factors of f that it took.
+eqv := procedure(I, f)
+    C, g := ColonIdealEquivalent(I, f);
+    show(C); show(I); g;
+end procedure;
+eqv(ideal<P | x^2*y, x^3*z>, x^5);
+eqv(ideal<P | x^2*y, x^3*z>, x^5*y);
+eqv(ideal<P | x^2*y^3, x^3*z>, (x*y)^2);
+eqv(ideal<P | x^2*y, x^3*z>, x^2*z^2);
+eqv(ideal<P | x^2*y, x*y^2>, x*y);
+eqv(ideal<P | x^2*y, x*y^2, z>, x*y);
+eqv(ideal<P | x*y^2, x^2*z>, x*y);
+eqv(ideal<P | x^3*y, x*y^3, z>, y*x);
+eqv(ideal<P | x^3*y, x*y^3>, x^2*y^2);
+eqv(ideal<P | x^2*y, x*z^2 + y^3>, x*y);
+eqv(ideal<P | (x + 1)^2*y, (x + 1)*z>, (x + 1)^3*y);
+eqv(ideal<P | x^2 + y, x*y - z>, x);
+eqv(ideal<P | x^2*y*(z + 1), x*(z + 1)^2>, x*(z + 1));
+eqv(ideal<P | (z + 1)*x, (z + 1)*y^2>, (z + 1)^2);
+eqv(ideal<P | x*y, x*z>, x + y);
+eqv(ideal<P | >, x);
+C, g := Saturation(ideal<P | x^3 + y, x^2*z>, z^2*(z + 1)); show(C); g;
+C, g := ColonIdealEquivalent(ideal<P | x^2*y, x^3*z>, P!(-3)); show(C); g;
+C, g := ColonIdealEquivalent(ideal<P | x^2*y, x^3*z>, P!0); show(C); g;
+ColonIdealEquivalent(ideal<P | x^2*y, x^3*z>, x);
+ColonIdealEquivalent(ideal<P | x^2*y, x^3*z>, P!0);
+
+// Saturation by an ideal: the intersection of the saturations by the
+// non-zero polynomials of its basis; by the ideal of the variables, of the
+// saturations by each variable.
+show(Saturation(ideal<P | x^2*y, x^3*z>, ideal<P | x, y>));
+show(Saturation(ideal<P | x^2*y, x*y*z^2>, ideal<P | x*y>));
+show(Saturation(ideal<P | x^2*y, x*y*z^2>, ideal<P | x*y, z>));
+show(Saturation(ideal<P | x^2*y, x*y*z^2>, ideal<P | x*y + z, z>));
+show(Saturation(ideal<P | x^2*y, x^3*z>, ideal<P | 1, x>));
+show(Saturation(ideal<P | x^2*y, x^3*z>, ideal<P | x^2, x*y>));
+show(Saturation(ideal<P | x^2*y, x^3*z>, ideal<P | 0, x*y>));
+show(Saturation(ideal<P | x^2*y, x*y*z^2>, P));
+Saturation(ideal<P | x^2*y, x*y*z^2>, ideal<P | >);
+I := ideal<P | (z + 1)*x, (z + 1)*y^2>; C := Saturation(I, ideal<P | z + 1>); show(C); show(I);
+I := ideal<P | x^3 + y, x^2*z>; C := Saturation(I, ideal<P | x, z>); show(C); show(I);
+I := ideal<P | x^2 + y, x*y - z>; C := Saturation(I, ideal<P | x, z>); show(C); show(I);
+I := ideal<P | x^2*y, x^3*z>; J := ideal<P | x^2, x*y>; _ := Saturation(I, J); show(J);
+for B in [[x^2, x*y], [x^2*y, x*y^2, x*y*z], [x*y - z^2, x^3], [x^2 - y*z, x*y], [x^3 + y, x^2*z], [x*y - 1, x^2*z],
+          [x^2 + y^2 + z^2, x*y + y*z + z*x], [P | ], [P | 1]] do
+    I := Ideal(B); C := Saturation(I); show(C); show(I);
+end for;
+Saturation(P);
+
+// Errors.
+Q<a, b> := PolynomialRing(RationalField(), 2);
+ColonIdeal(ideal<P | x>, ideal<Q | a>);
+ColonIdeal(ideal<P | x>, a);
+ColonIdeal(ideal<P | x>, 2);
+ColonIdealEquivalent(ideal<P | x>, a);
+Saturation(ideal<P | x>, ideal<Q | a>);
