@@ -17,7 +17,7 @@ use calyx_flint::mat::Mat;
 use calyx_flint::{Integer, Rational};
 
 use super::spaces::subspace;
-use super::{Mtrx, Shape, like, mat_arg, mat_value, over_ring_of, parent, vec_value};
+use super::{Mtrx, Shape, like, mat_arg, mat_value, over_ring_of, parent, square, vec_value};
 use crate::error::{RResult, RuntimeError};
 use crate::intrinsics::{boolv, intv, one};
 use crate::interp::{CallArgs, Interp};
@@ -28,14 +28,6 @@ fn gr(e: GrError) -> RuntimeError {
 }
 
 /// Argument i, a square matrix.
-fn square(a: &CallArgs, i: usize) -> RResult<Rc<Mtrx>> {
-    let m = mat_arg(a, i)?;
-    if m.m.nrows() != m.m.ncols() {
-        return Err(RuntimeError::runtime(format!("Argument {} is not square", i + 1)));
-    }
-    Ok(m.clone())
-}
-
 /// The kinds of rings the linear algebra here knows.
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {

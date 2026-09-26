@@ -21,6 +21,7 @@ mod blocks;
 mod change;
 mod creation;
 mod linalg;
+mod predicates;
 mod print;
 mod spaces;
 
@@ -382,6 +383,15 @@ fn mat_arg(a: &CallArgs, i: usize) -> RResult<&Rc<Mtrx>> {
     }
 }
 
+/// Argument i as a square matrix.
+fn square(a: &CallArgs, i: usize) -> RResult<Rc<Mtrx>> {
+    let m = mat_arg(a, i)?;
+    if m.m.nrows() != m.m.ncols() {
+        return Err(RuntimeError::runtime(format!("Argument {} is not square", i + 1)));
+    }
+    Ok(m.clone())
+}
+
 /// Register the intrinsics of the chapter.
 pub fn register(it: &mut Interp) {
     creation::register(it);
@@ -390,5 +400,6 @@ pub fn register(it: &mut Interp) {
     change::register(it);
     arith::register(it);
     linalg::register(it);
+    predicates::register(it);
     spaces::register(it);
 }

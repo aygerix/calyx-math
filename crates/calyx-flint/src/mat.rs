@@ -184,6 +184,33 @@ impl Mat {
         Truth::from_raw(unsafe { sys::gr_mat_is_zero(&self.raw, self.ctx.ptr()) })
     }
 
+    pub fn is_one(&self) -> Truth {
+        Truth::from_raw(unsafe { sys::gr_mat_is_one(&self.raw, self.ctx.ptr()) })
+    }
+
+    pub fn is_neg_one(&self) -> Truth {
+        Truth::from_raw(unsafe { sys::gr_mat_is_neg_one(&self.raw, self.ctx.ptr()) })
+    }
+
+    /// Whether a square matrix is a multiple of the identity.
+    pub fn is_scalar(&self) -> Truth {
+        Truth::from_raw(unsafe { sys::gr_mat_is_scalar(&self.raw, self.ctx.ptr()) })
+    }
+
+    pub fn is_diagonal(&self) -> Truth {
+        Truth::from_raw(unsafe { sys::gr_mat_is_diagonal(&self.raw, self.ctx.ptr()) })
+    }
+
+    /// Whether the entries below the diagonal are zero.
+    pub fn is_upper_triangular(&self) -> Truth {
+        Truth::from_raw(unsafe { sys::gr_mat_is_upper_triangular(&self.raw, self.ctx.ptr()) })
+    }
+
+    /// Whether the entries above the diagonal are zero.
+    pub fn is_lower_triangular(&self) -> Truth {
+        Truth::from_raw(unsafe { sys::gr_mat_is_lower_triangular(&self.raw, self.ctx.ptr()) })
+    }
+
     /// The number of entries that are not zero.
     pub fn count_nonzero(&self) -> usize {
         let mut n = 0;
