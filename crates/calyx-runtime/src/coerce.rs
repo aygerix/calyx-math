@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use calyx_flint::{Rational, Real, bits_for_digits};
+use calyx_flint::Rational;
 use calyx_syntax::ast::AggKind;
 
 use crate::error::{RResult, RuntimeError};
@@ -20,7 +20,8 @@ impl Interp {
             Value::Bool(_) => Value::booleans(),
             Value::Int(_) => Value::integers(),
             Value::Rat(_) => Value::rationals(),
-            Value::Real(r) => Value::reals(r.digits),
+            Value::Real(r) => Value::reals(r.x.prec()),
+            Value::Complex(c) => self.complex_field(c.prec()),
             Value::Str(_) => Value::strings(),
             Value::Seq(s) if s.fact => Value::structure(StructKind::PowerStructure(t::RNG_INT_ELT_FACT)),
             Value::Seq(s) => Value::structure(StructKind::PowerSeq(s.universe.clone())),
@@ -188,15 +189,15 @@ impl Interp {
                     Value::Rat(_) => Ok(Ok(x.clone())),
                     _ => fail(),
                 },
-                StructKind::Reals(d) => {
-                    let bits = bits_for_digits(*d as u64);
+                StructKind::Reals(bits) => {
                     let r = match x {
-                        Value::Int(i) => Real::from_integer(i, bits),
-                        Value::Rat(q) => Real::from_rational(q, bits),
-                        Value::Real(r) => r.x.round_to(bits),
-                        _ => return fail(),
+                        Value::Complex(c) if c.im.is_zero() => c.re.round_to(*bits),
+                        _ => match crate::intrinsics::reals::to_real(x, *bits) {
+                            Some(r) => r,
+                            None => return fail(),
+                        },
                     };
-                    Ok(Ok(Value::real(r, *d)))
+                    Ok(Ok(Value::real(r)))
                 }
                 StructKind::Booleans => match x {
                     Value::Bool(_) => Ok(Ok(x.clone())),

@@ -6,7 +6,7 @@ use calyx_flint::gr::{CtxKind, Elem, MonomialOrder, Truth};
 use super::{Elt, Ring, RingKind};
 use crate::error::RResult;
 use crate::interp::Interp;
-use crate::print::{Level, format_real};
+use crate::print::Level;
 use crate::value::Value;
 
 /// One term `coef*mono` of a sum, with Magma's conventions for unit and
@@ -183,19 +183,10 @@ pub fn format_ring_elt(it: &mut Interp, e: &Elt, level: Level) -> RResult<String
             }
             join_terms(&terms)
         }
-        RingKind::Complex(d) => {
+        // Complex numbers are `Value::Complex`, not ring elements.
+        RingKind::Complex(_) => {
             let (re, im) = e.x.to_complex_parts().unwrap();
-            let name = ring.gen_name(1);
-            let rs = format_real(&re, *d);
-            if im.is_zero() {
-                return Ok(rs);
-            }
-            let is = format_real(&im.abs(), *d);
-            let neg = im.sign() < 0;
-            if re.is_zero() {
-                return Ok(format!("{}{is}*{name}", if neg { "-" } else { "" }));
-            }
-            format!("{rs} {} {is}*{name}", if neg { "-" } else { "+" })
+            crate::intrinsics::complex::format_complex(it, &calyx_flint::Complex::new(re, im), level)
         }
     })
 }
@@ -234,7 +225,7 @@ impl Interp {
                         MonomialOrder::DegRevLex => format!("PolynomialRing({b}, {rank}, \"grevlex\")"),
                     }
                 }
-                RingKind::Complex(d) => format!("ComplexField({d})"),
+                RingKind::Complex(b) => format!("ComplexField({})", calyx_flint::digits_for_bits(*b)),
             }]);
         }
         let minimal = level == Level::Minimal;
@@ -269,7 +260,7 @@ impl Interp {
                 let m = self.format_res_modulus(r, modulus)?;
                 vec![format!("Univariate Quotient Polynomial Algebra in {} over {b}", r.gen_name(1)), format!("with modulus {m}")]
             }
-            RingKind::Complex(d) => vec![format!("Complex field of precision {d}")],
+            RingKind::Complex(b) => vec![format!("Complex field of precision {}", calyx_flint::digits_for_bits(*b))],
         })
     }
 

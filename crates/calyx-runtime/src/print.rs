@@ -147,7 +147,7 @@ impl Printer {
 /// Whether an element prints on one line inside an aggregate.
 fn is_simple(v: &Value) -> bool {
     match v {
-        Value::Int(_) | Value::Rat(_) | Value::Real(_) | Value::Bool(_) | Value::Str(_) | Value::Cat(_) | Value::ECat(_) | Value::Undef | Value::Intr(_) | Value::Infinity(_) => true,
+        Value::Int(_) | Value::Rat(_) | Value::Real(_) | Value::Complex(_) | Value::Bool(_) | Value::Str(_) | Value::Cat(_) | Value::ECat(_) | Value::Undef | Value::Intr(_) | Value::Infinity(_) => true,
         Value::Tuple(t) => t.elems.iter().all(is_simple),
         Value::List(_) => true,
         Value::CopElt(c) => is_simple(&c.value),
@@ -334,10 +334,11 @@ impl Interp {
             }
             Value::Int(i) => p.atom(&i.to_string(), true),
             Value::Rat(q) => p.atom(&q.to_string(), true),
-            Value::Real(r) => match r.fixed {
-                Some(d) => p.write(&r.x.to_string_fixed(d as usize)),
-                None => p.write(&format_real(&r.x, r.digits)),
-            },
+            Value::Real(r) => p.atom(&crate::intrinsics::reals::format_real(r, p.level), true),
+            Value::Complex(c) => {
+                let s = crate::intrinsics::complex::format_complex(self, c, p.level);
+                p.write(&s);
+            }
             Value::Str(s) => {
                 if p.level == Level::Magma {
                     p.no_wrap = true;
@@ -714,7 +715,7 @@ impl Interp {
             match &s.kind {
                 StructKind::Integers => return Ok(p.write("IntegerRing()")),
                 StructKind::Rationals => return Ok(p.write("RationalField()")),
-                StructKind::Reals(d) => return Ok(p.write(&format!("RealField({d})"))),
+                StructKind::Reals(b) => return Ok(p.write(&format!("RealField({})", calyx_flint::digits_for_bits(*b)))),
                 StructKind::Booleans => return Ok(p.write("Booleans()")),
                 StructKind::Strings => return Ok(p.write("Strings()")),
                 StructKind::PowerSet(Some(u)) | StructKind::PowerSeq(Some(u)) | StructKind::PowerISet(Some(u)) | StructKind::PowerMSet(Some(u)) => {
@@ -750,7 +751,7 @@ impl Interp {
             StructKind::Rationals => p.write("Rational Field"),
             // Real and complex fields print their name at the minimal level.
             StructKind::Reals(_) if p.level == Level::Minimal && s.name.borrow().is_some() => p.write(&group_name(s)),
-            StructKind::Reals(d) => p.write(&format!("Real field of precision {d}")),
+            StructKind::Reals(b) => p.write(&format!("Real field of precision {}", calyx_flint::digits_for_bits(*b))),
             StructKind::Booleans => p.write("Boolean Structure"),
             StructKind::Strings => p.write("String structure"),
             StructKind::PowerSet(u) => {
@@ -1030,11 +1031,6 @@ pub fn wrap_text_output(text: &str, start_col: usize, width: usize) -> String {
     let mut p = Printer::new(start_col, width, Level::Default);
     p.write(text);
     p.buf
-}
-
-/// A real number with `digits` significant digits, as Magma prints it.
-pub fn format_real(x: &calyx_flint::Real, digits: u32) -> String {
-    x.to_string_digits(digits as u64)
 }
 
 /// Drop trailing zeros (and a trailing point) from a real's digits.

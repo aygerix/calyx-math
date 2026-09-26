@@ -291,13 +291,7 @@ impl Interp {
                 Value::Int(i) => Elem::from_integer(&ctx, i).ok(),
                 Value::Rat(q) => Elem::from_rational(&ctx, q).ok(),
                 Value::Real(re) => Elem::from_real(&ctx, &re.x).ok(),
-                Value::Elt(e) => match &e.ring().kind {
-                    RingKind::Complex(_) => {
-                        let (re, im) = e.x.to_complex_parts().unwrap();
-                        Elem::from_complex_parts(&ctx, &re, &im).ok()
-                    }
-                    _ => None,
-                },
+                Value::Complex(c) => Elem::from_complex_parts(&ctx, &c.re, &c.im).ok(),
                 _ => None,
             }),
         }
@@ -345,6 +339,9 @@ impl Interp {
     /// Coerce into a ring structure `s` (the `!` operator for rings).
     pub fn coerce_into_ring(&mut self, st: &Rc<Struct>, x: &Value) -> RResult<Result<Value, Option<String>>> {
         if let StructKind::Ring(r) = &st.kind {
+            if let RingKind::Complex(bits) = r.kind {
+                return Ok(crate::intrinsics::complex::coerce_complex(x, bits));
+            }
             if let Some(s) = r.small {
                 match x {
                     Value::Int(i) => return Ok(Ok(Value::Small(s, s.modulus().reduce_integer(i)))),
@@ -402,18 +399,6 @@ impl Interp {
                     RingKind::Residue(_) | RingKind::Finite(_) if matches!(target, StructKind::Rationals) => return None,
                     RingKind::Residue(_) => e.residue()?,
                     RingKind::Finite(_) => e.residue()?,
-                    RingKind::Complex(_) => {
-                        let (re, im) = e.x.to_complex_parts()?;
-                        if !im.is_zero() {
-                            return None;
-                        }
-                        let q = re.to_rational()?;
-                        return match target {
-                            StructKind::Integers if q.is_integral() => Some(Value::Int(q.numerator())),
-                            StructKind::Rationals => Some(Value::rat(q)),
-                            _ => None,
-                        };
-                    }
                     _ => return None,
                 };
                 Some(match target {
@@ -421,16 +406,6 @@ impl Interp {
                     _ => Value::rat(calyx_flint::Rational::from_integer(&i)),
                 })
             }
-            StructKind::Reals(d) => match &e.ring().kind {
-                RingKind::Complex(_) => {
-                    let (re, im) = e.x.to_complex_parts()?;
-                    if !im.is_zero() {
-                        return None;
-                    }
-                    Some(Value::real(re.round_to(calyx_flint::bits_for_digits(*d as u64)), *d))
-                }
-                _ => None,
-            },
             _ => None,
         }
     }

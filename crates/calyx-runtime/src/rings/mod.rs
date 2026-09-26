@@ -19,7 +19,7 @@ use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 use calyx_flint::gr::{Ctx, CtxKind, Elem, GrError, MonomialOrder, Truth};
-use calyx_flint::{Integer, bits_for_digits};
+use calyx_flint::Integer;
 use rustc_hash::{FxHashMap, FxHasher};
 
 use crate::error::{RResult, RuntimeError};
@@ -61,8 +61,8 @@ pub enum RingKind {
     /// field). The elements are the remainders modulo `f`, in the context
     /// of `P`.
     UPolyRes { base: Value, preimage: Rc<Struct>, modulus: Elem },
-    /// The complex field with the given decimal precision.
-    Complex(u32),
+    /// The complex field with the given precision in bits.
+    Complex(u64),
 }
 
 pub struct FiniteField {
@@ -256,6 +256,11 @@ pub fn make_elt(parent: &Rc<Struct>, x: Elem) -> Value {
         if let Some(s) = r.small {
             return Value::Small(s, x.to_word().expect("a word-sized ring with a non-word element"));
         }
+        // Complex numbers have their own values.
+        if let RingKind::Complex(_) = r.kind {
+            let (re, im) = x.to_complex_parts().expect("a complex field element");
+            return Value::complex(re, im);
+        }
     }
     Value::Elt(Rc::new(Elt { parent: parent.clone(), x }))
 }
@@ -285,12 +290,12 @@ pub struct RingCache {
     residue: FxHashMap<Integer, Value>,
     finite: FxHashMap<(Integer, u64), Value>,
     upoly: FxHashMap<String, Value>,
-    complex: FxHashMap<u32, Value>,
+    complex: FxHashMap<u64, Value>,
     /// Ideals of the integers by generator.
     pub(crate) ideals: FxHashMap<Integer, Value>,
     /// Ideals of residue class rings by ring and generator.
     pub(crate) res_ideals: FxHashMap<(u64, Integer), Value>,
-    reals: FxHashMap<u32, Rc<Ctx>>,
+    reals: FxHashMap<u64, Rc<Ctx>>,
 }
 
 impl Interp {
@@ -387,14 +392,14 @@ impl Interp {
         Ok(self.new_ring(RingKind::MPoly { base: base.clone(), rank, order }, ctx))
     }
 
-    /// The complex field with `digits` decimal digits of precision.
-    pub fn complex_field(&mut self, digits: u32) -> Value {
-        if let Some(c) = self.rings.complex.get(&digits) {
+    /// The complex field with the given precision in bits.
+    pub fn complex_field(&mut self, bits: u64) -> Value {
+        if let Some(c) = self.rings.complex.get(&bits) {
             return c.clone();
         }
-        let ctx = Ctx::complex_float(bits_for_digits(digits as u64));
-        let c = self.new_ring(RingKind::Complex(digits), ctx);
-        self.rings.complex.insert(digits, c.clone());
+        let ctx = Ctx::complex_float(bits);
+        let c = self.new_ring(RingKind::Complex(bits), ctx);
+        self.rings.complex.insert(bits, c.clone());
         c
     }
 
@@ -451,9 +456,9 @@ impl Interp {
         Ok(out)
     }
 
-    /// The FLINT context for the reals with the given decimal precision.
-    pub fn real_ctx(&mut self, digits: u32) -> Rc<Ctx> {
-        self.rings.reals.entry(digits).or_insert_with(|| Ctx::real_float(bits_for_digits(digits as u64))).clone()
+    /// The FLINT context for the reals with the given precision in bits.
+    pub fn real_ctx(&mut self, bits: u64) -> Rc<Ctx> {
+        self.rings.reals.entry(bits).or_insert_with(|| Ctx::real_float(bits)).clone()
     }
 
     /// The FLINT context whose elements represent the elements of the
@@ -477,8 +482,8 @@ impl Interp {
             Value::Struct(st) => match &st.kind {
                 StructKind::Integers => Value::Int(e.to_integer().unwrap_or_default()),
                 StructKind::Rationals => Value::rat(e.to_rational().unwrap_or_default()),
-                StructKind::Reals(d) => match e.to_real() {
-                    Some(r) => Value::real(r, *d),
+                StructKind::Reals(_) => match e.to_real() {
+                    Some(r) => Value::real(r),
                     None => Value::Undef,
                 },
                 StructKind::Ring(_) => make_elt(st, e),

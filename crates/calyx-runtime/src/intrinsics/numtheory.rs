@@ -1,9 +1,8 @@
 //! Primes, modular arithmetic, residue symbols, norm equations and
 //! Dickman's rho function.
 
-use calyx_flint::{Integer, Real, bits_for_digits};
+use calyx_flint::{Integer, Real};
 
-use super::reals::DEFAULT_DIGITS;
 use super::{arg_ge, arg_le, arg_prime, boolv, intv, one};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
@@ -807,11 +806,11 @@ fn norm_equation_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 /// rho(u) to `digits` decimal digits: on [k-1, k] rho(k - z) is a power
 /// series in z whose coefficients follow from those on [k-2, k-1] by
 /// u rho'(u) = -rho(u - 1).
-fn dickman_rho(u: &Real, digits: u32) -> Real {
-    let bits = bits_for_digits(digits as u64) + 64;
+fn dickman_rho(u: &Real, target: u64) -> Real {
+    let bits = target + 64;
     let one_ = Real::from_integer(&Integer::one(), bits);
     if u.sub(&one_).sign() <= 0 {
-        return one_.round_to(bits_for_digits(digits as u64));
+        return one_.round_to(target);
     }
     let k = u.ceil();
     let kk = k.to_u64().unwrap_or(u64::MAX);
@@ -837,16 +836,16 @@ fn dickman_rho(u: &Real, digits: u32) -> Real {
     for x in c.iter().rev() {
         r = r.mul(&z).add(x);
     }
-    r.round_to(bits_for_digits(digits as u64))
+    r.round_to(target)
 }
 
 fn dickman_rho_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let digits = match &a.args[0] {
-        Value::Real(r) => r.digits,
-        _ => DEFAULT_DIGITS,
+    let target = match &a.args[0] {
+        Value::Real(r) => r.x.prec(),
+        _ => super::reals::default_bits(),
     };
-    let u = super::reals::to_real(&a.args[0], digits).unwrap().round_to(bits_for_digits(digits as u64) + 64);
-    one(Value::real(dickman_rho(&u, digits), digits))
+    let u = super::reals::to_real(&a.args[0], target).unwrap().round_to(target + 64);
+    one(Value::real(dickman_rho(&u, target)))
 }
 
 pub fn register(it: &mut Interp) {

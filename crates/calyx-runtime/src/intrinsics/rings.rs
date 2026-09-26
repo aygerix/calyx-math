@@ -241,26 +241,6 @@ fn base_ring(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     }
 }
 
-// ----- complex fields --------------------------------------------------------
-
-fn complex_field(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let d = if a.args.is_empty() {
-        crate::intrinsics::reals::DEFAULT_DIGITS
-    } else {
-        match &a.args[0] {
-            Value::Struct(s) => match &s.kind {
-                StructKind::Reals(d) => *d,
-                _ => return Err(RuntimeError::runtime("Bad argument types")),
-            },
-            _ => a.usize(0)? as u32,
-        }
-    };
-    if d == 0 {
-        return Err(RuntimeError::runtime("Precision must be positive"));
-    }
-    one(it.complex_field(d))
-}
-
 // ----- generic ring functions -------------------------------------------------
 
 fn ngens(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
@@ -281,13 +261,6 @@ fn generator(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
         RingKind::MPoly { .. } => r.ctx.mpoly_gen(i - 1)?,
         RingKind::Residue(_) => Elem::one(&r.ctx)?,
         RingKind::Finite(f) if f.degree == 1 => Elem::one(&r.ctx)?,
-        RingKind::Complex(_) => {
-            let d = calyx_flint::bits_for_digits(0);
-            let _ = d;
-            let zero = calyx_flint::Real::zero(64);
-            let onef = calyx_flint::Real::from_integer(&Integer::one(), 64);
-            Elem::from_complex_parts(&r.ctx, &zero, &onef)?
-        }
         _ => r.ctx.generator()?,
     };
     one(make_elt(&st, g))
@@ -437,18 +410,18 @@ fn is_unit(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(elt_is_unit(it, &e.ring_rc(), &e.x))
 }
 
-/// Units: non-zero complex numbers, and constant polynomials whose constant
-/// is a unit of the coefficient ring.
+/// Units: constant polynomials whose constant is a unit of the coefficient
+/// ring.
 fn elt_is_unit(it: &mut Interp, ring: &Ring, x: &Elem) -> bool {
     let base_unit = |it: &mut Interp, base: &Value, c: Elem| match crate::rings::small::expand(&it.elem_to_value(base, c)) {
         Value::Int(n) => n.is_one() || (-&n).is_one(),
         Value::Rat(q) => q.sign() != 0,
-        Value::Real(r) => r.x.sign() != 0,
+        Value::Real(r) => !r.x.is_zero(),
+        Value::Complex(c) => !c.is_zero(),
         Value::Elt(e) => elt_is_unit(it, &e.ring_rc(), &e.x),
         _ => false,
     };
     match &ring.kind {
-        RingKind::Complex(_) => x.is_zero() != Truth::True,
         RingKind::UPoly { base, .. } => x.poly_len() == 1 && base_unit(it, base, x.poly_coeff(0)),
         RingKind::MPoly { base, .. } => {
             if x.mpoly_len() != 1 {
@@ -557,11 +530,7 @@ pub fn register(it: &mut Interp) {
         it.def(name, "f::RngMPolElt -> Rng", "The coefficient ring of the parent of f.", base_ring);
     }
 
-    it.def_params("ComplexField", "-> FldCom", &[("Bits", Value::Bool(false))], "The default complex field.", complex_field);
-    it.def_params("ComplexField", "p::RngIntElt -> FldCom", &[("Bits", Value::Bool(false))], "The complex field with p decimal digits of precision.", complex_field);
-    it.def("ComplexField", "R::FldRe -> FldCom", "The complex field containing R.", complex_field);
-
-    for t in ["FldFin", "RngUPol", "RngMPol", "FldCom"] {
+    for t in ["FldFin", "RngUPol", "RngMPol"] {
         it.def("Ngens", &format!("R::{t} -> RngIntElt"), "The number of generators of R.", ngens);
         it.def(".", &format!("R::{t}, i::RngIntElt -> RngElt"), "The i-th generator of R.", generator);
         it.def("Name", &format!("R::{t}, i::RngIntElt -> RngElt"), "The i-th generator of R.", generator);
@@ -601,7 +570,7 @@ pub fn register(it: &mut Interp) {
         it.def(name, "R::Rng -> Rng", "The centre of R (R itself: these rings are commutative).", centre);
     }
 
-    for t in ["RngIntResElt", "FldFinElt", "RngUPolElt", "RngMPolElt", "FldComElt"] {
+    for t in ["RngIntResElt", "FldFinElt", "RngUPolElt", "RngMPolElt"] {
         it.def("IsZero", &format!("x::{t} -> BoolElt"), "Whether x is zero.", is_zero);
         it.def("IsOne", &format!("x::{t} -> BoolElt"), "Whether x is one.", is_one);
         it.def("IsMinusOne", &format!("x::{t} -> BoolElt"), "Whether x is minus one.", is_minus_one);
