@@ -756,7 +756,7 @@ fn dickson_pairs_in(p: &Integer, hs: std::ops::RangeInclusive<i64>, vs: std::ops
 }
 
 fn dickson_pairs(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let p = prime_arg(a).map_err(super::bare)?;
+    let p = prime_arg(a).map_err(super::require)?;
     let (hlo, hhi, vlo, vhi) = (bound_arg(a, 1)?, bound_arg(a, 2)?, bound_arg(a, 3)?, bound_arg(a, 4)?);
     one(dickson_pairs_in(&p, hlo..=hhi, vlo..=vhi)?)
 }
@@ -767,7 +767,7 @@ fn dickson_pairs_bounded(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 }
 
 fn dickson_triples(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let p = prime_arg(a).map_err(super::bare)?;
+    let p = prime_arg(a).map_err(super::require)?;
     let (hb, vb) = (bound_arg(a, 1)?, bound_arg(a, 2)?);
     let mut out = Vec::new();
     for h in 1..=hb {
@@ -788,7 +788,7 @@ fn pair_args(a: &CallArgs) -> RResult<(Integer, u64, Integer, i64)> {
     let q = a.int(0)?.clone();
     let v = a.int(1)?.to_i64().filter(|v| v.unsigned_abs() < 1 << 30).ok_or_else(|| RuntimeError::runtime("Argument 2 is not small"))?;
     if !dickson_pair(&q, v)? {
-        return Err(super::bare(RuntimeError::runtime(format!("({q}, {v}) is not a Dickson pair"))));
+        return Err(super::require(RuntimeError::runtime(format!("({q}, {v}) is not a Dickson pair"))));
     }
     let (p, h) = prime_power(&q).expect("a prime power");
     Ok((p, h, q, v))
@@ -864,7 +864,7 @@ fn dickson_nearfield(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
         None => Integer::one(),
     };
     if !s.gcd(&Integer::from_u64(v)).is_one() {
-        return Err(super::bare(RuntimeError::runtime("Variant must be coprime to v")));
+        return Err(super::require(RuntimeError::runtime("Variant must be coprime to v")));
     }
     if a.param("LargeMatrices").is_some_and(|x| !matches!(x, Value::Bool(_))) {
         return Err(super::bare(RuntimeError::runtime("Expected a logical for the 'select' operator")));
@@ -965,7 +965,7 @@ const ZASSENHAUS: [(u64, &[[u64; 4]]); 7] = [
 fn zassenhaus_nearfield(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let Value::Int(n) = &a.args[0] else { return Err(RuntimeError::runtime("Bad argument types")) };
     let Some(n) = n.to_u64().filter(|n| (1..=7).contains(n)) else {
-        return Err(super::bare(RuntimeError::runtime(format!("Argument 1 ({n}) should be in the range [1 .. 7]"))));
+        return Err(super::require(RuntimeError::runtime(format!("Argument 1 ({n}) should be in the range [1 .. 7]"))));
     };
     let (p, gens) = ZASSENHAUS[n as usize - 1];
     let gf = it.default_field(&Integer::from_u64(p), 2)?;
@@ -1002,8 +1002,8 @@ fn element(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     match it.coerce_into_nearfield(&st, &x, true) {
         Ok(Ok(v)) => one(v),
         Ok(Err(e)) => Err(RuntimeError::runtime(e.unwrap_or_else(|| "Illegal coercion".to_string()))),
-        // Called directly, Magma's `Element` does not name itself.
-        Err(e) if e.message == CARRIER => Err(super::bare(RuntimeError::runtime(CARRIER))),
+        // Called directly, a failed requirement of Magma's `Element`.
+        Err(e) if e.message == CARRIER => Err(super::require(RuntimeError::runtime(CARRIER))),
         Err(e) => Err(e),
     }
 }
@@ -1025,7 +1025,7 @@ fn eltseq(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 fn inverse(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let x = nfd_elt_arg(a, 0)?;
     if is_zero(&x.x) {
-        return Err(super::bare(RuntimeError::runtime("Cannot invert the zero element")));
+        return Err(super::require(RuntimeError::runtime("Cannot invert the zero element")));
     }
     one(elt(&x.parent, nfd(&x.parent).inverse(&x.x)?))
 }
@@ -1033,7 +1033,7 @@ fn inverse(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 fn order(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let x = nfd_elt_arg(a, 0)?;
     if is_zero(&x.x) {
-        return Err(super::bare(RuntimeError::runtime("Attempting to find the order of a non-unit")));
+        return Err(super::require(RuntimeError::runtime("Attempting to find the order of a non-unit")));
     }
     intv(nfd(&x.parent).unit_order(&x.x)?)
 }
