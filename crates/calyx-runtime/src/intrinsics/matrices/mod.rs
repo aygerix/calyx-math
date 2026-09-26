@@ -9,13 +9,18 @@
 //! full R-space (`ModTupRng`, `ModTupFld`) for a vector, which is a matrix
 //! with one row. The parents are made once for each ring and shape.
 //!
+//! A subspace of an R-space (a kernel, say) is a parent of the same shape
+//! with a basis (`Sub`); its vectors are 1 by n matrices like any others.
+//!
 //! The submodules follow the sections of the handbook chapter; this module
 //! has the values, the parents and the helpers they share.
 
 mod access;
 mod arith;
 mod creation;
+mod linalg;
 mod print;
+mod spaces;
 
 use std::cell::RefCell;
 use std::hash::{Hash, Hasher};
@@ -23,6 +28,7 @@ use std::rc::Rc;
 
 use calyx_flint::gr::{Ctx, CtxKind, Elem, Truth};
 use calyx_flint::mat::Mat;
+use calyx_flint::Real;
 use rustc_hash::{FxHashMap, FxHasher};
 
 use crate::error::{RResult, RuntimeError};
@@ -34,7 +40,9 @@ use crate::value::*;
 pub use access::{index, set_index};
 pub use arith::{binop, equal, negate};
 pub use creation::coerce;
+pub use linalg::{echelon, rank_of};
 pub use print::{fmt_matrix, fmt_parent};
+pub use spaces::elements;
 
 /// A matrix or a vector: its entries and its parent.
 #[derive(Clone)]
@@ -55,6 +63,18 @@ pub struct MatParent {
     pub field: bool,
     /// The FLINT context of the entries.
     pub ctx: Rc<Ctx>,
+    /// For a subspace of an R-space, its basis.
+    pub sub: Option<Sub>,
+}
+
+/// The basis of a subspace of an R-space, and the full space.
+pub struct Sub {
+    /// The full R-space of the same degree.
+    pub full: Rc<Struct>,
+    /// The basis, a vector in each row.
+    pub basis: Mat,
+    /// Whether the basis is echelonized (as for kernels), rather than given.
+    pub echelonized: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -89,14 +109,28 @@ impl MatParent {
     }
 
     pub fn same_as(&self, o: &MatParent) -> bool {
-        self.shape == o.shape && self.nrows == o.nrows && self.ncols == o.ncols && self.ring == o.ring
+        let subs = match (&self.sub, &o.sub) {
+            (None, None) => true,
+            (Some(a), Some(b)) => a.echelonized == b.echelonized && a.basis.equal(&b.basis) == Truth::True,
+            _ => false,
+        };
+        self.shape == o.shape && self.nrows == o.nrows && self.ncols == o.ncols && self.ring == o.ring && subs
     }
 
     pub fn hash_key(&self) -> u64 {
         let mut h = FxHasher::default();
         (self.shape, self.nrows, self.ncols).hash(&mut h);
         self.ring.hash(&mut h);
+        if let Some(s) = &self.sub {
+            s.basis.nrows().hash(&mut h);
+        }
         h.finish()
+    }
+
+    /// The dimension: the number of basis vectors of a subspace, the degree
+    /// of a full space.
+    pub fn dimension(&self) -> usize {
+        self.sub.as_ref().map_or(self.ncols, |s| s.basis.nrows())
     }
 }
 
@@ -147,6 +181,11 @@ pub fn info(st: &Struct) -> &MatParent {
     }
 }
 
+/// Whether `v` is an R-space or a subspace of one.
+pub fn is_rspace(v: &Value) -> bool {
+    parent_info(v).is_some_and(|p| p.shape == Shape::Tuples)
+}
+
 /// The parent data of a structure, if it is a matrix algebra or space.
 pub fn parent_info(v: &Value) -> Option<&MatParent> {
     match v {
@@ -176,7 +215,7 @@ pub fn parent(it: &mut Interp, ring: &Value, nrows: usize, ncols: usize, shape: 
     }
     let ctx = entry_ctx(it, ring)?;
     let field = it.types.isa(ring.type_id(), t::FLD);
-    let p = Struct::new(StructKind::Matrices(Rc::new(MatParent { ring: ring.clone(), nrows, ncols, shape, field, ctx })));
+    let p = Struct::new(StructKind::Matrices(Rc::new(MatParent { ring: ring.clone(), nrows, ncols, shape, field, ctx, sub: None })));
     if let Some(k) = key {
         PARENTS.with(|c| c.borrow_mut().insert(k, p.clone()));
     }
@@ -239,14 +278,32 @@ pub fn over_ring_of(it: &mut Interp, a: &Mtrx, m: Mat) -> RResult<Value> {
 
 /// The entry (i, j) of `a` as a value (from 0).
 pub fn entry_value(it: &Interp, a: &Mtrx, i: usize, j: usize) -> Value {
-    let ring = a.ring();
-    match (a.m.ctx().kind(), ring) {
-        (CtxKind::Integers, _) => Value::Int(a.m.integer(i, j)),
+    entry_of(it, a.ring(), &a.m, i, j)
+}
+
+/// The entry (i, j) of `m`, a matrix over `ring`, as a value (from 0).
+pub fn entry_of(it: &Interp, ring: &Value, m: &Mat, i: usize, j: usize) -> Value {
+    match (m.ctx().kind(), ring) {
+        (CtxKind::Integers, _) => Value::Int(m.integer(i, j)),
         (CtxKind::Nmod(_), Value::Struct(st)) => match &st.kind {
-            StructKind::Ring(r) if r.small.is_some() => Value::Small(r.small.unwrap(), a.m.word(i, j)),
-            _ => it.elem_to_value(ring, a.m.entry(i, j)),
+            StructKind::Ring(r) if r.small.is_some() => Value::Small(r.small.unwrap(), m.word(i, j)),
+            _ => it.elem_to_value(ring, m.entry(i, j)),
         },
-        _ => it.elem_to_value(ring, a.m.entry(i, j)),
+        _ if m.neg_zero(i, j) => match it.elem_to_value(ring, m.entry(i, j)) {
+            Value::Real(r) => Value::real(Real::signed_zero(r.x.prec(), true)),
+            Value::Complex(c) => Value::complex(Real::signed_zero(c.re.prec(), true), c.im.clone()),
+            v => v,
+        },
+        _ => it.elem_to_value(ring, m.entry(i, j)),
+    }
+}
+
+/// Whether `x` is a real or complex number whose real part is -0.
+fn negative_zero(x: &Value) -> bool {
+    match x {
+        Value::Real(r) => r.x.is_zero() && r.x.is_sign_negative(),
+        Value::Complex(c) => c.re.is_zero() && c.re.is_sign_negative(),
+        _ => false,
     }
 }
 
@@ -280,6 +337,9 @@ pub fn set_entry(it: &mut Interp, ring: &Value, m: &mut Mat, i: usize, j: usize,
     match it.to_structure_elem(ring, x, true)? {
         Some(e) if Rc::ptr_eq(e.ctx(), m.ctx()) => {
             m.set_entry(i, j, &e);
+            if negative_zero(x) {
+                m.set_neg_zero(i, j, true);
+            }
             Ok(true)
         }
         _ => Ok(false),
@@ -310,4 +370,7 @@ fn mat_arg(a: &CallArgs, i: usize) -> RResult<&Rc<Mtrx>> {
 pub fn register(it: &mut Interp) {
     creation::register(it);
     access::register(it);
+    arith::register(it);
+    linalg::register(it);
+    spaces::register(it);
 }

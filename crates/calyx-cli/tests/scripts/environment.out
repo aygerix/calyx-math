@@ -39,6 +39,8 @@ AddColumn(~<Mtrx> A, <RngElt> c, <RngIntElt> i, <RngIntElt> j)
 AddColumn(<Mtrx> A, <RngElt> c, <RngIntElt> i, <RngIntElt> j) -> Mtrx
 AddRow(~<Mtrx> A, <RngElt> c, <RngIntElt> i, <RngIntElt> j)
 AddRow(<Mtrx> A, <RngElt> c, <RngIntElt> i, <RngIntElt> j) -> Mtrx
+AddScaledMatrix(<Mtrx> A, <RngElt> s, <Mtrx> B) -> Mtrx
+AddScaledMatrix(~<Mtrx> A, <RngElt> s, <Mtrx> B)
 Arccos(<FldRatElt> x) -> FldReElt
 Arccosec(<FldRatElt> x) -> FldReElt
 Arccot(<FldRatElt> x) -> FldReElt

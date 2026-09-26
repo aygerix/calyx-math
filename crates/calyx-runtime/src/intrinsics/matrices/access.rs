@@ -136,11 +136,9 @@ pub fn set_index(it: &mut Interp, cur: &mut Value, ids: &[Value], x: Value) -> R
         [_, _] if !a.is_vector() => (assign_index(ids, 0, r, "Matrix row")?, assign_index(ids, 1, c, "Matrix column")?),
         _ => return Err(assign_error("Bad argument types")),
     };
-    let ctx = a.m.ctx().clone();
-    let Some(e) = scalar(it, &ring, &ctx, &x)? else {
+    if !set_entry(it, &ring, &mut Rc::make_mut(a).m, i, j, &x)? {
         return Err(assign_error("RHS cannot be coerced into the coefficient ring"));
-    };
-    Rc::make_mut(a).m.set_entry(i, j, &e);
+    }
     Ok(())
 }
 

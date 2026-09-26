@@ -1,5 +1,5 @@
 //! Arithmetic of matrices and vectors: sums, products, scalar multiples,
-//! powers and comparison.
+//! powers, comparison and `AddScaledMatrix`.
 //!
 //! Matrices over different rings meet in a common ring (a matrix over Z
 //! plus one over Q is over Q), as do a matrix and a scalar. Vectors are
@@ -12,9 +12,11 @@ use calyx_flint::gr::{Elem, GrError, Truth};
 use calyx_flint::mat::Mat;
 use calyx_syntax::ast::BinOp;
 
-use super::{Mtrx, Shape, entry_ctx, entry_value, like, mat_value, over_ring_of, scalar, set_entry, vec_value};
-use crate::error::{RResult, RuntimeError};
-use crate::interp::Interp;
+use super::spaces::generic;
+use super::{Mtrx, Shape, entry_ctx, entry_value, like, mat_arg, mat_value, over_ring_of, scalar, set_entry, vec_value};
+use crate::error::{ErrStyle, ErrorInfo, RResult, RuntimeError};
+use crate::intrinsics::{none, one};
+use crate::interp::{CallArgs, Interp};
 use crate::value::*;
 
 fn types_error(it: &Interp, msg: &str, a: &Value, b: &Value) -> RuntimeError {
@@ -54,7 +56,7 @@ fn meet(it: &mut Interp, r: &Value, s: &Value) -> RResult<Option<Value>> {
 }
 
 /// Two matrices over a common ring, with that ring; None if there is none.
-fn over_common(it: &mut Interp, a: &Mtrx, b: &Mtrx) -> RResult<Option<(Value, Mat, Mat)>> {
+pub(super) fn over_common(it: &mut Interp, a: &Mtrx, b: &Mtrx) -> RResult<Option<(Value, Mat, Mat)>> {
     let Some(ring) = meet(it, a.ring(), b.ring())? else { return Ok(None) };
     let (Some(x), Some(y)) = (entries_over(it, a, &ring)?, entries_over(it, b, &ring)?) else { return Ok(None) };
     Ok(Some((ring, x, y)))
@@ -132,6 +134,10 @@ pub fn binop(it: &mut Interp, op: BinOp, a: &Value, b: &Value) -> RResult<Option
             }
             let Some((ring, p, q)) = over_common(it, x, y)? else { return Err(types_error(it, "Bad argument types", a, b)) };
             let m = if op == Add { p.add(&q) } else { p.sub(&q) }.map_err(|e| gr(e, "Arithmetic failed"))?;
+            if x.is_vector() && !Rc::ptr_eq(&x.parent, &y.parent) && !x.info().same_as(y.info()) {
+                // Vectors of different subspaces add in the full space.
+                return Ok(Some(Value::Mat(Rc::new(Mtrx { parent: generic(&x.parent), m }))));
+            }
             Ok(Some(shaped(it, x, &ring, m)?))
         }
         // A + s and s + A add the scalar matrix s in a matrix algebra.
@@ -201,4 +207,46 @@ pub fn power(it: &mut Interp, a: &Mtrx, n: &Integer) -> RResult<Value> {
 /// The inverse of a square matrix over its ring, if it has one.
 pub fn inverse(a: &Mtrx) -> Option<Mat> {
     a.m.inv().ok()
+}
+
+/// A + s·B for `AddScaledMatrix`, with B of the shape and ring of A and s
+/// coerced into the ring: in the parent of A, but a matrix with one row
+/// when A is a vector.
+fn add_scaled(it: &mut Interp, a: &CallArgs) -> RResult<Value> {
+    let (x, y) = (mat_arg(a, 0)?.clone(), mat_arg(a, 2)?.clone());
+    if x.m.nrows() != y.m.nrows() {
+        return Err(RuntimeError::runtime("Matrices have incompatible numbers of rows"));
+    }
+    if x.m.ncols() != y.m.ncols() {
+        return Err(RuntimeError::runtime("Matrices have incompatible numbers of columns"));
+    }
+    if x.ring() != y.ring() {
+        return Err(RuntimeError::runtime("Arguments have incompatible coefficient rings"));
+    }
+    let ring = x.ring().clone();
+    let Some(s) = scalar(it, &ring, x.m.ctx(), &a.args[1])? else {
+        // A failed coercion, reported as Magma's are.
+        let msg = match &a.args[1] {
+            Value::Rat(_) if ring.is_integers() => "Rational argument is not a whole integer",
+            v if it.type_name(v) == "FldFinElt" => "No embedding known into LHS field",
+            _ => return Err(RuntimeError::runtime("Bad argument types")),
+        };
+        return Err(ErrorInfo { style: ErrStyle::Plain, ..ErrorInfo::runtime(msg) }.into());
+    };
+    let m = x.m.add(&y.m.scalar_mul(&s).map_err(|e| gr(e, "Arithmetic failed"))?).map_err(|e| gr(e, "Arithmetic failed"))?;
+    if x.is_vector() { mat_value(it, &ring, m) } else { Ok(like(&x, m)) }
+}
+
+fn add_scaled_matrix(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    one(add_scaled(it, a)?)
+}
+
+fn add_scaled_matrix_proc(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    a.args[0] = add_scaled(it, a)?;
+    none()
+}
+
+pub fn register(it: &mut Interp) {
+    it.def("AddScaledMatrix", "A::Mtrx, s::RngElt, B::Mtrx -> Mtrx", "A + s*B.", add_scaled_matrix);
+    it.def("AddScaledMatrix", "~A::Mtrx, s::RngElt, B::Mtrx", "Set A to A + s*B.", add_scaled_matrix_proc);
 }

@@ -10,7 +10,9 @@
 
 use calyx_flint::gr::CtxKind;
 
-use super::{Mtrx, Shape, entry_value, info};
+use calyx_flint::mat::Mat;
+
+use super::{Mtrx, Shape, entry_of, entry_value, info};
 use crate::error::RResult;
 use crate::interp::Interp;
 use crate::print::{Level, Printer};
@@ -38,16 +40,16 @@ fn field_width(it: &mut Interp, ring: &Value, level: Level) -> RResult<Option<us
     Ok(Some(it.format_flat(&Value::Small(s, widest), level)?.chars().count()))
 }
 
-/// The entries of `a` as text, row after row.
-fn entry_texts(it: &mut Interp, a: &Mtrx, level: Level) -> RResult<Vec<String>> {
-    let (r, c) = (a.m.nrows(), a.m.ncols());
+/// The entries of `m`, a matrix over `ring`, as text, row after row.
+fn entry_texts(it: &mut Interp, ring: &Value, m: &Mat, level: Level) -> RResult<Vec<String>> {
+    let (r, c) = (m.nrows(), m.ncols());
     let mut out = Vec::with_capacity(r * c);
     for i in 0..r {
         for j in 0..c {
-            let s = match a.m.ctx().kind() {
-                CtxKind::Integers if level != Level::Hex => a.m.integer(i, j).to_string(),
+            let s = match m.ctx().kind() {
+                CtxKind::Integers if level != Level::Hex => m.integer(i, j).to_string(),
                 _ => {
-                    let v = entry_value(it, a, i, j);
+                    let v = entry_of(it, ring, m, i, j);
                     it.format_flat(&v, level)?
                 }
             };
@@ -66,16 +68,23 @@ pub fn fmt_matrix(it: &mut Interp, p: &mut Printer, a: &Mtrx, indent: usize) -> 
         p.write(&empty_text(r, c));
         return Ok(());
     }
-    let level = if p.level == Level::Hex { Level::Hex } else { Level::Default };
-    let texts = entry_texts(it, a, level)?;
     let ring = a.ring().clone();
-    let unaligned = matches!(a.m.ctx().kind(), CtxKind::RealFloat(_) | CtxKind::ComplexFloat(_));
+    fmt_rows(it, p, &ring, &a.m, a.is_vector(), indent)
+}
+
+/// The rows of `m`, a matrix over `ring` with at least one entry, one per
+/// line: in brackets, or in parentheses as vectors.
+fn fmt_rows(it: &mut Interp, p: &mut Printer, ring: &Value, m: &Mat, vectors: bool, indent: usize) -> RResult<()> {
+    let (r, c) = (m.nrows(), m.ncols());
+    let level = if p.level == Level::Hex { Level::Hex } else { Level::Default };
+    let texts = entry_texts(it, ring, m, level)?;
+    let unaligned = matches!(m.ctx().kind(), CtxKind::RealFloat(_) | CtxKind::ComplexFloat(_));
     let mut w = texts.iter().map(|s| s.chars().count()).max().unwrap_or(0);
-    if let Some(fw) = field_width(it, &ring, level)? {
+    if let Some(fw) = field_width(it, ring, level)? {
         w = w.max(fw);
     }
     let aligned = !unaligned && 2 + c * w + (c - 1) < p.width;
-    let (open, close) = if a.is_vector() { ('(', ')') } else { ('[', ']') };
+    let (open, close) = if vectors { ('(', ')') } else { ('[', ']') };
     let saved = p.cont;
     p.cont = if aligned { indent } else { indent + 4 };
     for i in 0..r {
@@ -144,6 +153,9 @@ fn fmt_magma(it: &mut Interp, p: &mut Printer, a: &Mtrx, indent: usize) -> RResu
 pub fn fmt_parent(it: &mut Interp, p: &mut Printer, st: &Struct, indent: usize) -> RResult<()> {
     let mp = info(st);
     let ring = mp.ring.clone();
+    if mp.sub.is_some() {
+        return fmt_subspace(it, p, st, indent);
+    }
     if p.level == Level::Magma {
         let (name, dims) = match mp.shape {
             Shape::Algebra => ("MatrixAlgebra", format!("{}", mp.nrows)),
@@ -166,4 +178,46 @@ pub fn fmt_parent(it: &mut Interp, p: &mut Printer, st: &Struct, indent: usize) 
     let r = it.fmt(p, &ring, indent);
     p.level = saved;
     r
+}
+
+/// A subspace of an R-space: its degree and dimension, and its basis
+/// (below them, or at the Magma level as a `sub` constructor).
+fn fmt_subspace(it: &mut Interp, p: &mut Printer, st: &Struct, indent: usize) -> RResult<()> {
+    let mp = info(st);
+    let sub = mp.sub.as_ref().expect("a subspace");
+    let ring = mp.ring.clone();
+    let basis = sub.basis.clone();
+    if p.level == Level::Magma {
+        p.write("sub<");
+        it.fmt(p, &Value::Struct(sub.full.clone()), indent)?;
+        p.write(" |");
+        for i in 0..basis.nrows() {
+            if i > 0 {
+                p.write(",");
+            }
+            p.newline(indent + 4);
+            let row = Value::seq(Some(ring.clone()), (0..basis.ncols()).map(|j| entry_of(it, &ring, &basis, i, j)).collect());
+            it.fmt(p, &row, indent + 4)?;
+        }
+        if basis.nrows() == 0 {
+            p.newline(indent);
+        }
+        p.newline(indent);
+        p.write(">");
+        return Ok(());
+    }
+    let name = if mp.field { "Vector space" } else { "RSpace" };
+    p.write(&format!("{name} of degree {}, dimension {} over ", mp.ncols, basis.nrows()));
+    let saved = p.level;
+    p.level = Level::Minimal;
+    let r = it.fmt(p, &ring, indent);
+    p.level = saved;
+    r?;
+    if saved == Level::Minimal || basis.nrows() == 0 {
+        return Ok(());
+    }
+    p.newline(indent);
+    p.write(if sub.echelonized { "Echelonized basis:" } else { "Basis:" });
+    p.newline(indent);
+    fmt_rows(it, p, &ring, &basis, true, indent)
 }

@@ -245,9 +245,10 @@ fn is_block(v: &Value) -> bool {
     matches!(v, Value::Struct(s) if matches!(s.kind, StructKind::AbGroup(_))) || is_matrix(v)
 }
 
-/// A matrix (not a vector), which a print list starts on a line of its own.
+/// A matrix (not a vector) or an R-space, which a print list starts on a
+/// line of its own.
 fn is_matrix(v: &Value) -> bool {
-    matches!(v, Value::Mat(m) if !m.is_vector())
+    matches!(v, Value::Mat(m) if !m.is_vector()) || crate::intrinsics::matrices::is_rspace(v)
 }
 
 /// Ring elements that print as sums of terms (polynomials, and elements of
