@@ -106,6 +106,22 @@ impl Interp {
                     return Err(RuntimeError::runtime("Bad arguments"));
                 }
             }
+            // m * 2^e in a real field.
+            Some(StructKind::Reals(bits)) if v.len() == 2 => {
+                if let (Some(m), Value::Int(e)) = (crate::intrinsics::reals::to_real(&v[0], *bits), &v[1]) {
+                    if let Some(e) = e.to_i64() {
+                        return Ok(Value::real(m.mul_2exp(e)));
+                    }
+                }
+            }
+            // x + y*i in a complex field.
+            Some(StructKind::Ring(r)) if v.len() == 2 && matches!(r.kind, crate::rings::RingKind::Complex(_)) => {
+                let crate::rings::RingKind::Complex(bits) = r.kind else { unreachable!() };
+                let to = |x: &Value| crate::intrinsics::reals::to_real(x, bits);
+                if let (Some(x), Some(y)) = (to(&v[0]), to(&v[1])) {
+                    return Ok(Value::complex(x, y));
+                }
+            }
             Some(StructKind::Rationals) => {
                 let [Value::Int(n), Value::Int(d)] = v.as_slice() else {
                     let msg = if v.len() == 2 { "Bad arguments" } else { "Wrong number of arguments to Q element constructor (should be 2)" };

@@ -178,6 +178,16 @@ impl<'a> Lexer<'a> {
                 }
             }
         }
+        // A precision suffix makes a real with that many decimal digits: 1.5p10, 1p10.
+        if let Some(p @ ('p' | 'P')) = self.peek(0).filter(|_| self.peek(1).is_some_and(|c| c.is_ascii_digit())) {
+            real = true;
+            s.push(p);
+            self.pos += 1;
+            while let Some(c) = self.peek(0).filter(|c| c.is_ascii_digit()) {
+                s.push(c);
+                self.pos += 1;
+            }
+        }
         if real { Tok::Real(s) } else { Tok::Int(s) }
     }
 
@@ -411,6 +421,14 @@ mod tests {
     #[test]
     fn continuation_joins_tokens() {
         assert_eq!(tokenize("12\\\n34"), vec![Tok::Int("1234".into()), Tok::Eof]);
+    }
+
+    #[test]
+    fn real_literals_with_a_precision() {
+        let t = tokenize("1.5p10 1p10 12345e-4P8 2p x.p1");
+        let real = |s: &str| Tok::Real(s.into());
+        assert_eq!(t[..4], [real("1.5p10"), real("1p10"), real("12345e-4P8"), Tok::Int("2".into())]);
+        assert_eq!(t[4], Tok::Ident("p".into()));
     }
 
     #[test]

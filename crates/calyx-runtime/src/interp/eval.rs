@@ -717,9 +717,9 @@ impl Interp {
                 };
                 MapImpl::Rule { f: fv, inv }
             }
-            // The natural homomorphism from the integers: a coercion, which
-            // prints as a plain mapping.
-            MapBodyEx::Exprs(es) if es.is_empty() && kind == MapKind::Hom && matches!(domain.as_struct(), Some(StructKind::Integers)) => {
+            // The natural homomorphism from the integers, or from a real or
+            // complex field: a coercion, which prints as a plain mapping.
+            MapBodyEx::Exprs(es) if es.is_empty() && kind == MapKind::Hom && is_coercion_domain(&domain) => {
                 return Ok(Value::Map(Rc::new(MapObj { kind: MapKind::Map, domain, codomain, imp: MapImpl::Coercion })));
             }
             // The natural homomorphism from Q, which takes no images.
@@ -844,3 +844,11 @@ fn ctx_close(k: AggKind) -> &'static str {
     }
 }
 
+/// Domains whose natural homomorphism, `hom< D -> R | >`, is the coercion.
+fn is_coercion_domain(d: &Value) -> bool {
+    match d.as_struct() {
+        Some(StructKind::Integers | StructKind::Reals(_)) => true,
+        Some(StructKind::Ring(r)) => matches!(r.kind, crate::rings::RingKind::Complex(_)),
+        _ => false,
+    }
+}
