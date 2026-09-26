@@ -615,6 +615,22 @@ impl Integer {
         }
     }
 
+    /// A proper factor of `self` (odd, composite and not a perfect power)
+    /// found by FLINT's ECM with `curves` curves chosen from `seed` and the
+    /// stage bounds `b1 < b2`, if they find one.
+    pub fn ecm(&self, curves: u64, b1: u64, b2: u64, seed: u64) -> Option<Integer> {
+        let mut f = Integer::zero();
+        let found = unsafe {
+            let mut state = sys::flint_rand_struct { __gmp_state: std::ptr::null_mut(), __randval: seed, __randval2: seed ^ 0x9e37_79b9_7f4a_7c15 };
+            let r = sys::fmpz_factor_ecm(&mut f.raw, curves as sys::ulong, b1 as sys::ulong, b2 as sys::ulong, &mut state, &self.raw);
+            if !state.__gmp_state.is_null() {
+                sys::_flint_rand_clear_gmp_state(&mut state);
+            }
+            r
+        };
+        (found != 0 && !f.is_zero() && !f.is_one() && f != *self).then_some(f)
+    }
+
     /// The residue `self mod m` for `m > 0`, as a machine word.
     pub fn mod_u64(&self, m: u64) -> u64 {
         assert!(m > 0);
