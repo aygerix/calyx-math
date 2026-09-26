@@ -1,0 +1,274 @@
+//! The functions for univariate polynomials over finite fields: prime
+//! (irreducible) polynomials and the Jacobi symbol.
+
+use std::rc::Rc;
+
+use calyx_flint::Integer;
+use calyx_flint::gr::{Elem, Truth};
+use calyx_flint::upoly as fu;
+
+use super::{len, not_available, pol, ring_arg};
+use crate::error::{RResult, RuntimeError};
+use crate::interp::{CallArgs, Interp};
+use crate::intrinsics::{arg_ge, bare, intv, one};
+use crate::rings::{Ring, RingKind, make_elt, ring_of};
+use crate::value::*;
+
+/// The coefficient field of a polynomial ring over a finite field (not a
+/// residue class ring), with its characteristic and degree.
+fn finite_base(r: &Ring) -> RResult<(Value, Integer, u64)> {
+    let base = r.base().expect("a polynomial ring").clone();
+    if let Some((_, k)) = ring_of(&base) {
+        if let RingKind::Finite(f) = &k.kind {
+            let (p, e) = (f.p.clone(), f.degree);
+            return Ok((base, p, e));
+        }
+    }
+    Err(RuntimeError::runtime("Polynomial ring must be defined over a finite field"))
+}
+
+/// The number of monic irreducible polynomials of degree `d` over the field
+/// of `q` elements, `(1/d) sum_{k | d} mu(k) q^(d/k)`.
+fn prime_poly_count(q: &Integer, d: u64) -> Integer {
+    let mut s = Integer::zero();
+    for k in (1..=d).filter(|k| d % k == 0) {
+        match Integer::from_u64(k).moebius_mu() {
+            1 => s = &s + &q.pow(d / k),
+            -1 => s = &s - &q.pow(d / k),
+            _ => {}
+        }
+    }
+    s.divexact(&Integer::from_u64(d))
+}
+
+fn degree_arg(a: &CallArgs, i: usize) -> RResult<u64> {
+    let d = a.int(i)?;
+    if d.sign() <= 0 {
+        return Err(arg_ge(i + 1, d, 1));
+    }
+    d.to_u64().filter(|&d| d < 1 << 30).ok_or_else(|| RuntimeError::runtime(format!("Argument {} ({d}) is too large", i + 1)))
+}
+
+pub(super) fn number_of_prime_polynomials(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let q = match &a.args[0] {
+        Value::Int(q) => {
+            let pp = q > &Integer::one() && q.perfect_power().map_or(q.clone(), |(b, _)| b).is_prime();
+            if !pp {
+                return Err(RuntimeError::runtime(format!("Argument 1 ({q}) is not a prime power")));
+            }
+            q.clone()
+        }
+        Value::Struct(s) => match &s.kind {
+            StructKind::Ring(r) => match (&r.kind, r.finite_field()) {
+                (RingKind::UPoly { .. }, _) => {
+                    let (_, p, e) = finite_base(r)?;
+                    p.pow(e)
+                }
+                (_, Some(f)) => f.order(),
+                _ => unreachable!("a finite field or polynomial ring"),
+            },
+            _ => unreachable!("a finite field or polynomial ring"),
+        },
+        _ => unreachable!("a finite field or polynomial ring"),
+    };
+    let d = degree_arg(a, 1)?;
+    intv(prime_poly_count(&q, d))
+}
+
+/// The monic irreducible polynomials of degree `d` over `K = GF(q)` in
+/// Magma's order, at most `max` of them: `x` and then `x - a^k` for
+/// `k = 1, ..., q - 1` in degree 1, and otherwise the minimal polynomials of
+/// `a^k` for the least elements `k` of the classes `{k q^i mod (q^d - 1)}`
+/// of size `d`, by increasing `k`, where `a` is the primitive element of
+/// `GF(q^d)` (a root of its Conway polynomial).
+fn prime_polys_of_degree(it: &mut Interp, px: &Rc<Struct>, d: u64, max: usize) -> RResult<Vec<Elem>> {
+    let StructKind::Ring(pr) = &px.kind else { unreachable!() };
+    let (k, p, e) = finite_base(pr)?;
+    let kctx = ring_of(&k).expect("a finite field").1.ctx.clone();
+    let q = p.pow(e);
+    let mut out = Vec::new();
+    if max == 0 {
+        return Ok(out);
+    }
+    let mono = |c: Elem| Elem::poly_from_coeffs(&pr.ctx, &[c.neg()?, Elem::one(&kctx)?]);
+    let prim = |it: &mut Interp, f: &Value| -> RResult<Elem> {
+        let a = it.call_intrinsic_named(crate::sym::Sym::new("PrimitiveElement"), vec![f.clone()])?;
+        Ok(it.to_structure_elem(f, &a, false)?.expect("an element of the field"))
+    };
+    if d == 1 {
+        out.push(fu::monomial(&pr.ctx, &Elem::one(&kctx)?, 1)?);
+        let a = prim(it, &k)?;
+        let mut c = a.clone();
+        while out.len() < max && c.is_one() != Truth::True {
+            out.push(mono(c.clone())?);
+            c = c.mul(&a)?;
+        }
+        if out.len() < max {
+            out.push(mono(c)?);
+        }
+        return Ok(out);
+    }
+    // GF(q^d) with q = p^e, and the embedding of K in it.
+    let lv = it.finite_field(&p, e * d)?;
+    let Some((_, lr)) = ring_of(&lv) else { unreachable!() };
+    let lctx = lr.ctx.clone();
+    let conway = |r: &Ring| r.finite_field().is_some_and(|f| f.conway || f.degree == 1);
+    let kr = ring_of(&k).expect("a finite field").1;
+    if e > 1 && !(conway(kr) && conway(lr) && kr.finite_field().is_some_and(|f| f.default)) {
+        return Err(not_available());
+    }
+    let a = prim(it, &lv)?;
+    let n = &q.pow(d) - &Integer::one();
+    // The subfield GF(q) is generated by b = a^((q^d - 1)/(q - 1)), the
+    // image of the generator of K; coefficients map back by logarithms.
+    let r = n.divexact(&(&q - &Integer::one()));
+    let mut logs: std::collections::HashMap<Vec<Integer>, u64> = Default::default();
+    if e > 1 {
+        let qm1 = (&q - &Integer::one()).to_u64().filter(|&m| m <= 1 << 20).ok_or_else(not_available)?;
+        let b = a.pow(&r)?;
+        let mut c = Elem::one(&lctx)?;
+        for j in 0..qm1 {
+            logs.insert(c.fq_coords(), j);
+            c = c.mul(&b)?;
+        }
+    }
+    let w = if e > 1 { Some(kctx.generator()?) } else { None };
+    let to_k = |c: &Elem| -> RResult<Elem> {
+        if c.is_zero() == Truth::True {
+            return Ok(Elem::zero(&kctx));
+        }
+        match &w {
+            None => Ok(Elem::from_integer(&kctx, &c.fq_prime_value().expect("a coefficient in the prime field"))?),
+            Some(w) => Ok(w.pow_i64(*logs.get(&c.fq_coords()).expect("a coefficient in the subfield") as i64)?),
+        }
+    };
+    let qi = q.to_u64();
+    let mut kk = Integer::one();
+    while out.len() < max && kk < n {
+        // Is kk the least element of its class, of size d?
+        let mut m = kk.clone();
+        let mut leader = true;
+        for _ in 1..d {
+            m = (&m * &q).div_rem_euclid(&n).expect("a non-zero modulus").1;
+            if m <= kk {
+                leader = false;
+                break;
+            }
+        }
+        if leader {
+            // The product of x - g over the conjugates g of a^kk.
+            let mut g = a.pow(&kk)?;
+            let mut cs = vec![Elem::one(&lctx)?];
+            for _ in 0..d {
+                let mut next = vec![Elem::zero(&lctx); cs.len() + 1];
+                for (j, c) in cs.iter().enumerate() {
+                    next[j + 1] = next[j + 1].add(c)?;
+                    next[j] = next[j].sub(&g.mul(c)?)?;
+                }
+                cs = next;
+                g = match qi {
+                    Some(_) => g.fq_frobenius(e as i64)?,
+                    None => g.pow(&q)?,
+                };
+            }
+            let kcs: Vec<Elem> = cs.iter().map(&to_k).collect::<RResult<_>>()?;
+            out.push(Elem::poly_from_coeffs(&pr.ctx, &kcs)?);
+        }
+        kk = &kk + &Integer::one();
+    }
+    Ok(out)
+}
+
+/// The polynomials of degree `d` (or the first `n`, continuing into higher
+/// degrees if needed).
+pub(super) fn prime_polynomials(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let (px, pr) = ring_arg(a, 0);
+    let (_, p, e) = finite_base(&pr)?;
+    let d = degree_arg(a, 1)?;
+    let n = if a.args.len() > 2 {
+        let n = a.int(2)?;
+        if n.sign() < 0 {
+            return Err(arg_ge(3, n, 0));
+        }
+        n.to_u64().unwrap_or(u64::MAX)
+    } else {
+        prime_poly_count(&p.pow(e), d).to_u64().unwrap_or(u64::MAX)
+    };
+    if n > 1 << 24 {
+        return Err(RuntimeError::runtime("Too many polynomials requested"));
+    }
+    let mut out = Vec::new();
+    let mut deg = d;
+    while (out.len() as u64) < n {
+        let more = prime_polys_of_degree(it, &px, deg, (n - out.len() as u64) as usize)?;
+        out.extend(more);
+        deg += 1;
+    }
+    let vals = out.into_iter().map(|x| make_elt(&px, x)).collect();
+    one(Value::seq(Some(Value::Struct(px)), vals))
+}
+
+/// A random monic irreducible polynomial of degree `d`.
+pub(super) fn random_prime_polynomial(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let (px, pr) = ring_arg(a, 0);
+    let (k, p, e) = finite_base(&pr)?;
+    let d = degree_arg(a, 1)?;
+    let kctx = ring_of(&k).expect("a finite field").1.ctx.clone();
+    for _ in 0..1_000_000 {
+        let mut cs = Vec::with_capacity(d as usize + 1);
+        for _ in 0..d {
+            let coords: Vec<Integer> = (0..e).map(|_| it.rng.below(&p)).collect();
+            cs.push(if e == 1 { Elem::from_integer(&kctx, &coords[0])? } else { Elem::fq_from_coords(&kctx, &coords)? });
+        }
+        cs.push(Elem::one(&kctx)?);
+        let f = Elem::poly_from_coeffs(&pr.ctx, &cs)?;
+        if fu::is_irreducible(&f)? {
+            return one(make_elt(&px, f));
+        }
+    }
+    Err(RuntimeError::runtime("No irreducible polynomial found"))
+}
+
+/// The Jacobi symbol `(a/b)` over `GF(q)`, q odd: multiplicative in `b`,
+/// and for irreducible `b` whether `a` is a square modulo `b` (0 if `b`
+/// divides `a`). Computed by the Euclidean algorithm with the reciprocity
+/// law `(a/b) = (-1)^((q-1)/2 deg a deg b) (b/a)` for monic coprime `a`,
+/// `b`, and `(c/b) = chi(c)^deg b` for constants `c`.
+pub(super) fn jacobi_symbol(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let (fa, fb) = (pol(a, 0), pol(a, 1));
+    if fa.ring().id != fb.ring().id {
+        return Err(bare(RuntimeError::runtime(format!("Arguments are not compatible\nArgument types given: {}, {}", it.type_name_ext(&fa.parent_value()), it.type_name_ext(&fb.parent_value())))));
+    }
+    let q = match finite_base(fa.ring()) {
+        Ok((_, p, e)) if p != Integer::from_i64(2) => p.pow(e),
+        _ => return Err(bare(RuntimeError::runtime("Only polynomials over finite fields of odd characteristic are supported"))),
+    };
+    if len(&fb) < 2 {
+        return Err(bare(RuntimeError::runtime("The second polynomial must have degree at least 1")));
+    }
+    let half = (&q - &Integer::one()).divexact(&Integer::from_i64(2));
+    let half_odd = !half.is_even();
+    let mut b = fu::make_monic(&fb.x)?;
+    let mut x = fu::divrem(&fa.x, &b)?.1;
+    let mut sign = 1;
+    loop {
+        let db = b.poly_len() - 1;
+        if db == 0 {
+            return intv(Integer::from_i64(sign));
+        }
+        if x.poly_len() == 0 {
+            return intv(Integer::zero());
+        }
+        let c = fu::lead(&x);
+        if c.pow(&half)?.is_one() != Truth::True && db % 2 == 1 {
+            sign = -sign;
+        }
+        let x1 = fu::make_monic(&x)?;
+        if half_odd && (x1.poly_len() - 1) % 2 == 1 && db % 2 == 1 {
+            sign = -sign;
+        }
+        let r = fu::divrem(&b, &x1)?.1;
+        b = x1;
+        x = r;
+    }
+}
