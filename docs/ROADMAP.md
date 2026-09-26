@@ -130,7 +130,7 @@ part.
 
 | Chapter | Status |
 | --- | --- |
-| Matrices | Started ([#76](https://github.com/aygerix/calyx-math/issues/76)). |
+| Matrices | In progress ([#76](https://github.com/aygerix/calyx-math/issues/76)): matrices and vectors on FLINT's native matrix types over the entry ring, with matrix algebras, matrix spaces and R-spaces as parents; creation (text/270), elementary properties (text/271), access and modification of entries (text/272), printing with Magma's column alignment, and arithmetic. Echelon forms, rank, determinants, solutions and kernels are next. |
 | Sparse matrices | Not started ([#77](https://github.com/aygerix/calyx-math/issues/77)). |
 | Vector spaces | Not started ([#78](https://github.com/aygerix/calyx-math/issues/78)). |
 | Polar spaces | Not started ([#79](https://github.com/aygerix/calyx-math/issues/79)). The sections on isometry groups, classical groups and Lie algebras wait for Parts IX and XIII. |
