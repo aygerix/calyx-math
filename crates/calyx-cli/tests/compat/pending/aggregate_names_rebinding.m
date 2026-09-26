@@ -1,6 +1,6 @@
-// A structure is named by the first global it is assigned to that still
-// holds it; when that is rebound, the next global assigned it takes over.
-// Assignments to locals name nothing (#55).
+// A structure goes by the global holding it that comes first in the
+// identifier table: a new global takes the lowest slot a deleted one freed,
+// else the next. Assignments to locals name nothing (#55).
 C := ComplexField(30); x := C.1; x;
 C := ComplexField(20); x;
 D := ComplexField(30); x;
@@ -27,3 +27,27 @@ S := GF(19^3); e := S.1; T := S; S := 4; U := T; T := 5; e;
 f := function() V := GF(23^3); return V.1; end function;
 g := f(); g;
 W := Parent(g); g;
+A1 := GF(29^2); B1 := GF(31^2);
+u := A1.1;
+B1 := A1; u;
+delete A1; u;
+A1 := B1; u;
+X1 := 0; Y1 := GF(37^2); v := Y1.1; X1 := Y1; v;
+Y1 := 0; v;
+E := GF(41^2); z := E.1; E2 := E; E := 0; z;
+E := GF(43^2); w := E.1; E2 := E; w;
+F := GF(47^2); z := F.1; F2 := 5; delete F; F := GF(53^2); w := F.1; F2 := F; w;
+A := GF(59^2); B := GF(61^2); u := A.1; B := A; A := 0; u;
+A := B; u;
+G := GF(67^2); g := G.1; delete G; G2 := 7; G := GF(71^2); g2 := G.1; G2 := G; g2;
+H := GF(73^2); h := H.1; H2 := H; delete H; h; H := H2; h;
+P1 := 1; P2 := 2; P3 := GF(79^2); p := P3.1;
+delete P1; delete P2;
+Q1 := P3;
+Q2 := P3;
+delete P3; p;
+R1 := 1; R2 := 2; R3 := GF(83^2); r := R3.1;
+delete R2; delete R1;
+S1 := R3;
+S2 := R3;
+delete R3; r;
