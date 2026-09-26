@@ -379,7 +379,17 @@ impl Interp {
             .copied()
             .collect();
         let pool = if undominated.is_empty() { &candidates } else { &undominated };
-        // Among equals, user definitions and later definitions win.
+        // Among equals, user definitions and later definitions win, except that
+        // a null sequence or set, which fits every element type, goes to the
+        // earliest built-in: CRT([], []) is the integer CRT.
+        let null = |v: &Value| match v {
+            Value::Seq(s) => s.universe.is_none(),
+            Value::Set(s) => s.universe.is_none(),
+            _ => false,
+        };
+        if args.iter().any(null) && pool.iter().all(|s| matches!(s.imp, Imp::Native(_))) {
+            return pool.iter().min_by_key(|s| s.order).map(|s| (*s).clone());
+        }
         pool.iter().max_by_key(|s| s.order).map(|s| (*s).clone())
     }
 
