@@ -1,7 +1,7 @@
 // Real literals with a precision (1.2345p10), the elt constructor of real
 // and complex fields, and the coercion homomorphisms from them. These
 // need the lexer to read the p suffix and the evaluator to pass elt< >
-// arguments and build hom< R -> S | > for real and complex fields.
+// arguments and build hom< R -> S | > for real and complex fields (#54).
 
 // H26E4
 x := 1.2345;
