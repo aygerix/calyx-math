@@ -18,7 +18,7 @@ impl Interp {
             Ex::Local(s, name) => {
                 let v = f.get(*s);
                 if v.is_undef() {
-                    return Err(RuntimeError::user(format!("Identifier '{name}' has not been assigned")).at(e.span));
+                    return Err(RuntimeError::runtime(format!("Variable '{name}' has not been initialized")).at(e.span));
                 }
                 Ok(v.clone())
             }
@@ -389,7 +389,14 @@ impl Interp {
         let mut vals = Vec::with_capacity(caps.len());
         for (i, c) in caps.iter().enumerate() {
             let v = match c {
-                CapSrc::Local(s) => f.get(*s).clone(),
+                CapSrc::Local(s, span) => {
+                    let v = f.get(*s).clone();
+                    if v.is_undef() && !code.local_inits.iter().any(|&(_, j)| j as usize == i) {
+                        let msg = format!("Variable '{}' in enclosing environment has not been assigned to", code.capture_names[i]);
+                        return Err(RuntimeError::runtime(msg).at(*span));
+                    }
+                    v
+                }
                 CapSrc::Capture(j) => f.captures[*j as usize].clone(),
                 CapSrc::SelfFn => f.self_fn.clone().unwrap_or(Value::Undef),
                 CapSrc::Global(name, span) => match self.lookup_global(*name) {
@@ -399,7 +406,6 @@ impl Interp {
                 CapSrc::GlobalLate(name) => self.lookup_global(*name).unwrap_or(Value::Intr(*name)),
                 CapSrc::GlobalInit(name) => self.lookup_variable(*name).unwrap_or(Value::Undef),
             };
-            let _ = i;
             vals.push(v);
         }
         Ok(Value::Func(Rc::new(Closure { code: code.clone(), captures: vals.into() })))

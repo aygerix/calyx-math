@@ -204,6 +204,9 @@ impl Interp {
     pub fn store_place(&mut self, p: Place, v: Value, f: &mut Frame) {
         match p {
             Place::Local(s, _) => f.slots[s as usize] = v,
+            // A global left without a value is no longer declared (a `_`
+            // result, or a reference argument the callee unassigned).
+            Place::Global(n) if v.is_undef() => self.remove_global(n),
             Place::Global(n) => self.set_global(n, v),
         }
     }
@@ -229,7 +232,7 @@ impl Interp {
     fn unassigned_place(&self, p: Place) -> RuntimeError {
         match p {
             Place::Global(n) => self.unassigned_error(n),
-            _ => RuntimeError::user(format!("Identifier '{}' has not been assigned", p.name())),
+            _ => RuntimeError::runtime(format!("Variable '{}' has not been initialized", p.name())),
         }
     }
 
@@ -274,7 +277,11 @@ impl Interp {
         };
         let mut cur = self.take_place(root, f);
         if cur.is_undef() && !path.is_empty() {
-            return Err(self.unassigned_place(root).at(lv_root_span(lv)));
+            let e = match root {
+                Place::Local(_, name) => RuntimeError::statement(":=", format!("Variable '{name}' has not been initialized")),
+                Place::Global(_) => self.unassigned_place(root),
+            };
+            return Err(e.at(lv_root_span(lv)));
         }
         let r = self.set_path(&mut cur, &path, v);
         self.put_place(root, cur, f);
@@ -591,12 +598,16 @@ impl Interp {
 
     pub fn delete(&mut self, lv: &LV, f: &mut Frame) -> RResult<()> {
         match lv {
-            LV::Var(p, _) => {
-                self.put_place(*p, Value::Undef, f);
-                // A deleted global identifier is no longer declared.
-                if let Place::Global(name) = p {
-                    self.globals.remove(name);
+            LV::Var(p, span) => {
+                match *p {
+                    Place::Local(s, name) if f.get(s).is_undef() => {
+                        return Err(RuntimeError::statement("delete", format!("Variable \"{name}\" has already been deleted")));
+                    }
+                    Place::Global(name) if self.lookup_variable(name).is_none() => return Err(self.unassigned_error(name).at(*span)),
+                    _ => {}
                 }
+                // A deleted global identifier is no longer declared.
+                self.put_place(*p, Value::Undef, f);
                 Ok(())
             }
             LV::Discard => Ok(()),

@@ -189,7 +189,7 @@ impl<'a> Compiler<'a> {
     fn capture_source(&mut self, si: usize, name: Sym, mode: Mode) -> CapSrc {
         let sc = &self.scopes[si];
         if let Some(slot) = sc.lookup(name) {
-            return CapSrc::Local(slot);
+            return CapSrc::Local(slot, self.cur_span);
         }
         if sc.self_name == Some(name) {
             return CapSrc::SelfFn;

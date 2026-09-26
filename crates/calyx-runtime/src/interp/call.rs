@@ -300,7 +300,7 @@ impl Interp {
                     let mut targs = Vec::with_capacity(code.params.len());
                     for p in &code.params {
                         let v = frame.slots[p.slot as usize].clone();
-                        let text = if v.is_undef() { "undef".to_string() } else { self.format_flat(&v, crate::print::Level::Default).unwrap_or_default() };
+                        let text = if v.is_undef() { "<unassigned>".to_string() } else { self.format_flat(&v, crate::print::Level::Default).unwrap_or_default() };
                         targs.push((p.name.to_string(), text));
                     }
                     e.trace.push(TraceFrame { name, span: Some(span), args: targs });

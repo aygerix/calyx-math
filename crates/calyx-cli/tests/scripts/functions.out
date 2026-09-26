@@ -17,7 +17,7 @@ false
 
 >> b;
    ^
-User error: Identifier 'b' has not been assigned
+User error: Identifier 'b' has not been declared or assigned
 x:  1
 y:  [* 2 *]
 [ 3 ]

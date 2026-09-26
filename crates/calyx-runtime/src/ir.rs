@@ -175,7 +175,9 @@ pub enum MapBodyEx {
 /// How a closure obtains each captured value when it is created.
 #[derive(Clone, Debug)]
 pub enum CapSrc {
-    Local(Slot),
+    /// A local of the enclosing function; an error if unassigned when the
+    /// closure is made. The span is where it is used.
+    Local(Slot, Span),
     Capture(u32),
     SelfFn,
     /// A global identifier; an error if unassigned (unless it names an

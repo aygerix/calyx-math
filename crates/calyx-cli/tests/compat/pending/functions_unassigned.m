@@ -1,0 +1,63 @@
+// Variables left unassigned by a multiple assignment (a `_` return value),
+// by a procedure through a reference argument, or by delete.
+b, r := IsSquare(3);
+r;
+assigned r;
+r := 7;
+b, r := IsSquare(3);
+r;
+g := func< | r >;
+r[1] := 2;
+r[1] +:= 2;
+delete r;
+delete never_assigned;
+procedure unset(~y) b, y := IsSquare(3); end procedure;
+z := 4;
+unset(~z);
+z;
+procedure show(~y) b, y := IsSquare(3); print y; end procedure;
+z := 4;
+show(~z);
+// Locals of a function.
+function f1() b, r := IsSquare(3); return r; end function;
+f1();
+function f2(x) b, x := IsSquare(3); return x; end function;
+f2(5);
+function f3(c) if c then y := 1; end if; return y; end function;
+f3(false);
+function f4() y := 1; delete y; return y; end function;
+f4();
+function f5() b, r := IsSquare(3); return assigned r; end function;
+f5();
+function f6() b, r := IsSquare(3); print r; return 1; end function;
+f6();
+function f7() b, r := IsSquare(3); return [r]; end function;
+f7();
+function f8() b, r := IsSquare(3); return r + 1; end function;
+f8();
+function f9() b, r := IsSquare(3); if r eq 1 then return 1; end if; return 2; end function;
+f9();
+function f10() b, r := IsSquare(3); return r, 1; end function;
+a, c := f10();
+function f11() z := 4; unset(~z); return z; end function;
+f11();
+// In assignments and delete.
+function f12() b, r := IsSquare(3); s := r; return 1; end function;
+f12();
+function f13() b, r := IsSquare(3); r[1] := 2; return r; end function;
+f13();
+function f14() b, r := IsSquare(3); r`attr := 2; return 1; end function;
+f14();
+function f15() b, r := IsSquare(3); r[1] +:= 2; return 1; end function;
+f15();
+function f16() b, r := IsSquare(3); delete r; return 1; end function;
+f16();
+function f17() y := 1; delete y; delete y; return 1; end function;
+f17();
+// Closures capture values when they are made.
+function f18() b, r := IsSquare(3); g := func< | r >; return 1; end function;
+f18();
+function f19() b, r := IsSquare(3); return func< | r >; end function;
+f19();
+function f20() r := 1; g := func< | r >; r := 2; return g(); end function;
+f20();

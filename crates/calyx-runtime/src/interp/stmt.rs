@@ -95,7 +95,11 @@ impl Interp {
             }
             St::Assign(targets, value, at) => {
                 if targets.len() == 1 {
-                    let v = self.eval(value, f)?;
+                    let v = self.eval(value, f).map_err(|e| match &value.kind {
+                        // Copying an unassigned local fails in the assignment.
+                        Ex::Local(_, name) => RuntimeError::statement(":=", format!("Variable '{name}' has not been initialized")).at(*at),
+                        _ => e,
+                    })?;
                     if v.is_undef() {
                         return Err(RuntimeError::user("Right hand side of assignment has no value"));
                     }

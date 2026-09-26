@@ -239,6 +239,15 @@ impl Interp {
         self.globals.insert(name, v);
     }
 
+    /// Forget a global identifier, which then reads as undeclared.
+    pub fn remove_global(&mut self, name: Sym) {
+        if let Some(pkg) = self.package_stack.last_mut() {
+            pkg.remove(&name);
+            return;
+        }
+        self.globals.remove(&name);
+    }
+
     pub fn unassigned_error(&self, name: Sym) -> RuntimeError {
         let declared = self.package_stack.last().map_or(false, |p| p.contains_key(&name)) || self.globals.contains_key(&name);
         if declared {
