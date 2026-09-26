@@ -8,11 +8,11 @@
 
 use std::rc::Rc;
 
-use calyx_flint::gr::{Ctx, CtxKind, Elem};
+use calyx_flint::gr::{Ctx, CtxKind, Elem, Truth};
 use calyx_flint::{Integer, Rational};
 use calyx_groebner::{self as gb, Order, Terms};
 
-use super::mpoly::leading;
+use super::mpoly::{leading, parse_order};
 use super::poly_ideals::{Easy, EasyKind, MPolIdeal};
 use super::{arg_ge, arg_not, boolv, one};
 use crate::error::{RResult, RuntimeError};
@@ -78,8 +78,24 @@ pub(super) fn engine<T>(r: &Ring, x: Result<T, gb::Error>) -> RResult<T> {
 /// decreasing leading monomial, monic, and empty for the zero ideal.
 pub fn groebner_basis(r: &Ring, gens: &[Elem]) -> RResult<Vec<Elem>> {
     let (base, n, order) = shape(r);
-    let g = engine(r, gb::groebner(base, n, order, &gens.iter().map(terms).collect::<Vec<_>>()))?;
-    g.iter().map(|t| Ok(Elem::mpoly_from_terms(&r.ctx, t)?)).collect()
+    from_terms(r, &engine(r, gb::groebner(base, n, order, &gens.iter().map(terms).collect::<Vec<_>>()))?)
+}
+
+/// The reduced Gröbner basis in the order of `r` of the ideal whose easy
+/// basis is `easy`: the easy basis in the ring's order, else by a change of
+/// order (FGLM for a zero-dimensional ideal over GF(p)), else computed
+/// again from the easy basis.
+pub fn groebner_from_easy(r: &Ring, easy: &Easy) -> RResult<Vec<Elem>> {
+    let (base, n, order) = shape(r);
+    if easy.order == *order {
+        return from_terms(r, &easy.terms);
+    }
+    from_terms(r, &engine(r, gb::change_order(base, n, &easy.order, &easy.terms, order))?)
+}
+
+/// The polynomials of `r` with the terms `ts`.
+fn from_terms(r: &Ring, ts: &[Terms]) -> RResult<Vec<Elem>> {
+    ts.iter().map(|t| Ok(Elem::mpoly_from_terms(&r.ctx, t)?)).collect()
 }
 
 /// The normal form of `f` modulo `gb`, a Gröbner basis of the ideal of `r`
@@ -344,18 +360,46 @@ fn has_groebner_basis(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(id.poly_ring().base().and_then(ring_props).is_some_and(|p| p.exact && (p.field || p.magma_euclidean)))
 }
 
-/// The ring of the easy basis of `id`: its own, or the ring with the same
-/// coefficients, rank and names in the easy order.
-fn easy_ring(it: &mut Interp, id: &MPolIdeal, easy: &Easy) -> RResult<Rc<Struct>> {
-    if easy.kind == EasyKind::Ring {
-        return Ok(id.ring.clone());
-    }
-    let r = id.poly_ring();
+/// A new polynomial ring with the coefficient ring, the rank and the names
+/// of `r`, in the order `order`.
+fn ring_like(it: &mut Interp, r: &Ring, order: Order) -> RResult<Rc<Struct>> {
     let (_, n, _) = shape(r);
-    let q = it.mpoly_ring(r.base().expect("a polynomial ring"), n, easy.order.clone(), None, false)?;
+    let q = it.mpoly_ring(r.base().expect("a polynomial ring"), n, order, None, false)?;
     let Some((qst, qr)) = ring_of(&q) else { unreachable!("a polynomial ring") };
     *qr.names.borrow_mut() = r.names.borrow().clone();
     Ok(qst.clone())
+}
+
+fn poly_ring_of(st: &Struct) -> &Ring {
+    match &st.kind {
+        StructKind::Ring(r) => r,
+        _ => unreachable!("a polynomial ring"),
+    }
+}
+
+/// The map from the polynomial ring `p` to `q`, of the same rank over the
+/// same coefficient ring, that takes the variables of `p` to those of `q`
+/// in turn.
+fn ring_map(p: &Rc<Struct>, q: &Rc<Struct>) -> Value {
+    Value::Map(Rc::new(MapObj { kind: MapKind::Map, domain: Value::Struct(p.clone()), codomain: Value::Struct(q.clone()), imp: MapImpl::Coercion }))
+}
+
+/// `f`, a polynomial of `r`, divided by its leading coefficient in the order
+/// of `r`.
+fn monic(r: &Ring, f: Elem) -> RResult<Elem> {
+    match leading(r, &f) {
+        Some((c, _)) if c.is_one() != Truth::True => Ok(f.mpoly_mul_scalar(&c.inv()?)?),
+        _ => Ok(f),
+    }
+}
+
+/// The ring of the easy basis of `id`: its own, or a new ring in the easy
+/// order.
+fn easy_ring(it: &mut Interp, id: &MPolIdeal, easy: &Easy) -> RResult<Rc<Struct>> {
+    match easy.kind {
+        EasyKind::Ring => Ok(id.ring.clone()),
+        _ => ring_like(it, id.poly_ring(), easy.order.clone()),
+    }
 }
 
 /// `EasyBasis(I)`: the Gröbner basis of I in the easy order, which Magma
@@ -364,9 +408,98 @@ fn easy_basis(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let id = ideal_arg(a, 0)?;
     let easy = id.easy()?;
     let qst = easy_ring(it, &id, &easy)?;
-    let StructKind::Ring(q) = &qst.kind else { unreachable!("a polynomial ring") };
-    let xs = easy.terms.iter().map(|t| Elem::mpoly_from_terms(&q.ctx, t)).collect::<Result<Vec<_>, _>>()?;
-    one(poly_seq(&qst, xs))
+    one(poly_seq(&qst, from_terms(poly_ring_of(&qst), &easy.terms)?))
+}
+
+/// `EasyIdeal(I)`: the ideal E equal to I whose basis is the easy basis of
+/// I, its Gröbner basis in the ring of the easy basis; the degrees of the
+/// steps of F4, left unassigned; and the isomorphism from the ring of I to
+/// that of E. A ring is its own easy ideal. As in Magma, a call statement
+/// gives E alone.
+fn easy_ideal(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let (e, f) = match a.args[0].as_struct() {
+        Some(StructKind::MPolIdeal(id)) => {
+            let id = id.clone();
+            let easy = id.easy()?;
+            let qst = easy_ring(it, &id, &easy)?;
+            let e = MPolIdeal::new(qst.clone(), from_terms(poly_ring_of(&qst), &easy.terms)?, false);
+            e.mark_groebner();
+            (Value::structure(StructKind::MPolIdeal(Rc::new(e))), ring_map(&id.ring, &qst))
+        }
+        _ => {
+            let Value::Struct(pst) = &a.args[0] else { unreachable!("a polynomial ring") };
+            (a.args[0].clone(), ring_map(pst, pst))
+        }
+    };
+    Ok(if a.nresults < 2 { vals![e] } else { vals![e, Value::Undef, f] })
+}
+
+/// `MarkGroebner(I)`: take the basis of I as it is for its Gröbner basis.
+fn mark_groebner(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    if let Some(StructKind::MPolIdeal(id)) = a.args[0].as_struct() {
+        id.mark_groebner();
+    }
+    Ok(vals![])
+}
+
+/// The ideal of `qst`, a polynomial ring of the rank of the ring P of `id`
+/// over its coefficient ring, whose basis is the image of that of `id`, and
+/// the map from P, which a call statement does not give. As in Magma the
+/// basis is the easy basis once it is known, else the Gröbner basis once
+/// known, each polynomial made monic in the new order, and else the basis as
+/// given. A fixed basis takes no easy basis: Magma computes its Gröbner
+/// basis directly.
+fn ideal_in(a: &CallArgs, id: &MPolIdeal, qst: &Rc<Struct>) -> RResult<Vals> {
+    let q = poly_ring_of(qst);
+    let (ts, reduced): (Vec<Terms>, bool) = match id.known_easy().filter(|_| !id.fixed) {
+        Some(easy) => (easy.terms.clone(), true),
+        None if id.has_groebner() => (id.basis().iter().map(terms).collect(), true),
+        None => (id.gens.iter().map(terms).collect(), false),
+    };
+    let mut basis = from_terms(q, &ts)?;
+    if reduced && q.base().and_then(ring_props).is_some_and(|p| p.field) {
+        basis = basis.into_iter().map(|f| monic(q, f)).collect::<RResult<_>>()?;
+    }
+    let j = MPolIdeal::new(qst.clone(), basis, false);
+    j.learn_from(id);
+    let j = Value::structure(StructKind::MPolIdeal(Rc::new(j)));
+    Ok(if a.nresults < 2 { vals![j] } else { vals![j, ring_map(&id.ring, qst)] })
+}
+
+/// `ChangeOrder(I, Q)`: the ideal of Q corresponding to I, and the map from
+/// the ring of I to Q.
+fn change_order_to(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let id = ideal_arg(a, 0)?;
+    let qst = match a.args[1].as_struct() {
+        Some(StructKind::MPolIdeal(j)) => j.ring.clone(),
+        _ => ring_of(&a.args[1]).expect("a polynomial ring").0.clone(),
+    };
+    let (p, q) = (id.poly_ring(), poly_ring_of(&qst));
+    if shape(p).1 != shape(q).1 {
+        return Err(RuntimeError::runtime("Arguments 1 and 2 have incompatible ranks"));
+    }
+    if p.base() != q.base() {
+        return Err(RuntimeError::runtime("Arguments have incompatible coefficient rings"));
+    }
+    ideal_in(a, &id, &qst)
+}
+
+/// `ChangeOrder(I, order, ...)` and `ChangeOrder(I, <order, ...>)`: the
+/// ideal corresponding to I in the ring with the order given, and the map
+/// to that ring.
+fn change_order_named(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let id = ideal_arg(a, 0)?;
+    let n = shape(id.poly_ring()).1;
+    let order = match &a.args[1] {
+        Value::Str(s) => parse_order(n, s.as_str(), &a.args[2..], 3)?,
+        Value::Tuple(t) => match t.elems.split_first() {
+            Some((Value::Str(s), rest)) => parse_order(n, s.as_str(), rest, 2)?,
+            _ => return Err(RuntimeError::runtime("First component of tuple must be a string")),
+        },
+        _ => unreachable!("an order"),
+    };
+    let qst = ring_like(it, id.poly_ring(), order)?;
+    ideal_in(a, &id, &qst)
 }
 
 /// `SmallBasis(I)`: the shorter of the basis given and the Gröbner basis,
@@ -435,6 +568,14 @@ pub fn register(it: &mut Interp) {
     let doc = "Whether Gröbner bases can be computed over the coefficient ring of the ideal I.";
     it.def("HasGroebnerBasis", "I::RngMPol -> BoolElt", doc, has_groebner_basis);
     it.def("EasyBasis", "I::RngMPol -> [RngMPolElt]", "The Gröbner basis of the ideal I in the easy order.", easy_basis);
+    let doc = "The ideal equal to I with its Gröbner basis in the easy order for basis, and the isomorphism onto it.";
+    it.def("EasyIdeal", "I::RngMPol -> RngMPol, [RngIntElt], Map", doc, easy_ideal);
+    it.def("MarkGroebner", "I::RngMPol", "Take the basis of the ideal I as it is for its Gröbner basis.", mark_groebner);
+    let doc = "The ideal of Q corresponding to the ideal I, and the map from the ring of I to Q.";
+    it.def("ChangeOrder", "I::RngMPol, Q::RngMPol -> RngMPol, Map", doc, change_order_to);
+    let doc = "The ideal corresponding to the ideal I in the ring with the order given, and the map to that ring.";
+    it.def("ChangeOrder", "I::RngMPol, order::MonStgElt, ... -> RngMPol, Map", doc, change_order_named);
+    it.def("ChangeOrder", "I::RngMPol, T::Tup -> RngMPol, Map", doc, change_order_named);
     let doc = "The shorter of the basis of the ideal I as given and its Gröbner basis, once known.";
     it.def("SmallBasis", "I::RngMPol -> [RngMPolElt]", doc, small_basis);
 }

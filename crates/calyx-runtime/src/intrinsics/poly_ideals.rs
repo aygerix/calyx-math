@@ -167,6 +167,11 @@ impl MPolIdeal {
         Ok(easy)
     }
 
+    /// The easy Gröbner basis, if it is known.
+    pub fn known_easy(&self) -> Option<Rc<Easy>> {
+        self.known.borrow().easy.clone()
+    }
+
     /// The kind and the order of the easy Gröbner basis.
     fn easy_order(&self) -> (EasyKind, Order) {
         if let Some(e) = &self.known.borrow().easy {
@@ -233,7 +238,7 @@ impl MPolIdeal {
         if easy.kind == EasyKind::Ring {
             return Ok(elements(r, &easy.terms)?.into());
         }
-        let g: Rc<[Elem]> = super::groebner::groebner_basis(r, &elements(r, &easy.terms)?)?.into();
+        let g: Rc<[Elem]> = super::groebner::groebner_from_easy(r, &easy)?.into();
         self.known.borrow_mut().groebner = Some(g.clone());
         Ok(g)
     }
