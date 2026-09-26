@@ -62,6 +62,7 @@ Argument(<FldRatElt> x) -> FldReElt
 BesselFunction(<RngIntElt> n, <FldRatElt> x) -> FldReElt
 BesselFunctionSecondKind(<RngIntElt> n, <FldRatElt> x) -> FldReElt
 Ceiling(<FldRatElt> x) -> RngIntElt
+ComplementaryErrorFunction(<FldRatElt> x) -> FldReElt
 ComplexConjugate(<FldRatElt> q) -> FldRatElt
 Conjugate(<FldRatElt> q) -> FldRatElt
 ContinuedFraction(<FldRatElt> q) -> [RngIntElt]
@@ -71,6 +72,7 @@ Cosech(<FldRatElt> x) -> FldReElt
 Cosh(<FldRatElt> x) -> FldReElt
 Cot(<FldRatElt> x) -> FldReElt
 Coth(<FldRatElt> x) -> FldReElt
+DawsonIntegral(<FldRatElt> x) -> FldReElt
 Denominator(<FldRatElt> x) -> RngIntElt
 DickmanRho(<FldRatElt> u) -> FldReElt
 DicksonFirst(<RngIntElt> n, <RngElt> a) -> RngUPolElt
@@ -78,10 +80,15 @@ DicksonSecond(<RngIntElt> n, <RngElt> a) -> RngUPolElt
 Dilog(<FldRatElt> x) -> FldComElt
 ElementToSequence(<FldRatElt> q) -> [FldRatElt]
 Eltseq(<FldRatElt> q) -> [FldRatElt]
+Erf(<FldRatElt> x) -> FldReElt
+Erfc(<FldRatElt> x) -> FldReElt
+ErrorFunction(<FldRatElt> x) -> FldReElt
 Evaluate(<RngUPolElt> f, <RngElt> r) -> RngElt
 Evaluate(<RngMPolElt> f, <RngIntElt> i, <RngElt> r) -> RngElt
 Evaluate(<RngMPolElt> f, <RngMPolElt> v, <RngElt> r) -> RngElt
 Exp(<FldRatElt> x) -> FldReElt
+ExponentialIntegral(<FldRatElt> x) -> FldReElt
+ExponentialIntegralE1(<FldRatElt> x) -> FldReElt
 Floor(<FldRatElt> x) -> RngIntElt
 GCD(<FldRatElt> x, <FldRatElt> y) -> FldRatElt
 GCD(<RngIntElt> x, <FldRatElt> y) -> FldRatElt
@@ -93,6 +100,11 @@ Gamma(<FldRatElt> s, <FldRatElt> t) -> FldReElt
 Gamma(<FldRatElt> s, <FldReElt> t) -> FldReElt
 Gamma(<FldReElt> s, <FldRatElt> t) -> FldReElt
 GammaD(<FldRatElt> s) -> FldReElt
+GaussJacobiIntegrationPoints(<RngIntElt> N, <RngIntElt> D, <RngIntElt> a, <FldRatElt> b) -> SeqEnum, SeqEnum
+GaussJacobiIntegrationPoints(<RngIntElt> N, <RngIntElt> D, <FldRatElt> a, <RngIntElt> b) -> SeqEnum, SeqEnum
+GaussJacobiIntegrationPoints(<RngIntElt> N, <RngIntElt> D, <FldRatElt> a, <FldRatElt> b) -> SeqEnum, SeqEnum
+GaussJacobiIntegrationPoints(<RngIntElt> N, <RngIntElt> D, <FldRatElt> a, <FldReElt> b) -> SeqEnum, SeqEnum
+GaussJacobiIntegrationPoints(<RngIntElt> N, <RngIntElt> D, <FldReElt> a, <FldRatElt> b) -> SeqEnum, SeqEnum
 Gcd(<FldRatElt> x, <FldRatElt> y) -> FldRatElt
 Gcd(<RngIntElt> x, <FldRatElt> y) -> FldRatElt
 Gcd(<FldRatElt> x, <RngIntElt> y) -> FldRatElt
@@ -157,6 +169,7 @@ Log(<FldRatElt> b, <FldReElt> x) -> FldReElt
 Log(<FldReElt> b, <FldRatElt> x) -> FldReElt
 LogDerivative(<FldRatElt> x) -> FldReElt
 LogGamma(<FldRatElt> x) -> FldReElt
+LogIntegral(<FldRatElt> x) -> FldReElt
 MinimalField(<FldRatElt> q) -> FldRat
 MinimalPolynomial(<FldRatElt> q) -> RngUPolElt
 Modulus(<FldRatElt> x) -> FldReElt
@@ -191,3 +204,4 @@ Trace(<FldRatElt> q) -> FldRatElt
 Truncate(<FldRatElt> x) -> RngIntElt
 Valuation(<FldRatElt> x, <RngIntElt> p) -> RngIntElt, FldRatElt
 Valuation(<FldRatElt> x, <RngInt> I) -> RngIntElt, FldRatElt
+ZetaFunction(<FldRatElt> s) -> FldReElt

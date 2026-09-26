@@ -16,7 +16,7 @@ use calyx_syntax::ast::BinOp;
 use rustc_hash::FxHashMap;
 
 use super::one;
-use crate::error::{RResult, RuntimeError};
+use crate::error::{ErrKind, ErrStyle, ErrorInfo, RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
 use crate::ops::div_by_zero;
 use crate::print::Level;
@@ -804,6 +804,675 @@ fn hypergeometric_u(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::real(Real::hypergeometric_u(&r(0), &r(1), &x, bits)))
 }
 
+// ----- other special functions ------------------------------------------------
+
+/// The error functions, the exponential and logarithmic integrals and
+/// Dawson's integral of a real number, with an error where the value is
+/// not finite. `E1(x)` is `-Ei(-x)`, so it is also defined for x < 0.
+fn special_function(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    use calyx_flint::mpfr::*;
+    let x = real_at(a, 0);
+    let y = match &*a.name.as_rc() {
+        "Erf" | "ErrorFunction" => x.unary(mpfr_erf),
+        "Erfc" | "ComplementaryErrorFunction" => x.unary(mpfr_erfc),
+        "ExponentialIntegral" => x.unary(mpfr_eint),
+        "ExponentialIntegralE1" => x.neg().unary(mpfr_eint).neg(),
+        "LogIntegral" if x.sign() < 0 => return Err(RuntimeError::runtime("Argument must be non negative")),
+        "LogIntegral" if x == Real::from_i64(1, x.prec()) => return Err(RuntimeError::runtime("Argument is 1")),
+        "LogIntegral" => x.log_integral(),
+        _ => x.dawson(),
+    };
+    if !y.is_finite() {
+        return Err(RuntimeError::runtime("Function not defined for this argument"));
+    }
+    one(Value::real(y))
+}
+
+/// `ZetaFunction(s)`: the Riemann zeta function of a real or complex s ≠ 1.
+fn zeta_function(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let one_error = || RuntimeError::runtime("Argument must not be 1");
+    if let Value::Complex(z) = &a.args[0] {
+        if z.im.is_zero() && z.re == Real::from_i64(1, z.prec()) {
+            return Err(one_error());
+        }
+        return one(super::complex::cv(z.zeta()));
+    }
+    let x = real_at(a, 0);
+    if x.is_nan() || x == Real::from_i64(1, x.prec()) {
+        return Err(one_error());
+    }
+    let y = x.unary(calyx_flint::mpfr::mpfr_zeta);
+    if !y.is_finite() {
+        return Err(RuntimeError::runtime("Function not defined for this argument"));
+    }
+    one(Value::real(y))
+}
+
+/// `ZetaFunction(R, n)`: `zeta(n)` in R for an integer n ≠ 1, |n| < 2^30.
+fn zeta_function_int(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let bits = bits_of(&a.args[0]).unwrap();
+    let n = a.int(1)?;
+    if n.to_i64() == Some(1) {
+        return Err(RuntimeError::runtime("Argument 2 must not be 1"));
+    }
+    let k = n.to_i64().filter(|n| n.unsigned_abs() < 1 << 30).ok_or_else(|| RuntimeError::runtime(format!("Argument 2 ({n}) is too large")))?;
+    one(Value::real(Real::zeta_int(k, bits)))
+}
+
+/// `AGM(x, y)`: the arithmetic-geometric mean of two real or complex
+/// numbers.
+fn agm(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let bits = common_real_bits(a);
+    if a.args.iter().any(|v| matches!(v, Value::Complex(_))) {
+        let c = |v: &Value| super::complex::to_complex(v, bits).unwrap();
+        return one(super::complex::cv(c(&a.args[0]).agm(&c(&a.args[1]))));
+    }
+    let (x, y) = (to_real(&a.args[0], bits).unwrap(), to_real(&a.args[1], bits).unwrap());
+    one(Value::real(x.binary(&y, calyx_flint::mpfr::mpfr_agm)))
+}
+
+/// The index of a Bernoulli number, if it is non-negative (Magma's `B_n`
+/// is 0 for n < 0).
+fn bernoulli_index(a: &CallArgs) -> RResult<Option<u64>> {
+    let n = a.int(0)?;
+    if n.sign() < 0 {
+        return Ok(None);
+    }
+    n.to_u64().filter(|&n| n < 1 << 30).map(Some).ok_or_else(|| RuntimeError::runtime("Argument 1 is too large"))
+}
+
+fn bernoulli_number(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    one(bernoulli_index(a)?.map_or_else(|| Value::int(0), |n| Value::rat(calyx_flint::bernoulli(n))))
+}
+
+fn bernoulli_approximation(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let bits = default_bits();
+    one(Value::real(bernoulli_index(a)?.map_or_else(|| Real::zero(bits), |n| Real::bernoulli(n, bits))))
+}
+
+// ----- infinite series ------------------------------------------------
+
+/// The working precision of the series: Magma sums them by PARI's
+/// algorithms in 128 bits whatever the precision of the terms (InfiniteSum
+/// and Euler's transformation in `series_bits`), and rounds the sum to their
+/// field.
+const SERIES_BITS: u64 = 128;
+
+/// The most terms of InfiniteSum and steps of an inner sum of PositiveSum
+/// (Magma has no limit), and terms of Euler's transformation (Magma's
+/// limit), before giving up.
+const SERIES_TERMS: u64 = 1_000_000;
+const INNER_STEPS: u64 = 100_000;
+const EULER_TERMS: u64 = 10_000;
+
+fn too_many_iterations() -> RuntimeError {
+    RuntimeError::runtime("Too many iterations in summation method")
+}
+
+/// A series `m(a+1) + m(a+2) + ...` of real or complex terms.
+struct Series {
+    map: Rc<MapObj>,
+    a: Integer,
+    /// The precision of the codomain of `m`.
+    bits: u64,
+}
+
+impl Series {
+    /// The series `m(i) + m(i+1) + ...` of `InfiniteSum(m, i)` and the like,
+    /// where `m` must go from the integers to a real field (or a complex one,
+    /// if `complex`).
+    fn new(a: &CallArgs, complex: bool) -> RResult<Series> {
+        let Value::Map(m) = &a.args[0] else { unreachable!() };
+        if !matches!(&m.domain, Value::Struct(s) if matches!(s.kind, StructKind::Integers)) {
+            return Err(RuntimeError::runtime("Map has an invalid domain: should be Integers()"));
+        }
+        let bits = match &m.codomain {
+            Value::Struct(s) if complex || matches!(s.kind, StructKind::Reals(_)) => bits_of(&m.codomain),
+            _ => None,
+        };
+        let Some(bits) = bits else {
+            let fields = if complex { "RealField() or ComplexField()" } else { "RealField()" };
+            return Err(RuntimeError::runtime(format!("Map has an invalid codomain: should be {fields}")));
+        };
+        Ok(Series { map: m.clone(), a: a.int(1)? - &Integer::from_i64(1), bits })
+    }
+
+    /// The term `m(a + n)` as a complex number of the given precision (with
+    /// imaginary part zero for a real).
+    fn term(&self, it: &mut Interp, n: &Integer, bits: u64) -> RResult<ComplexV> {
+        let v = it.apply_map(&self.map, &Value::Int(&self.a + n))?;
+        super::complex::to_complex(&v, bits).ok_or_else(|| RuntimeError::runtime("Terms of the series must be real or complex numbers"))
+    }
+
+    fn nth(&self, it: &mut Interp, n: u64, bits: u64) -> RResult<ComplexV> {
+        self.term(it, &Integer::from_u64(n), bits)
+    }
+
+    /// Magma's check of the first ten terms: none may be negative in a
+    /// positive series, and no two consecutive ones may have the same sign in
+    /// an alternating one.
+    fn check(&self, it: &mut Interp, positive: bool) -> RResult<()> {
+        let mut last = 0;
+        for n in 1..=10 {
+            let sign = self.nth(it, n, self.bits)?.re.sign();
+            if positive && sign < 0 {
+                return Err(RuntimeError::runtime("Series is not positive"));
+            }
+            if !positive && sign * last > 0 {
+                return Err(RuntimeError::runtime("Series is not alternating"));
+            }
+            last = sign;
+        }
+        Ok(())
+    }
+
+    /// The sum `z` in the field of the terms.
+    fn value(&self, z: ComplexV) -> Value {
+        match &self.map.codomain {
+            Value::Struct(s) if matches!(s.kind, StructKind::Reals(_)) => Value::real(z.re.round_to(self.bits)),
+            _ => super::complex::cv(z.round_to(self.bits)),
+        }
+    }
+}
+
+/// The working precision of InfiniteSum and Euler's transformation for
+/// terms of the given precision: whole 64-bit words with room for a few
+/// more bits (192 bits from 38 digits, 256 from 58), and at least 128.
+fn series_bits(bits: u64) -> u64 {
+    (bits + 3).div_ceil(64).max(2) * 64
+}
+
+/// PARI's `expo`: `floor(log2 |x|)`, very small for 0.
+fn expo_real(x: &Real) -> i64 {
+    if x.is_regular() { x.exponent() - 1 } else { i64::MIN / 4 }
+}
+
+/// PARI's `gexpo` of a complex number: the larger `expo` of its parts.
+fn expo(z: &ComplexV) -> i64 {
+    expo_real(&z.re).max(expo_real(&z.im))
+}
+
+/// The number of terms of PARI's `sumalt` and `sumpos` in 128 bits.
+fn cvz_terms() -> u64 {
+    (0.4 * (SERIES_BITS + 7) as f64) as u64
+}
+
+/// The Cohen–Villegas–Zagier acceleration in 128 bits (PARI's `sumalt`):
+/// the weighted sum of the first terms `x(k)` of an alternating series.
+fn cvz_sum(mut x: impl FnMut(u64) -> RResult<Real>) -> RResult<Real> {
+    let (bits, n) = (SERIES_BITS, cvz_terms());
+    let d = Real::from_i64(8, bits).sqrt().add_i64(3).pow_i64(n as i64);
+    let d = d.add(&Real::from_i64(1, bits).div(&d).unwrap()).mul_2exp(-1);
+    let mut az = Integer::from_i64(-1);
+    let mut c = d.clone();
+    let mut sum = Real::zero(bits);
+    for k in 0..n {
+        c = c.add(&Real::from_integer(&az, bits));
+        sum = sum.add(&x(k)?.mul(&c));
+        az = (&(&az * &Integer::from_u64((n - k) * (n + k))) * &Integer::from_i64(2)).divexact(&Integer::from_u64((k + 1) * (2 * k + 1)));
+    }
+    Ok(sum.div(&d).unwrap())
+}
+
+/// `InfiniteSum(m, i)`: PARI's `suminf`, adding the terms to 1 until three
+/// in a row are negligible (below 2^-133 of the sum) and taking away the 1.
+fn infinite_sum(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let s = Series::new(a, true)?;
+    let bits = series_bits(s.bits);
+    let g = SERIES_BITS as i64 + 5;
+    let unit = ComplexV::from_real(Real::from_i64(1, bits));
+    let mut x = unit.clone();
+    let mut small = 0;
+    for n in 1..=SERIES_TERMS {
+        let t = s.nth(it, n, bits)?;
+        x = x.add(&t);
+        if t.is_zero() || expo(&t) <= expo(&x) - g {
+            small += 1;
+            if small == 3 {
+                return one(s.value(x.sub(&unit)));
+            }
+        } else {
+            small = 0;
+        }
+    }
+    Err(too_many_iterations())
+}
+
+/// Magma's error for a parameter with a bad value.
+fn bad_param_value(it: &Interp, a: &CallArgs, p: &str, v: &str) -> RuntimeError {
+    let types: Vec<String> = a.args.iter().map(|v| it.type_name_ext(v)).collect();
+    RuntimeError::runtime(format!("Bad value for parameter '{p}' ({v})\nArgument types given: {}", types.join(", ")))
+}
+
+/// `AlternatingSum(m, i)`: the Cohen–Villegas–Zagier acceleration (PARI's
+/// `sumalt`), or with `Al := "EulerVanWijngaarden"` Euler's transformation
+/// by van Wijngaarden's algorithm.
+fn alternating_sum(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let euler = match a.param("Al") {
+        Some(Value::Str(t)) if t.as_str() == "Villegas" => false,
+        Some(Value::Str(t)) if t.as_str() == "EulerVanWijngaarden" => true,
+        Some(Value::Str(t)) => return Err(bad_param_value(it, a, "Al", t.as_str())),
+        _ => return Err(bad_param(it, a, "Al")),
+    };
+    let s = Series::new(a, false)?;
+    s.check(it, false)?;
+    let sum = if euler { euler_sum(it, &s)? } else { cvz_sum(|k| Ok(s.nth(it, k + 1, SERIES_BITS)?.re))? };
+    one(s.value(ComplexV::from_real(sum)))
+}
+
+/// Euler's transformation of an alternating series by van Wijngaarden's
+/// algorithm in `series_bits`, until an increment from the tenth term on is
+/// below 2^-123.
+fn euler_sum(it: &mut Interp, s: &Series) -> RResult<Real> {
+    let bits = series_bits(s.bits);
+    let mut e = calyx_flint::EulerSum::new(bits);
+    let mut sum = Real::zero(bits);
+    for j in 1..=EULER_TERMS {
+        let inc = e.push(&s.nth(it, j, bits)?.re);
+        sum = sum.add(&inc);
+        if j >= 10 && expo_real(&inc) < 5 - SERIES_BITS as i64 {
+            return Ok(sum);
+        }
+    }
+    Err(too_many_iterations())
+}
+
+/// `PositiveSum(m, i)`: van Wijngaarden's transformation of a series of
+/// positive terms into an alternating one, `b_k = Σ_j 2^j a_(2^j (k+1))`,
+/// summed by the Cohen–Villegas–Zagier acceleration (PARI's `sumpos`).
+fn positive_sum(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let s = Series::new(a, false)?;
+    s.check(it, true)?;
+    let n = cvz_terms();
+    let g = 5 - SERIES_BITS as i64;
+    // The inner sums Σ_kk 2^kk a_(2^kk (2k+2)), each b_(2k+1) of a b_k.
+    let mut stock: Vec<Option<Real>> = vec![None; n as usize + 1];
+    let sum = cvz_sum(|k| {
+        let b = match stock[k as usize].take() {
+            Some(b) => b,
+            None => {
+                let mut x = Real::zero(SERIES_BITS);
+                let mut r = Integer::from_u64(2 * k + 2);
+                for kk in 0.. {
+                    if kk == INNER_STEPS {
+                        return Err(too_many_iterations());
+                    }
+                    let t = s.term(it, &r, SERIES_BITS)?.re.mul_2exp(kk as i64);
+                    x = x.add(&t);
+                    if kk > 0 && expo_real(&t) < g {
+                        break;
+                    }
+                    r = &r * &Integer::from_i64(2);
+                }
+                if 2 * k < n {
+                    stock[2 * k as usize + 1] = Some(x.clone());
+                }
+                s.nth(it, k + 1, SERIES_BITS)?.re.add(&x.mul_2exp(1))
+            }
+        };
+        Ok(if k % 2 == 1 { b.neg() } else { b })
+    })?;
+    one(s.value(ComplexV::from_real(sum)))
+}
+
+// ----- numerical integration ------------------------------------------------
+
+/// A sequence of reals of the given precision.
+fn real_seq(bits: u64, v: Vec<Real>) -> Value {
+    Value::seq(Some(Value::reals(bits)), v.into_iter().map(Value::real).collect())
+}
+
+/// The number of points and the precision (in bits, given in digits) of
+/// an integration scheme.
+fn scheme_args(a: &CallArgs) -> RResult<(u64, u64)> {
+    let (n, d) = (a.int(0)?, a.int(1)?);
+    let n = n.to_u64().filter(|&n| n > 0).ok_or_else(|| super::arg_not(1, "positive"))?;
+    let d = d.to_u64().filter(|&d| d > 0).ok_or_else(|| super::arg_not(2, "positive"))?;
+    Ok((n, bits_for_digits(d)))
+}
+
+fn gauss_legendre_points(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let (n, bits) = scheme_args(a)?;
+    let (x, w) = calyx_flint::quadrature::gauss_legendre(n, bits);
+    Ok(vals![real_seq(bits, x), real_seq(bits, w)])
+}
+
+fn gauss_jacobi_points(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let (n, bits) = scheme_args(a)?;
+    // Exact exponents are taken to far more than the working precision.
+    let exponent = |i: usize| real_arg(&a.args[i]).filter(|_| matches!(a.args[i], Value::Real(_))).unwrap_or_else(|| to_real(&a.args[i], 2 * bits + 192).unwrap());
+    let (alpha, beta) = (exponent(2), exponent(3));
+    for (i, e) in [(3, &alpha), (4, &beta)] {
+        if e.cmp_magma(&Real::from_i64(-1, 2)).is_le() {
+            return Err(RuntimeError::runtime(format!("Argument {i} must be greater than -1")));
+        }
+    }
+    let (x, w) = calyx_flint::quadrature::gauss_jacobi(n, &alpha, &beta, bits);
+    Ok(vals![real_seq(bits, x), real_seq(bits, w)])
+}
+
+fn clenshaw_curtis_points(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let (n, bits) = scheme_args(a)?;
+    let (x, w) = calyx_flint::quadrature::clenshaw_curtis(n, bits);
+    Ok(vals![real_seq(bits, x), real_seq(bits, w)])
+}
+
+fn tanh_sinh_points(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let n = a.int(0)?.to_u64().ok_or_else(|| super::arg_not(1, "non-negative"))?;
+    let h = real_at(a, 1);
+    if h.sign() <= 0 {
+        return Err(super::arg_not(2, "positive"));
+    }
+    let bits = h.prec();
+    let (x, w1, w2) = calyx_flint::quadrature::tanh_sinh(n, &h);
+    Ok(vals![real_seq(bits, x), real_seq(bits, w1), real_seq(bits, w2)])
+}
+
+/// Neville's algorithm as in Numerical Recipes' `polint` (and PARI's
+/// `polinterpolate`): the value at `x` of the polynomial through the points
+/// `(xa[i], ya[i])`, and the last correction, an estimate of its error;
+/// `None` if two points coincide. The tableau is kept in `bits` (as Magma
+/// keeps it in sequences over the field of the values).
+fn neville(xa: &[Real], ya: &[Real], x: &Real, bits: u64) -> Option<(Real, Real)> {
+    let n = xa.len();
+    let mut ns = 0;
+    let mut dif = x.sub(&xa[0]).abs();
+    for (i, xi) in xa.iter().enumerate().skip(1) {
+        let dift = x.sub(xi).abs();
+        if dift.cmp_magma(&dif).is_lt() {
+            ns = i;
+            dif = dift;
+        }
+    }
+    let (mut c, mut d) = (ya.to_vec(), ya.to_vec());
+    let mut y = ya[ns].clone();
+    // ns counts from 1 below, as in Numerical Recipes (after ns--).
+    let mut ns = ns as isize;
+    let mut dy = Real::zero(y.prec());
+    for m in 1..n {
+        for i in 0..n - m {
+            let (ho, hp) = (xa[i].sub(x), xa[i + m].sub(x));
+            let den = c[i + 1].sub(&d[i]).div(&ho.sub(&hp))?;
+            d[i] = hp.mul(&den).round_to(bits);
+            c[i] = ho.mul(&den).round_to(bits);
+        }
+        dy = if 2 * ns < (n - m) as isize {
+            c[ns as usize].clone()
+        } else {
+            ns -= 1;
+            d[ns as usize].clone()
+        };
+        y = y.add(&dy);
+    }
+    Some((y, dy))
+}
+
+/// `Interpolation(P, V, t)`: the value at t of the polynomial through the
+/// points (P[i], V[i]), and an estimate of its error.
+fn interpolation(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let (Value::Seq(p), Value::Seq(v)) = (&a.args[0], &a.args[1]) else { unreachable!() };
+    if p.elems.len() != v.elems.len() {
+        return Err(super::bare(RuntimeError::runtime("Arguments 1 and 2 should have the same length")));
+    }
+    if p.elems.is_empty() {
+        return Err(RuntimeError::runtime("Argument 1 is not non-empty").in_context("Minimum"));
+    }
+    let xa: Vec<Real> = p.elems.iter().map(|x| real_arg(x).unwrap()).collect();
+    let ya: Vec<Real> = v.elems.iter().map(|y| real_arg(y).unwrap()).collect();
+    let bits = v.universe.as_ref().and_then(bits_of).unwrap_or_else(|| ya[0].prec());
+    let (y, dy) = neville(&xa, &ya, &real_at(a, 2), bits).ok_or_else(|| super::bare(RuntimeError::runtime("Two of the x input values are identical (within precision)")))?;
+    Ok(vals![Value::real(y), Value::real(dy)])
+}
+
+// ----- Romberg-type integration and numerical derivatives -----------------------
+//
+// Magma computes these in its arithmetic (each operation in the smaller
+// precision of its operands) on the values of the integrand, which may be
+// integers, rationals, reals or complex numbers. Sums of values are as by
+// `&+`, which adds the first half (rounded down) of a sequence to the rest,
+// recursively. As in Magma's package code, failed requirements do not name
+// the intrinsic and failed operations do not name the operator.
+
+/// The sum of `value(lo), ..., value(hi - 1)`, evaluated in order, as by
+/// Magma's `&+`.
+fn tree_sum(it: &mut Interp, lo: u64, hi: u64, value: &mut dyn FnMut(&mut Interp, u64) -> RResult<Value>) -> RResult<Value> {
+    if hi - lo == 1 {
+        return value(it, lo);
+    }
+    let mid = lo + (hi - lo) / 2;
+    let x = tree_sum(it, lo, mid, value)?;
+    let y = tree_sum(it, mid, hi, value)?;
+    arith(it, BinOp::Add, x, y)
+}
+
+/// `x op y` in Magma's arithmetic, failing as its package code does
+/// (without naming the operator).
+fn arith(it: &mut Interp, op: BinOp, x: Value, y: Value) -> RResult<Value> {
+    it.binop(op, x, y).map_err(|mut e| {
+        e.context = Some(String::new());
+        e
+    })
+}
+
+fn integrand(it: &mut Interp, f: &Value, x: Real) -> RResult<Value> {
+    it.call_function(f, vec![Value::real(x)])
+}
+
+/// `&+[RealField() | f(x + k h) : k in ks]`: the values of f at those
+/// points, coerced into the default real field and added there.
+fn default_field_sum(it: &mut Interp, f: &Value, x: &Real, h: &Real, ks: impl Iterator<Item = i64>) -> RResult<Value> {
+    let mut vals = Vec::new();
+    for k in ks {
+        vals.push(integrand(it, f, x.add(&h.mul_i64(k)))?);
+    }
+    let bits = default_bits();
+    let field = Value::reals(bits);
+    let mut xs = Vec::with_capacity(vals.len());
+    for v in &vals {
+        match it.coerce(&field, v) {
+            Ok(Value::Real(r)) => xs.push(r.x.clone()),
+            _ => return Err(RuntimeError::runtime("Cannot coerce element into the universe").in_context("sequence construction")),
+        }
+    }
+    fn sum(xs: &[Real]) -> Real {
+        if xs.len() == 1 {
+            return xs[0].clone();
+        }
+        let m = xs.len() / 2;
+        sum(&xs[..m]).add(&sum(&xs[m..]))
+    }
+    Ok(Value::real(if xs.is_empty() { Real::zero(bits) } else { sum(&xs) }))
+}
+
+/// The number n of intervals of Simpson's and the trapezoidal rule, at
+/// least `min`.
+fn intervals(a: &CallArgs, min: i64) -> RResult<i64> {
+    let n = a.int(3)?;
+    if n.sign() < 0 || n.to_i64().is_some_and(|n| n < min) {
+        return Err(super::bare(RuntimeError::runtime(format!("Argument 4 ({n}) should be >= {min}"))));
+    }
+    n.to_i64().ok_or_else(|| RuntimeError::runtime("Argument 4 is too large"))
+}
+
+/// The endpoints a and b of an integral, and the width `(b - a)/n` of n
+/// intervals, in the precision of the points (the smaller of theirs).
+fn interval_width(a: &CallArgs, n: i64) -> (Real, Real) {
+    let (x, y) = (real_at(a, 1), real_at(a, 2));
+    let h = y.sub(&x).div_i64(n);
+    (x, h)
+}
+
+/// `TrapezoidalQuadrature(f, a, b, n)`: the trapezoidal rule on n
+/// intervals of width h, `h((f(a) + f(b))/2 + Σ f(a + kh))`, the sum taken
+/// in the default real field.
+fn trapezoidal_quadrature(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let n = intervals(a, 1)?;
+    let f = a.args[0].clone();
+    let (x, h) = interval_width(a, n);
+    let fa = it.call_function(&f, vec![a.args[1].clone()])?;
+    let fb = it.call_function(&f, vec![a.args[2].clone()])?;
+    let ends = arith(it, BinOp::Add, fa, fb)?;
+    let ends = arith(it, BinOp::Div, ends, Value::int(2))?;
+    let inner = default_field_sum(it, &f, &x, &h, 1..n)?;
+    let s = arith(it, BinOp::Add, ends, inner)?;
+    one(arith(it, BinOp::Mul, Value::real(h), s)?)
+}
+
+/// `SimpsonQuadrature(f, a, b, n)`: Simpson's rule on an even number n of
+/// intervals of width h, `h/3 (f(a) + f(b) + 4 Σ f(odd points) + 2 Σ
+/// f(even points))`, the sums taken in the default real field.
+fn simpson_quadrature(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let n = intervals(a, 2)?;
+    if n % 2 == 1 {
+        return Err(super::bare(RuntimeError::runtime("Argument 4 must be even")));
+    }
+    let f = a.args[0].clone();
+    let (x, h) = interval_width(a, n);
+    let fa = it.call_function(&f, vec![a.args[1].clone()])?;
+    let fb = it.call_function(&f, vec![a.args[2].clone()])?;
+    let s = arith(it, BinOp::Add, fa, fb)?;
+    let odd = default_field_sum(it, &f, &x, &h, (1..n).step_by(2))?;
+    let odd = arith(it, BinOp::Mul, Value::int(4), odd)?;
+    let s = arith(it, BinOp::Add, s, odd)?;
+    let even = default_field_sum(it, &f, &x, &h, (2..n).step_by(2))?;
+    let even = arith(it, BinOp::Mul, Value::int(2), even)?;
+    let s = arith(it, BinOp::Add, s, even)?;
+    let h3 = arith(it, BinOp::Div, Value::real(h), Value::int(3))?;
+    one(arith(it, BinOp::Mul, h3, s)?)
+}
+
+/// The number of trapezoidal sums RombergQuadrature extrapolates from:
+/// always five, whatever the parameter K.
+const ROMBERG_POINTS: usize = 5;
+
+fn exceeded_steps() -> RuntimeError {
+    let msg = "Exceeded maximum number of steps";
+    ErrorInfo { kind: ErrKind::User, object: Some(Value::str(msg)), style: ErrStyle::Bare, ..ErrorInfo::runtime(msg) }.into()
+}
+
+/// `RombergQuadrature(f, a, b)`: Romberg's method, as in Numerical Recipes'
+/// `qromb` and `trapzd`. The first trapezoidal sum is `(b - a)(f(a) +
+/// f(b))/2` and the j-th adds the midpoints `x0 + k del` of the `m =
+/// 2^(j-2)` intervals of width del, `((b - a) Σ f(x0 + k del)/m + s)/2`;
+/// the sums are kept in the default field. From the sixth on, the value at
+/// 0 of the polynomial through `(4^(1-i), s_i)` for the last five is the
+/// result once the estimate of its error is below `Precision` times its
+/// size.
+fn romberg_quadrature(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let d = default_bits();
+    let eps = match a.param("Precision") {
+        Some(Value::Undef) | None => Value::real(Real::parse("1.0e-6", d).unwrap()),
+        Some(p) => p.clone(),
+    };
+    let eps = it.call_intrinsic_named(crate::sym::Sym::new("Abs"), vec![eps])?;
+    // Magma prints false for K < 2, and otherwise ignores K.
+    let k = a.param("K").cloned().unwrap_or(Value::int(5));
+    if matches!(arith(it, BinOp::Lt, k, Value::int(2))?, Value::Bool(true)) {
+        it.out.write("false\n");
+    }
+    let steps = match a.param("MaxSteps") {
+        Some(Value::Int(n)) => n.to_i64().unwrap_or(i64::MAX),
+        None => 20,
+        Some(_) => return Err(RuntimeError::runtime("Sequence range does not consist of integers").in_context("[ ... ]")),
+    };
+    let f = a.args[0].clone();
+    let (x, y) = (real_at(a, 1), real_at(a, 2));
+    let span = y.sub(&x);
+    let (mut hs, mut ss): (Vec<Real>, Vec<Real>) = (Vec::new(), Vec::new());
+    let mut h = Real::from_i64(1, d);
+    for j in 1..=steps {
+        let s = match ss.last() {
+            None => {
+                let fa = it.call_function(&f, vec![a.args[1].clone()])?;
+                let fb = it.call_function(&f, vec![a.args[2].clone()])?;
+                let ends = arith(it, BinOp::Add, fa, fb)?;
+                let s = arith(it, BinOp::Mul, Value::real(span.clone()), ends)?;
+                arith(it, BinOp::Div, s, Value::int(2))?
+            }
+            Some(last) => {
+                let last = Value::real(last.clone());
+                let m = 1u64.checked_shl(j as u32 - 2).filter(|&m| m < 1 << 62).ok_or_else(exceeded_steps)?;
+                let del = span.mul_2exp(2 - j);
+                let x0 = x.add(&del.mul_2exp(-1));
+                let sum = tree_sum(it, 0, m, &mut |it, k| integrand(it, &f, x0.add(&del.mul_i64(k as i64))))?;
+                let t = arith(it, BinOp::Mul, Value::real(span.clone()), sum)?;
+                let t = arith(it, BinOp::Div, t, Value::Int(Integer::from_u64(m)))?;
+                let s = arith(it, BinOp::Add, last, t)?;
+                arith(it, BinOp::Div, s, Value::int(2))?
+            }
+        };
+        let s = match &s {
+            Value::Complex(c) if c.im.is_zero() => c.re.round_to(d),
+            _ => to_real(&s, d).ok_or_else(|| RuntimeError::runtime("Sequence mutation failed").in_context("[]:="))?,
+        };
+        if ss.len() == ROMBERG_POINTS {
+            hs.remove(0);
+            ss.remove(0);
+        }
+        hs.push(h.clone());
+        ss.push(s);
+        h = h.mul_2exp(-2);
+        if j > ROMBERG_POINTS as i64 {
+            let (v, dv) = neville(&hs, &ss, &Real::zero(d), d).expect("distinct points");
+            let tol = arith(it, BinOp::Mul, eps.clone(), Value::real(v.abs()))?;
+            if matches!(arith(it, BinOp::Lt, Value::real(dv.abs()), tol)?, Value::Bool(true)) {
+                return one(Value::real(v));
+            }
+        }
+    }
+    Err(exceeded_steps())
+}
+
+/// `NumericalDerivative(f, n, z)`: the n-th derivative of f at z of d
+/// digits from its values at the n + 1 points `x_k = z - h + ks`, `s =
+/// 2h/n`, `h = 10^(L - d/2)` for `10^L <= ⌈|z|⌉ + 1 < 10^(L+1)`: `Σ (-1)^k
+/// C(n, k) f(x_k)/(-s)^n` in Magma's arithmetic, with `d + n(d/2 + 2 + L)`
+/// digits, in the field of z.
+fn numerical_derivative(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let n = a.int(1)?;
+    if n.sign() < 0 {
+        return Err(super::bare(RuntimeError::runtime("Derivative must be at least 0")));
+    }
+    let n = n.to_i64().filter(|&n| n < 1 << 20).ok_or_else(|| RuntimeError::runtime("Argument 2 is too large"))?;
+    let (f, z) = (a.args[0].clone(), a.args[2].clone());
+    let zb = bits_of(&z).unwrap();
+    let parent = if matches!(z, Value::Complex(_)) { it.complex_field(zb) } else { Value::reals(zb) };
+    let r = if n == 0 {
+        it.call_function(&f, vec![z])?
+    } else {
+        let d = calyx_flint::digits_for_bits(zb);
+        let size = match &z {
+            Value::Complex(c) => c.abs(),
+            _ => real_at(a, 2).abs(),
+        };
+        let l = if size.is_finite() { (&size.ceil() + &Integer::one()).to_string().len() as u64 - 1 } else { 0 };
+        let bits = bits_for_digits(d + (n as u64 * (d + 4 + 2 * l)).div_ceil(2));
+        let h = Real::from_i64(10, bits).pow(&Real::from_i64(2 * l as i64 - d as i64, bits).mul_2exp(-1));
+        let step = h.mul_2exp(1).div_i64(n);
+        let point = |k: i64| match &z {
+            Value::Complex(c) => super::complex::cv(ComplexV::new(c.re.round_to(bits).sub(&h).add(&step.mul_i64(k)), c.im.round_to(bits))),
+            _ => Value::real(real_at(a, 2).round_to(bits).sub(&h).add(&step.mul_i64(k))),
+        };
+        let n = n as u64;
+        let sum = tree_sum(it, 0, n + 1, &mut |it, k| {
+            let v = it.call_function(&f, vec![point(k as i64)])?;
+            let c = Integer::binomial_u64(n, k);
+            arith(it, BinOp::Mul, v, Value::Int(if k % 2 == 1 { -c } else { c }))
+        })?;
+        arith(it, BinOp::Div, sum, Value::real(step.neg().pow_i64(n as i64)))?
+    };
+    one(it.coerce(&parent, &r).map_err(|e| e.in_context("!"))?)
+}
+
+/// `DiscreteFourierTransform(E)`: `F[k] = Σ_j E[j] e^(-2πi(j-1)(k-1)/n)`.
+fn discrete_fourier_transform(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let Value::Seq(s) = &a.args[0] else { unreachable!() };
+    let bits = s.universe.as_ref().and_then(bits_of).unwrap_or_else(default_bits);
+    let v: Vec<calyx_flint::Complex> = s.elems.iter().map(|z| super::complex::to_complex(z, bits).unwrap()).collect();
+    let w = calyx_flint::quadrature::dft(&v, bits);
+    one(Value::seq(s.universe.clone(), w.into_iter().map(super::complex::cv).collect()))
+}
+
 fn mpfr_version(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::str(&calyx_flint::mpfr::version()))
 }
@@ -961,5 +1630,59 @@ pub fn register(it: &mut Interp) {
                 it.def("HypergeometricU", &format!("a::{t}, b::{u}, x::{v} -> FldReElt"), "The confluent hypergeometric function U(a, b, x), x > 0.", hypergeometric_u);
             }
         }
+    }
+
+    // Other special functions.
+    let special = [
+        ("Erf", "The error function of x."),
+        ("ErrorFunction", "The error function of x."),
+        ("Erfc", "The complementary error function of x, 1 - Erf(x)."),
+        ("ComplementaryErrorFunction", "The complementary error function of x, 1 - Erf(x)."),
+        ("ExponentialIntegral", "The exponential integral Ei(x), the principal value of the integral of e^u/u from minus infinity to x."),
+        ("ExponentialIntegralE1", "The exponential integral E1(x), the integral of e^-u/u from x to infinity."),
+        ("LogIntegral", "The logarithmic integral li(x) of x >= 0, x /= 1."),
+        ("DawsonIntegral", "Dawson's integral e^(-x^2) times the integral of e^(u^2) from 0 to x."),
+    ];
+    for (name, doc) in special {
+        for t in REAL_ARGS {
+            it.def(name, &format!("x::{t} -> FldReElt"), doc, special_function);
+        }
+    }
+    for t in ["RngIntElt", "FldRatElt", "FldReElt", "FldComElt"] {
+        let r = if t == "FldComElt" { t } else { "FldReElt" };
+        it.def("ZetaFunction", &format!("s::{t} -> {r}"), "The Riemann zeta function of s /= 1.", zeta_function);
+    }
+    for (t, u) in [("FldReElt", "FldReElt"), ("FldComElt", "FldComElt"), ("FldReElt", "FldComElt"), ("FldComElt", "FldReElt")] {
+        let r = if t == u && t == "FldReElt" { t } else { "FldComElt" };
+        for name in ["AGM", "ArithmeticGeometricMean"] {
+            it.def(name, &format!("x::{t}, y::{u} -> {r}"), "The arithmetic-geometric mean of x and y.", agm);
+        }
+    }
+    it.def("ZetaFunction", "R::FldRe, n::RngIntElt -> FldReElt", "The Riemann zeta function of the integer n /= 1, in R.", zeta_function_int);
+    it.def("BernoulliNumber", "n::RngIntElt -> FldRatElt", "The n-th Bernoulli number.", bernoulli_number);
+    it.def("BernoulliApproximation", "n::RngIntElt -> FldReElt", "The n-th Bernoulli number in the default real field.", bernoulli_approximation);
+
+    // Infinite series.
+    it.def("InfiniteSum", "m::Map, i::RngIntElt -> FldReElt", "An approximation to the sum m(i) + m(i+1) + ... (real or complex).", infinite_sum);
+    it.def("PositiveSum", "m::Map, i::RngIntElt -> FldReElt", "An approximation to the sum m(i) + m(i+1) + ... of positive terms (van Wijngaarden's transformation).", positive_sum);
+    it.def_params("AlternatingSum", "m::Map, i::RngIntElt -> FldReElt", &[("Al", Value::str("Villegas"))], "An approximation to the sum m(i) + m(i+1) + ... of terms of alternating signs.", alternating_sum);
+
+    // Numerical integration.
+    it.def("Interpolation", "P::[FldReElt], V::[FldReElt], t::FldReElt -> FldReElt, FldReElt", "The value at t of the polynomial through the points (P[i], V[i]), and an estimate of its error (Neville's algorithm).", interpolation);
+    it.def("DiscreteFourierTransform", "E::[FldComElt] -> SeqEnum", "The discrete Fourier transform of E.", discrete_fourier_transform);
+    it.def("GaussLegendreIntegrationPoints", "N::RngIntElt, D::RngIntElt -> SeqEnum, SeqEnum", "The nodes and weights of Gauss-Legendre quadrature on N points, to D digits.", gauss_legendre_points);
+    for t in ["RngIntElt", "FldRatElt", "FldReElt"] {
+        for u in ["RngIntElt", "FldRatElt", "FldReElt"] {
+            it.def("GaussJacobiIntegrationPoints", &format!("N::RngIntElt, D::RngIntElt, a::{t}, b::{u} -> SeqEnum, SeqEnum"), "The nodes and weights of Gauss-Jacobi quadrature for the weight (1-x)^a (1+x)^b on N points, to D digits.", gauss_jacobi_points);
+        }
+    }
+    it.def("ClenshawCurtisIntegrationPoints", "N::RngIntElt, D::RngIntElt -> SeqEnum, SeqEnum", "The nodes and weights of Clenshaw-Curtis quadrature on N + 1 points, to D digits.", clenshaw_curtis_points);
+    it.def("TanhSinhIntegrationPoints", "N::RngIntElt, h::FldReElt -> SeqEnum, SeqEnum, SeqEnum", "The nodes, weights and extra weights of tanh-sinh quadrature on 2N + 1 points with step h.", tanh_sinh_points);
+    let romberg = [("Precision", Value::Undef), ("MaxSteps", Value::int(20)), ("K", Value::int(5))];
+    it.def_params("RombergQuadrature", "f::Program, a::FldReElt, b::FldReElt -> FldReElt", &romberg, "The integral of f from a to b by Romberg's method, to relative accuracy Precision (default 1.0e-6) in at most MaxSteps steps.", romberg_quadrature);
+    it.def("SimpsonQuadrature", "f::Program, a::FldReElt, b::FldReElt, n::RngIntElt -> FldReElt", "The integral of f from a to b by Simpson's rule on n intervals (n even).", simpson_quadrature);
+    it.def("TrapezoidalQuadrature", "f::Program, a::FldReElt, b::FldReElt, n::RngIntElt -> FldReElt", "The integral of f from a to b by the trapezoidal rule on n intervals.", trapezoidal_quadrature);
+    for t in ["FldReElt", "FldComElt"] {
+        it.def("NumericalDerivative", &format!("f::UserProgram, n::RngIntElt, z::{t} -> {t}"), "The n-th derivative of f at z, from the values of f at n + 1 points near z.", numerical_derivative);
     }
 }

@@ -39,6 +39,7 @@ unsafe extern "C" {
     pub fn mpfr_init2(x: *mut Mpfr, prec: c_long);
     pub fn mpfr_clear(x: *mut Mpfr);
     pub fn mpfr_set(r: *mut Mpfr, x: *const Mpfr, rnd: Rnd) -> c_int;
+    pub fn mpfr_swap(x: *mut Mpfr, y: *mut Mpfr);
     pub fn mpfr_set_si(r: *mut Mpfr, v: c_long, rnd: Rnd) -> c_int;
     pub fn mpfr_set_ui(r: *mut Mpfr, v: c_ulong, rnd: Rnd) -> c_int;
     pub fn mpfr_set_d(r: *mut Mpfr, v: c_double, rnd: Rnd) -> c_int;

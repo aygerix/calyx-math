@@ -17,8 +17,10 @@ mod packed;
 mod modular;
 pub mod mpfr;
 mod nmod;
+pub mod quadrature;
 mod rational;
 mod real;
+mod series;
 mod special;
 
 pub use complex::{Complex, Elementary, ModifiedPolylog};
@@ -27,6 +29,8 @@ pub use modular::{Modular, ThetaCost};
 pub use nmod::{Nmod, gcd as gcd_u64};
 pub use rational::Rational;
 pub use real::{Real, bits_for_digits, digits_for_bits, parse_decimal};
+pub use series::EulerSum;
+pub use special::bernoulli;
 
 use std::ffi::CStr;
 use std::os::raw::c_char;
