@@ -56,3 +56,21 @@ a + x, x + a, a - 2*x, x * a;
 x in Pa, a in P, 3 in P, (P!3) in Z, x in Z;
 y in P;
 (1/2) in P;
+
+// Homomorphisms given by the image of the variable.
+Q := Rationals();
+U<t> := PolynomialRing(Q);
+F := GF(5);
+h := hom< U -> U | t + 1 >;
+h;
+h(t^2), h(U!3);
+c := hom< Integers() -> F | >;
+k := hom< P -> F | c, 3 >;
+k(x^2 + 1);
+hom< P -> F | [3] >;
+hom< U -> U | t, t >;
+hom< U -> U | >;
+hom< U -> U | t, t, t >;
+hom< U -> F | t >;
+hom< U -> F | c, 3 >;
+hom< P -> F | hom< Integers() -> GF(7) | >, 3 >;

@@ -1100,40 +1100,6 @@ fn sum_norm(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 
 // ----- structure operations -------------------------------------------------
 
-/// The map of `ChangeRing` between multivariate polynomial rings: coercion
-/// of the coefficients, or a map applied to them.
-struct CoefficientMap(Option<Rc<MapObj>>);
-
-impl NativeMap for CoefficientMap {
-    fn apply(&self, it: &mut Interp, m: &MapObj, x: &Value) -> RResult<Value> {
-        let x = it.coerce(&m.domain, x).map_err(|_| RuntimeError::runtime("Element is not in the domain of the map").in_context("map application"))?;
-        let Value::Elt(f) = &x else { unreachable!("a polynomial") };
-        let Some((cst, cod)) = ring_of(&m.codomain) else { unreachable!("a polynomial ring") };
-        let (cst, target, ctx) = (cst.clone(), cod.base().expect("a polynomial ring").clone(), cod.ctx.clone());
-        let source = f.ring().base().expect("a polynomial ring").clone();
-        let mut terms = Vec::with_capacity(f.x.mpoly_len());
-        for i in 0..f.x.mpoly_len() {
-            let (c, exps) = f.x.mpoly_term(i);
-            let mut c = it.elem_to_value(&source, c);
-            if let Some(g) = &self.0 {
-                c = it.apply_map(g, &c)?;
-            }
-            match it.to_structure_elem(&target, &c, true)? {
-                Some(c) => terms.push((c, exps)),
-                None => {
-                    let msg = "Cannot coerce element from source coefficent ring into the destination coefficient ring";
-                    return Err(RuntimeError::runtime(msg).in_context("map application"));
-                }
-            }
-        }
-        Ok(make_elt(&cst, Elem::mpoly_from_terms(&ctx, &terms)?))
-    }
-
-    fn preimage(&self, _it: &mut Interp, _m: &MapObj, _y: &Value) -> RResult<Value> {
-        Err(RuntimeError::runtime("No inverse is known for the map").in_context("@@"))
-    }
-}
-
 /// A homomorphism from a polynomial ring given by the images of its
 /// variables, applying a map to the coefficients or coercing them.
 struct PolyHom {
@@ -1148,10 +1114,11 @@ impl NativeMap for PolyHom {
         let base = base_of(f);
         let image = |it: &mut Interp, c: Elem| -> RResult<Value> {
             let c = it.elem_to_value(&base, c);
-            match &self.coeff {
-                Some(g) => it.apply_map(g, &c),
-                None => it.coerce(&m.codomain, &c),
-            }
+            let c = match &self.coeff {
+                Some(g) => it.apply_map(g, &c)?,
+                None => c,
+            };
+            it.coerce(&m.codomain, &c)
         };
         // Horner's rule for a univariate polynomial, a sum of terms otherwise.
         let mut acc = it.coerce(&m.codomain, &Value::int(0))?;
@@ -1183,28 +1150,58 @@ impl NativeMap for PolyHom {
 
 /// `hom< P -> S | y1, ..., yn >` and `hom< P -> S | f, y1, ..., yn >` for a
 /// polynomial ring P: the images of the variables in S, after a map f of the
-/// coefficients. `None` if P is not a polynomial ring.
+/// coefficients (from the coefficient ring into a ring that coerces into S).
+/// Sequences among the images are flattened. `None` if P is not a polynomial
+/// ring.
 pub fn polynomial_hom(it: &mut Interp, domain: &Value, codomain: &Value, images: &[Value]) -> RResult<Option<Value>> {
     let Some((_, r)) = ring_of(domain).filter(|(_, r)| matches!(r.kind, RingKind::UPoly { .. } | RingKind::MPoly { .. })) else { return Ok(None) };
-    let n = r.ngens();
-    let (coeff, ys) = match images {
+    let (n, univariate) = (r.ngens(), matches!(r.kind, RingKind::UPoly { .. }));
+    let err = |s: String| RuntimeError::runtime(s).in_context("hom< ... >");
+    let mut items = Vec::with_capacity(images.len());
+    for v in images {
+        match v {
+            Value::Seq(s) => items.extend(s.elems.iter().cloned()),
+            v => items.push(v.clone()),
+        }
+    }
+    if univariate && !(1..=2).contains(&items.len()) {
+        return Err(err("Wrong number of arguments to polynomial homomorphism element constructor (should be 1 or 2)".into()));
+    }
+    if items.is_empty() {
+        return Err(err("No images given".into()));
+    }
+    let (coeff, ys) = match &items[..] {
         [Value::Map(g), ys @ ..] => (Some(g.clone()), ys),
+        [_, _] if univariate => return Err(err("Illegal coefficient map".into())),
         ys => (None, ys),
     };
+    if let Some(g) = &coeff {
+        let base = r.base().expect("a polynomial ring").clone();
+        if !it.auto_coerces(&base, &g.domain) || !it.auto_coerces(&g.codomain, codomain) {
+            return Err(err("Illegal coefficient map".into()));
+        }
+    }
+    // The univariate constructor and the multivariate one word their errors
+    // differently; a multivariate image that does not coerce counts as a
+    // wrong arity.
+    let arity = || err(format!("RHS has arity {} but should have length {n}", ys.len()));
     if ys.len() != n {
-        return Err(RuntimeError::runtime(format!("Number of images ({}) does not equal the number of variables ({n})", ys.len())).in_context("hom< ... >"));
+        return Err(arity());
     }
     let mut out = Vec::with_capacity(n);
     for y in ys {
-        out.push(it.coerce(codomain, y).map_err(|e| e.in_context("hom< ... >"))?);
+        match it.coerce(codomain, y) {
+            Ok(y) => out.push(y),
+            Err(_) if univariate => return Err(err("Element is not in the codomain of the map".into())),
+            Err(_) => return Err(arity()),
+        }
     }
     let h = PolyHom { coeff, images: out };
     Ok(Some(Value::Map(Rc::new(MapObj { kind: MapKind::Map, domain: domain.clone(), codomain: codomain.clone(), imp: MapImpl::Native(Rc::new(h)) }))))
 }
 
 /// `ChangeRing(P, S)`: the polynomial ring over S with the rank, order and
-/// names of P, and the map from P (applying f to the coefficients if
-/// given).
+/// names of P (unlike the univariate one, without a map).
 fn change_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (_, r) = ring_arg(a, 0);
     let RingKind::MPoly { rank, order, .. } = r.kind else { unreachable!("a multivariate polynomial ring") };
@@ -1212,12 +1209,7 @@ fn change_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     if let Some((_, qr)) = ring_of(&q) {
         *qr.names.borrow_mut() = r.names.borrow().clone();
     }
-    let f = match a.args.get(2) {
-        Some(Value::Map(m)) => Some(m.clone()),
-        _ => None,
-    };
-    let h = MapObj { kind: MapKind::Map, domain: a.args[0].clone(), codomain: q.clone(), imp: MapImpl::Native(Rc::new(CoefficientMap(f))) };
-    Ok(vals![q, Value::Map(Rc::new(h))])
+    one(q)
 }
 
 pub fn register(it: &mut Interp) {
@@ -1226,8 +1218,7 @@ pub fn register(it: &mut Interp) {
         it.def(name, "R::Rng, n::RngIntElt, order::MonStgElt -> RngMPol", "The polynomial ring in n variables over R with the given monomial order.", polynomial_ring);
     }
     it.def("Identity", "P::RngMPol -> RngMPolElt", "The identity of P.", identity);
-    it.def("ChangeRing", "P::RngMPol, S::Rng -> RngMPol, Map", "The polynomial ring over S with the rank, order and names of P, with the map from P coercing coefficients.", change_ring);
-    it.def("ChangeRing", "P::RngMPol, S::Rng, f::Map -> RngMPol, Map", "The polynomial ring over S with the rank, order and names of P, with the map from P applying f to the coefficients.", change_ring);
+    it.def("ChangeRing", "P::RngMPol, S::Rng -> RngMPol", "The polynomial ring over S with the rank, order and names of P.", change_ring);
     it.def("MultivariatePolynomial", "P::RngMPol, f::RngUPolElt, i::RngIntElt -> RngMPolElt", "The univariate polynomial f in the i-th variable of P.", multivariate_polynomial);
     it.def("IsRegular", "f::RngMPolElt -> BoolElt", "Whether f is not a zero divisor.", is_regular);
     // A variable is given by its number or as itself.
