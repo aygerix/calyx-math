@@ -21,9 +21,12 @@ use crate::value::{Struct, StructKind, Value};
 /// A deterministic irreducible polynomial of degree `n` over `F_p` (primitive
 /// when the field is small enough for Zech logarithms), used when no Conway
 /// polynomial is known. Candidates are tried in order of their low-order
-/// coefficients, so sparse polynomials come first.
+/// coefficients, so sparse polynomials come first. As in Magma, for p > 127
+/// the binomials x^n + c are passed over unless n divides p - 1, so that
+/// the search starts at x^n + x + 1.
 pub fn default_irreducible(p: &Integer, n: u64) -> RResult<Vec<Integer>> {
     let small = p.pow(n).to_u64().is_some_and(|q| q <= ZECH_LIMIT);
+    let no_binomials = *p > Integer::from_u64(127) && (p - &Integer::one()).mod_u64(n) != 0;
     if let Some(pw) = p.to_u64() {
         // Over GF(2) this is the least g with x^n + g irreducible.
         if let Some(g) = (pw == 2 && !small).then(|| calyx_flint::gf2x::least_low_term(n as usize)).flatten() {
@@ -32,6 +35,9 @@ pub fn default_irreducible(p: &Integer, n: u64) -> RResult<Vec<Integer>> {
         // The same order, counting in words.
         let mut digits = vec![0u64; n as usize + 1];
         digits[n as usize] = 1;
+        if no_binomials {
+            digits[1] = 1;
+        }
         loop {
             let Some(i) = (0..n as usize).find(|&i| digits[i] + 1 < pw) else {
                 return Err(RuntimeError::runtime("No irreducible polynomial found"));
@@ -46,7 +52,7 @@ pub fn default_irreducible(p: &Integer, n: u64) -> RResult<Vec<Integer>> {
             }
         }
     }
-    let mut counter = Integer::one();
+    let mut counter = if no_binomials { p + &Integer::one() } else { Integer::one() };
     loop {
         let mut coeffs = Vec::with_capacity(n as usize + 1);
         let mut c = counter.clone();

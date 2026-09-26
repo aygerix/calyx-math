@@ -18,6 +18,15 @@ F<a> := GF(4099, 24);
 x := a^5 + a + 1; y := a^23 + 3*a^2;
 x^(4099^24 - 2) eq x^-1, (x*y)/y eq x, Trace(x), Norm(x), Frobenius(x, 24) eq x, [IsSquare(y)];
 
+// default moduli where no Conway polynomial is known: past p = 127, a
+// binomial only when n divides p - 1
+for pn in [<17, 64>, <113, 32>, <127, 27>, <137, 16>, <181, 25>, <211, 25>, <673, 64>, <1009, 27>, <2521, 64>, <32003, 16>, <65521, 16>, <65521, 17>, <65521, 32>] do
+  DefiningPolynomial(GF(pn[1], pn[2]));
+end for;
+F<a> := GF(65521, 32);
+x := a^5 + a + 1;
+Norm(x), Trace(x^7), x^(65521^32 - 2) eq x^-1, Frobenius(x, 32) eq x;
+
 // orders and logarithms
 F<a> := GF(3^13);
 Order(a), IsPrimitive(a), IsPrimitive(a^2), Order(a^2 + 1), Log(a^12345), Log(a^5, a^12345 * a^5), FactoredOrder(a + 1);
@@ -36,7 +45,8 @@ i^2, i^4, Order(i), Order(i + 1), [i^k : k in [1..8]], (i + 1)^-1, Sqrt(i), IsPr
 F<a> := GF(3^13);
 P<t> := PolynomialRing(F);
 f := (t - a)*(t - a^2)^2*(t^2 + t + a);
-Factorization(f);
+fac := Factorization(f);
+#fac, [h : h in fac | h[2] eq 2], &*[h[1]^h[2] : h in fac] eq f, &and[IsIrreducible(h[1]) : h in fac];
 #Roots(f), [r[2] : r in Roots(f) | r[1] in {a, a^2}], &and[Evaluate(f, r[1]) eq 0 : r in Roots(f)];
 SquarefreeFactorization(f);
 IsIrreducible(t^2 + t + a), GCD(f, Derivative(f)), XGCD(t^3 + a, t^2 + 1);
@@ -54,7 +64,8 @@ R<u, v, w> := PolynomialRing(GF(7^30), 3, "grevlex");
 #GroebnerBasis([u^2 + v*w, v^2 + u*w + 1, w^2 + u + v]);
 F<a> := GF(65521^3);
 P<t> := PolynomialRing(F);
-Roots((t - a)*(t - a^2 - 1)*(t^2 - a)), Factorization(t^4 + a);
+g := (t - a)*(t - a^2 - 1)*(t^2 - a);
+#Roots(g), &and[Evaluate(g, r[1]) eq 0 : r in Roots(g)], [Degree(h[1]) : h in Factorization(t^4 + a)];
 
 // subfields and extensions
 F<a> := GF(3^24);
