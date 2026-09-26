@@ -102,6 +102,32 @@ H<h1, h2> := PolynomialRing(Integers(6), 2);
 IsUnit(1 + 2*h1), IsUnit(H!5), IsRegular(h1), IsRegular(2*h1);
 IsZeroDivisor(2*h1 + 4*h2);
 
+// Algebraic dependence of a set of polynomials (text/246), in
+// characteristic 0.
+D<d1, d2, d3> := PolynomialRing(Rationals(), 3);
+IsAlgebraicallyDependent({d1, d2});
+IsAlgebraicallyDependent({d1, d2, d1*d2});
+IsAlgebraicallyDependent({d1^2, d2^2, d1*d2});
+IsAlgebraicallyDependent({d1 + d2, d1^2 + 2*d1*d2 + d2^2});
+IsAlgebraicallyDependent({d1^2 + d2^2, d1*d2, d3});
+IsAlgebraicallyDependent({d1*d2*d3, d1 + d2 + d3, d1*d2 + d2*d3 + d3*d1});
+IsAlgebraicallyDependent({d1*d2, d2*d3, d3*d1});
+IsAlgebraicallyDependent({d1*d2, d2*d3, d3*d1, d1 + d2 + d3});
+IsAlgebraicallyDependent({d1^2*d2, d1*d2^2}), IsAlgebraicallyDependent({d1^3 - d2^2, d1});
+IsAlgebraicallyDependent({(d1 + d2)^3, (d1 + d2)^5});
+IsAlgebraicallyDependent({d1 + 1, d1}), IsAlgebraicallyDependent({D!2, d1});
+IsAlgebraicallyDependent({D|}), IsAlgebraicallyDependent({}), IsAlgebraicallyDependent({d1});
+IsAlgebraicallyDependent({D!1}), IsAlgebraicallyDependent({D!0}), IsAlgebraicallyDependent({d1, D!0});
+IsAlgebraicallyDependent({2*x, 3*y}), IsAlgebraicallyDependent({x, y, x*y}), IsAlgebraicallyDependent({2*x + 1, 3*x});
+IsAlgebraicallyDependent({x^2 - y, y - z^3, x*z}), IsAlgebraicallyDependent({x^2 - y, y - z^3, x^2 - z^3});
+IsAlgebraicallyDependent([d1, d2]);
+IsAlgebraicallyDependent({@ d1, d2 @});
+IsAlgebraicallyDependent({* d1, d2 *});
+IsAlgebraicallyDependent({1, 2});
+IsAlgebraicallyDependent({d1}, {d2});
+U<u> := PolynomialRing(Rationals());
+IsAlgebraicallyDependent({u, u^2});
+
 // Coefficients, monomials and terms.
 f := 3*x^2*y - 2*x*z^3 + y^2 - 5;
 Coefficients(f), Coefficients(P!0);

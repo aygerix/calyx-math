@@ -16,7 +16,7 @@ use super::{base_of, like, mpol, partial, rank, terms};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
 use crate::intrinsics::matrices::{self, Mtrx, Shape};
-use crate::intrinsics::one;
+use crate::intrinsics::{boolv, hidden, one};
 use crate::intrinsics::upoly::put_entry;
 use crate::rings::props::ring_props;
 use crate::rings::{Elt, ring_of};
@@ -29,19 +29,52 @@ use crate::value::*;
 pub(super) fn jacobian_matrix(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = a.seq(0)?.clone();
     let Some(ring) = s.universe.clone() else { return Err(RuntimeError::runtime("Bad argument types")) };
-    let n = match ring_of(&ring) {
+    let m = jacobian(it, &ring, &s.elems)?;
+    one(matrices::mat_value(it, &ring, m)?)
+}
+
+/// The Jacobian matrix of the polynomials `fs` of `ring`, over that ring.
+fn jacobian(it: &mut Interp, ring: &Value, fs: &[Value]) -> RResult<Mat> {
+    let n = match ring_of(ring) {
         Some((_, r)) => rank(r),
         None => return Err(RuntimeError::runtime("Bad argument types")),
     };
-    let ctx = matrices::entry_ctx(it, &ring)?;
-    let mut m = Mat::zero(&ctx, s.elems.len(), n);
-    for (i, f) in s.elems.iter().enumerate() {
+    let ctx = matrices::entry_ctx(it, ring)?;
+    let mut m = Mat::zero(&ctx, fs.len(), n);
+    for (i, f) in fs.iter().enumerate() {
         let Value::Elt(f) = f else { unreachable!("a polynomial") };
         for j in 0..n {
-            put_entry(it, &ring, &mut m, i, j, &partial(&f.x, j, 1)?)?;
+            put_entry(it, ring, &mut m, i, j, &partial(&f.x, j, 1)?)?;
         }
     }
-    one(matrices::mat_value(it, &ring, m)?)
+    Ok(m)
+}
+
+/// Whether the polynomials of the set S are algebraically dependent. In
+/// characteristic 0 they are exactly when their Jacobian matrix has rank
+/// less than #S (over the field of fractions of the ring). Positive
+/// characteristic needs elimination, which waits for Gröbner bases; over
+/// the real and complex fields Magma's elimination ideal refuses the
+/// coefficient ring.
+pub(super) fn is_algebraically_dependent(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let Value::Set(s) = &a.args[0] else { unreachable!("a set") };
+    let fs: Vec<Value> = s.iter().collect();
+    let Some(ring) = s.universe.clone() else { return boolv(false) };
+    let Some((_, r)) = ring_of(&ring) else { unreachable!("a polynomial ring") };
+    let (n, props) = (rank(r), r.base().and_then(ring_props).expect("a coefficient ring"));
+    if !props.exact {
+        return Err(hidden(RuntimeError::runtime("Base ring must be an exact field or a Euclidean ring").in_context("ideal< ... >")));
+    }
+    if !props.characteristic.is_zero() {
+        return Err(RuntimeError::runtime("Not implemented for coefficient rings of positive characteristic"));
+    }
+    // More polynomials than variables are always dependent.
+    if fs.len() > n {
+        return boolv(true);
+    }
+    let m = jacobian(it, &ring, &fs)?;
+    let Value::Mat(m) = matrices::mat_value(it, &ring, m)? else { unreachable!("a matrix") };
+    boolv(matrices::rank_of(&m)? < fs.len())
 }
 
 /// The symmetric matrix B with f = v B v^T for f of total degree 2, where v
