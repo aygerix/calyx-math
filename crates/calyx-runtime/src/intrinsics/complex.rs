@@ -8,16 +8,18 @@
 
 use std::rc::Rc;
 
-use calyx_flint::{Elementary, ModifiedPolylog, Modular, Real, ThetaCost};
+use calyx_flint::gr::CtxKind;
+use calyx_flint::polroots;
+use calyx_flint::{Elementary, Integer, ModifiedPolylog, Modular, Rational, Real, ThetaCost};
 use calyx_syntax::ast::BinOp;
 
 use super::reals::{self, default_bits, field_bits, to_real};
-use super::{boolv, one};
+use super::{arg_not, boolv, one};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
 use crate::ops::div_by_zero;
 use crate::print::Level;
-use crate::rings::{RingKind, ring_of};
+use crate::rings::{Elt, RingKind, ring_of};
 use crate::value::*;
 
 /// An integer, rational, real or complex number as a complex number of the
@@ -532,6 +534,125 @@ fn jacobi_theta_null(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     }
 }
 
+// ----- roots of polynomials -----------------------------------------------------
+
+/// The coefficients of `f`, constant term first, as the real and imaginary
+/// parts of Gaussian integers after clearing denominators, if its
+/// coefficient ring is the integers, the rationals or a real or complex
+/// field. Roots are those of the exact coefficients (as in Magma, which
+/// does not round the coefficients of `f` into the field of the roots).
+fn exact_coefficients(f: &Elt) -> Option<(Vec<Integer>, Vec<Integer>)> {
+    let kind = f.x.ctx().base()?.kind().clone();
+    let mut parts = Vec::new();
+    for k in 0..f.x.poly_len() {
+        let c = f.x.poly_coeff(k);
+        parts.push(match kind {
+            CtxKind::Integers => (Rational::from_integer(&c.to_integer().ok()?), Rational::zero()),
+            CtxKind::Rationals => (c.to_rational().ok()?, Rational::zero()),
+            CtxKind::RealFloat(_) => (c.to_real()?.to_rational()?, Rational::zero()),
+            CtxKind::ComplexFloat(_) => {
+                let (x, y) = c.to_complex_parts()?;
+                (x.to_rational()?, y.to_rational()?)
+            }
+            _ => return None,
+        });
+    }
+    let den = parts.iter().fold(Integer::one(), |d, (x, y)| d.lcm(&x.denominator()).lcm(&y.denominator()));
+    let den = Rational::from_integer(&den);
+    Some(parts.iter().map(|(x, y)| ((x * &den).numerator(), (y * &den).numerator())).unzip())
+}
+
+/// Checks the parameters of Roots over a real or complex field. Al and
+/// Digits choose Magma's algorithm and its accuracy, but the roots here are
+/// always rounded correctly, so like Max (which Magma ignores here) they
+/// are not used.
+fn root_params(it: &Interp, a: &CallArgs) -> RResult<()> {
+    let types = || a.args.iter().map(|v| it.type_name_ext(v)).collect::<Vec<_>>().join(", ");
+    let bad_type = |p: &str| RuntimeError::runtime(format!("Bad type for parameter '{p}'\nArgument types given: {}", types()));
+    match a.param("Al") {
+        Some(Value::Str(s)) if !["Schonhage", "Laguerre", "NewtonRaphson", "Combination"].contains(&s.as_str()) => {
+            return Err(RuntimeError::runtime(format!("Bad value for parameter 'Al' ({})\nArgument types given: {}", s.as_str(), types())));
+        }
+        None | Some(Value::Str(_)) => {}
+        Some(_) => return Err(bad_type("Al")),
+    }
+    match a.param("Digits") {
+        Some(Value::Int(n)) if n.sign() <= 0 => return Err(RuntimeError::runtime("Bad value for parameter 'Digits': value not positive")),
+        None | Some(Value::Undef | Value::Int(_)) => {}
+        Some(_) => return Err(bad_type("Digits")),
+    }
+    match a.param("Max") {
+        Some(Value::Int(m)) if !m.to_i64().is_some_and(|v| (0..1 << 30).contains(&v)) => Err(RuntimeError::runtime("Bad value for parameter 'Max': value not small non-negative")),
+        None | Some(Value::Undef | Value::Int(_)) => Ok(()),
+        Some(_) => Err(bad_type("Max")),
+    }
+}
+
+/// The precision of a real or complex field, and whether it is complex.
+fn root_field(s: &Value) -> (u64, bool) {
+    match s {
+        Value::Struct(st) => match &st.kind {
+            StructKind::Reals(bits) => (*bits, false),
+            StructKind::Ring(r) => match r.kind {
+                RingKind::Complex(bits) => (bits, true),
+                _ => unreachable!("a real or complex field"),
+            },
+            _ => unreachable!("a real or complex field"),
+        },
+        _ => unreachable!("a real or complex field"),
+    }
+}
+
+/// The polynomial argument of Roots or HasRoot, and the field `S` to find
+/// its roots in (argument 2, or its coefficient field), with its exact
+/// coefficients if they lie in `S`.
+fn root_args(a: &CallArgs, verb: &str) -> RResult<(Value, u64, bool, Vec<Integer>, Vec<Integer>)> {
+    let Value::Elt(f) = &a.args[0] else { unreachable!("a polynomial argument") };
+    let s = a.args.get(1).cloned().unwrap_or_else(|| f.ring().base().expect("a polynomial").clone());
+    let (bits, complex) = root_field(&s);
+    match exact_coefficients(f).filter(|(_, im)| complex || im.iter().all(Integer::is_zero)) {
+        Some((re, im)) => Ok((s, bits, complex, re, im)),
+        None => Err(RuntimeError::runtime(format!("Argument 1 cannot be {verb} to be over argument 2"))),
+    }
+}
+
+/// The roots in `S` of the nonzero polynomial with Gaussian integer
+/// coefficients `re + i·im`: in ascending order in a real field, and in a
+/// complex field in the order of `polroots::complex_roots` (Magma lists them
+/// in the order PARI finds them).
+fn field_roots(bits: u64, complex: bool, re: &[Integer], im: &[Integer]) -> RResult<Vec<(Value, u64)>> {
+    if !complex {
+        return Ok(polroots::real_roots(re, bits).into_iter().map(|(r, e)| (Value::real(r), e)).collect());
+    }
+    let rs = polroots::complex_roots(re, im, bits).ok_or_else(|| RuntimeError::runtime("Roots could not be computed"))?;
+    Ok(rs.into_iter().map(|(z, e)| (cv(z), e)).collect())
+}
+
+fn roots(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    root_params(it, a)?;
+    let (s, bits, complex, re, im) = root_args(a, "coerced")?;
+    if re.iter().chain(&im).all(Integer::is_zero) {
+        return Err(arg_not(1, "non-zero"));
+    }
+    let rs = field_roots(bits, complex, &re, &im)?;
+    let universe = Value::structure(StructKind::Cartesian(vec![s, Value::integers()]));
+    one(Value::seq(Some(universe), rs.into_iter().map(|(r, e)| Value::tuple(vec![r, Value::int(e as i64)])).collect()))
+}
+
+/// Whether the polynomial has a root in `S`, and a root: zero if it is one,
+/// else the first of its roots.
+fn has_root(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let (_, bits, complex, re, im) = root_args(a, "changed")?;
+    if re.first().is_none_or(Integer::is_zero) && im.first().is_none_or(Integer::is_zero) {
+        let zero = if complex { cv(ComplexV::new(Real::zero(bits), Real::zero(bits))) } else { Value::real(Real::zero(bits)) };
+        return Ok(vals![Value::Bool(true), zero]);
+    }
+    match field_roots(bits, complex, &re, &im)?.into_iter().next() {
+        Some((r, _)) => Ok(vals![Value::Bool(true), r]),
+        None => Ok(vals![Value::Bool(false), Value::Undef]),
+    }
+}
+
 pub fn register(it: &mut Interp) {
     it.def_params("ComplexField", "-> FldCom", &[("Bits", Value::Bool(false))], "The default complex field.", complex_field);
     it.def_params("ComplexField", "p::RngIntElt -> FldCom", &[("Bits", Value::Bool(false))], "The complex field with p decimal digits of precision (or p bits with Bits).", complex_field);
@@ -607,6 +728,14 @@ pub fn register(it: &mut Interp) {
             let r = if s == "FldComElt" || t == "FldComElt" { "FldComElt" } else { "FldReElt" };
             it.def("JacobiTheta", &format!("q::{s}, z::{t} -> {r}"), "Jacobi's first theta function with nome q (|q| < 1) at z.", jacobi_theta);
         }
+    }
+    // Roots of polynomials.
+    let params = [("Al", Value::str("Schonhage")), ("Digits", Value::Undef), ("Max", Value::Undef)];
+    for t in ["FldRe", "FldCom"] {
+        it.def_params("Roots", &format!("p::RngUPolElt[{t}] -> [Tup]"), &params, "The roots of p in its coefficient field with their multiplicities, rounded correctly.", roots);
+        it.def_params("Roots", &format!("p::RngUPolElt, S::{t} -> [Tup]"), &params, "The roots of p in S with their multiplicities, rounded correctly.", roots);
+        it.def("HasRoot", &format!("p::RngUPolElt[{t}] -> BoolElt, {t}Elt"), "Whether p has a root in its coefficient field, and a root (0 if it is one, else the first of its roots).", has_root);
+        it.def("HasRoot", &format!("p::RngUPolElt, S::{t} -> BoolElt, {t}Elt"), "Whether p has a root in S, and a root (0 if it is one, else the first of its roots).", has_root);
     }
     for s in ["RngIntElt", "FldRatElt", "FldReElt", "FldComElt"] {
         it.def("JacobiThetaNullK", &format!("q::{s}, k::RngIntElt -> FldReElt"), "The k-th derivative at 0 of Jacobi's first theta function with nome q (real).", jacobi_theta_null);
