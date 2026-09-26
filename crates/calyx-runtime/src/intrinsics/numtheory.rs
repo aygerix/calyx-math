@@ -808,7 +808,7 @@ fn norm_equation_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 
 // ----- Dickman's rho ------------------------------------------------------------------
 
-/// rho(u) to `digits` decimal digits: on [k-1, k] rho(k - z) is a power
+/// rho(u) to `target` bits: on [k-1, k] rho(k - z) is a power
 /// series in z whose coefficients follow from those on [k-2, k-1] by
 /// u rho'(u) = -rho(u - 1).
 fn dickman_rho(u: &Real, target: u64) -> Real {

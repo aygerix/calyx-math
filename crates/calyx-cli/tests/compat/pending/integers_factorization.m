@@ -2,6 +2,11 @@
 // Pollard rho, p-1, p+1, SQUFOF, ECM with a fixed curve, MPQS), stored
 // factors, ECM group orders, divisors, coprime bases, partial
 // factorizations and Cunningham numbers.
+// TrialDivision follows the handbook of 2.29: since V2.29-9 it keeps to the
+// bound exactly and returns the residue as an integer, where 2.22 returns a
+// sequence and always divides out 2, 3, 5 and 7. StoreFactor takes a set,
+// as the handbook says; 2.22 accepts one but stores nothing. SQUFOF(360) is
+// complete here, where 2.22 returns [<2, 1>] and [10, 18]; that needs 2.29.
 Factorization(360); Factorisation(-360); Factorization(1); Factorization(-1); Factorization(2^64+1); Factorization(10^20+1);
 Factorization(0);
 f, s := Factorization(-12); f, s;

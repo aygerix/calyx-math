@@ -1,5 +1,7 @@
 // Random integers and primes: only properties of the random values are
-// printed, plus the errors for bad arguments.
+// printed, plus the errors for bad arguments. RandomPrime(0) and
+// RandomPrime(1) return 0, and RandomPrime(n, a, b, x) wants n >= 1, as the
+// handbook of 2.29 says; 2.22 wants n >= 2 in both.
 x := Random(1, 6); x ge 1 and x le 6; Type(x);
 Random(5, 5); Random(0);
 Random(6, 1);
