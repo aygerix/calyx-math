@@ -7,7 +7,7 @@
 use flint3_sys as sys;
 
 use crate::mpfr as m;
-use crate::{Integer, Real};
+use crate::{Complex, Integer, Real};
 
 /// A real ball.
 pub struct Arb(pub sys::arb_struct);
@@ -54,7 +54,7 @@ impl Arb {
     /// The midpoint rounded to `bits`.
     pub fn mid(&self, bits: u64) -> Real {
         let mut r = Real::zero(bits);
-        unsafe { m::arf_get_mpfr(r.raw_mut(), &self.0.mid, m::RNDN) };
+        unsafe { m::arf_to_mpfr(r.raw_mut(), &self.0.mid) };
         r
     }
 }
@@ -119,7 +119,7 @@ fn round_ball(b: &sys::arb_struct, bits: u64) -> Option<Real> {
         }
         let mut lo = Real::zero(bits);
         if sys::mag_is_zero(&b.rad) != 0 {
-            m::arf_get_mpfr(lo.raw_mut(), &b.mid, m::RNDN);
+            m::arf_to_mpfr(lo.raw_mut(), &b.mid);
             return Some(lo);
         }
         let mut hi = Real::zero(bits);
@@ -127,9 +127,9 @@ fn round_ball(b: &sys::arb_struct, bits: u64) -> Option<Real> {
         sys::arf_init(&mut a);
         let wp = (sys::arf_bits(&b.mid) as u64).max(bits) + 64;
         sys::arb_get_lbound_arf(&mut a, b, wp as sys::slong);
-        m::arf_get_mpfr(lo.raw_mut(), &a, m::RNDN);
+        m::arf_to_mpfr(lo.raw_mut(), &a);
         sys::arb_get_ubound_arf(&mut a, b, wp as sys::slong);
-        m::arf_get_mpfr(hi.raw_mut(), &a, m::RNDN);
+        m::arf_to_mpfr(hi.raw_mut(), &a);
         sys::arf_clear(&mut a);
         (lo == hi && lo.is_zero() == hi.is_zero()).then_some(lo)
     }
@@ -141,7 +141,7 @@ pub fn max_precision(bits: u64) -> u64 {
 }
 
 /// Working precisions to try for a result of `bits` bits.
-fn precisions(bits: u64) -> impl Iterator<Item = u64> {
+pub(crate) fn precisions(bits: u64) -> impl Iterator<Item = u64> {
     let mut wp = bits + 32;
     let max = max_precision(bits);
     std::iter::from_fn(move || {
@@ -172,18 +172,28 @@ pub fn eval_complex(bits: u64, mut f: impl FnMut(*mut sys::acb_struct, i64)) -> 
     let mut out = Acb::new();
     for wp in precisions(bits) {
         f(out.mut_ptr(), wp as i64);
-        if let (Some(re), Some(im)) = (round_ball(&out.0.real, bits), round_ball(&out.0.imag, bits)) {
-            return (re, im);
+        if let Ok(z) = round_acb(&out.0, bits) {
+            return (z.re, z.im);
         }
+    }
+    let z = round_acb(&out.0, bits).unwrap_or_else(|mid| mid);
+    (z.re, z.im)
+}
+
+/// A complex ball rounded to `bits` in each part, or its midpoint (NaN
+/// parts where not finite) if the ball does not determine the rounding.
+pub(crate) fn round_acb(b: &sys::acb_struct, bits: u64) -> Result<Complex, Complex> {
+    if let (Some(re), Some(im)) = (round_ball(&b.real, bits), round_ball(&b.imag, bits)) {
+        return Ok(Complex::new(re, im));
     }
     let part = |b: &sys::arb_struct| {
         let mut r = Real::nan(bits);
         if unsafe { sys::arf_is_finite(&b.mid) } != 0 {
-            unsafe { m::arf_get_mpfr(r.raw_mut(), &b.mid, m::RNDN) };
+            unsafe { m::arf_to_mpfr(r.raw_mut(), &b.mid) };
         }
         r
     };
-    (part(&out.0.real), part(&out.0.imag))
+    Err(Complex::new(part(&b.real), part(&b.imag)))
 }
 
 /// As `eval_complex`, but `None` if no precision determines the value.

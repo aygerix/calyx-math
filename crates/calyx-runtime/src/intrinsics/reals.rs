@@ -601,10 +601,7 @@ fn common_real_bits(a: &CallArgs) -> u64 {
 /// logarithms, in the field of b and x if they are the same, else in the
 /// default real field.
 fn log_base(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let bits = match (&a.args[0], &a.args[1]) {
-        (Value::Real(b), Value::Real(x)) if b.x.prec() == x.x.prec() => b.x.prec(),
-        _ => default_bits(),
-    };
+    let bits = shared_bits(&a.args);
     let (b, x) = (to_real(&a.args[0], bits).unwrap(), to_real(&a.args[1], bits).unwrap());
     if b.sign() <= 0 {
         return Err(super::arg_not(1, "positive"));
@@ -629,6 +626,182 @@ fn arctan2(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
         return Err(RuntimeError::runtime("Arguments cannot both be zero"));
     }
     one(Value::real(y.binary(&x, calyx_flint::mpfr::mpfr_atan2)))
+}
+
+// ----- gamma, Bessel and associated functions ------------------------------------------------
+
+/// Magma's errors at the poles of the gamma function on the real line: 0
+/// (of either sign) and the negative integers.
+fn real_pole(x: &Real) -> RResult<()> {
+    if x.is_zero() {
+        return Err(RuntimeError::runtime("Argument must be non zero"));
+    }
+    if x.sign() < 0 && x.is_integer() {
+        return Err(RuntimeError::runtime("Argument must not be a negative integer"));
+    }
+    Ok(())
+}
+
+/// `Gamma(x)`, `LogGamma(x)` and `Psi(x)` (also `LogDerivative(x)`) of a
+/// real or complex number, integers and rationals in the default field.
+/// The real Gamma and LogGamma are MPFR's, and an error where their value
+/// is not finite (so where Gamma is negative for LogGamma). The complex
+/// LogGamma is the principal branch, log(Gamma(x)).
+fn gamma_function(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let name = a.name.as_rc();
+    if let Value::Complex(z) = &a.args[0] {
+        if z.im.is_zero() && (z.re.is_zero() || z.re.sign() < 0 && z.re.is_integer()) {
+            return Err(RuntimeError::runtime(match &*name {
+                "Gamma" if z.re.is_zero() => "Argument 1 is not non-zero",
+                "Gamma" => "Argument must not be a negative integer",
+                _ => "Argument 1 must not be a non positive integer",
+            }));
+        }
+        let w = match &*name {
+            "Gamma" => z.gamma(),
+            "LogGamma" => z.log_gamma(),
+            _ => z.digamma(),
+        };
+        return one(super::complex::cv(w));
+    }
+    let x = real_at(a, 0);
+    real_pole(&x)?;
+    use calyx_flint::mpfr::*;
+    let y = match &*name {
+        "Gamma" => x.unary(mpfr_gamma),
+        "LogGamma" => x.unary(mpfr_lngamma),
+        _ => return one(Value::real(x.unary(mpfr_digamma))),
+    };
+    if !y.is_finite() {
+        return Err(RuntimeError::runtime("Function not defined for this argument"));
+    }
+    one(Value::real(y))
+}
+
+/// Magma's error for a parameter of the wrong type.
+fn bad_param(it: &Interp, a: &CallArgs, p: &str) -> RuntimeError {
+    let types: Vec<String> = a.args.iter().map(|v| it.type_name_ext(v)).collect();
+    RuntimeError::runtime(format!("Bad type for parameter '{p}'\nArgument types given: {}", types.join(", ")))
+}
+
+/// The precision of a function computed by PARI in Magma: that of its
+/// arguments if they are reals of the same precision, else the default one.
+fn shared_bits(v: &[Value]) -> u64 {
+    match prec_of(&v[0]) {
+        Some(p) if v.iter().all(|x| matches!(x, Value::Real(r) if r.x.prec() == p)) => p,
+        _ => default_bits(),
+    }
+}
+
+/// `Gamma(s, t)`: the incomplete gamma function `∫_0^t u^(s-1) e^-u du`,
+/// or with `Complementary` `∫_t^∞ u^(s-1) e^-u du`. Given the value `g` of
+/// `Γ(s)` as `Gamma`, the lower one is `g` minus the upper one.
+fn incomplete_gamma(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let upper = match a.param("Complementary") {
+        Some(Value::Bool(b)) => *b,
+        _ => return Err(bad_param(it, a, "Complementary")),
+    };
+    let g = match a.param("Gamma") {
+        None | Some(Value::Undef) => None,
+        Some(Value::Real(g)) => Some(g.x.clone()),
+        _ => return Err(bad_param(it, a, "Gamma")),
+    };
+    if upper && g.is_some() {
+        return Err(RuntimeError::runtime("Parameter Gamma cannot be given when parameter Complementary is true"));
+    }
+    let bits = shared_bits(&a.args);
+    let (s, t) = (to_real(&a.args[0], bits).unwrap(), to_real(&a.args[1], bits).unwrap());
+    // The lower function at a pole of Γ(s), and the integrals from 0 that
+    // diverge.
+    let pole = s.sign() <= 0 && s.is_integer();
+    if pole && !upper && g.is_none() || t.is_zero() && s.sign() <= 0 {
+        return Err(RuntimeError::runtime("Division by zero in (possibly) real or complex division. Maybe loss of precision?"));
+    }
+    one(Value::real(match g {
+        Some(g) => g.round_to(bits).sub(&Real::incomplete_gamma(&s, &t, true, bits)),
+        None => Real::incomplete_gamma(&s, &t, upper, bits),
+    }))
+}
+
+/// `GammaD(s)`: `Γ(s + 1/2)`.
+fn gamma_d(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let x = real_at(a, 0);
+    // s + 1/2 is a pole when 2s is an odd integer, s < 0.
+    let twice = x.add(&x);
+    if x.sign() < 0 && twice.is_integer() && !x.is_integer() {
+        real_pole(&twice.add(&Real::from_i64(1, x.prec())))?;
+    }
+    one(Value::real(x.gamma_half()))
+}
+
+/// A Bessel function's order: a small non-negative integer.
+fn bessel_order(a: &CallArgs) -> RResult<i64> {
+    let n = a.int(0)?;
+    n.to_i64().filter(|n| (0..1 << 30).contains(n)).ok_or_else(|| RuntimeError::runtime(format!("Argument 1 ({n}) is not small and non-negative")))
+}
+
+/// `BesselFunction(n, x)` and `BesselFunctionSecondKind(n, x)`: `J_n(x)`
+/// and `Y_n(x)` (MPFR's, so `Y_n(x)` is NaN for x < 0).
+fn bessel_function(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let n = bessel_order(a)?;
+    let x = real_at(a, 1);
+    one(Value::real(if &*a.name.as_rc() == "BesselFunction" { Real::bessel_jn(n, &x) } else { Real::bessel_yn(n, &x) }))
+}
+
+/// `JBessel(n, x)`: the Bessel function of the first kind of half-integral
+/// order `J_(n+1/2)(x)`, x ≥ 0 (by the same formula for a real n).
+fn j_bessel(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let x = real_at(a, 1);
+    let n = match &a.args[0] {
+        Value::Real(r) => r.x.clone(),
+        _ => Real::from_i64(bessel_order(a)?, 64),
+    };
+    if x.sign() < 0 {
+        return Err(RuntimeError::runtime("Argument 2 must be non-negative"));
+    }
+    one(Value::real(Real::bessel_j_half(&n, &x, x.prec())))
+}
+
+/// `KBessel(nu, x)` and `KBessel2(nu, x)`: the modified Bessel function of
+/// the second kind `K_nu(x)`, x > 0. For a real order in the smaller
+/// precision of nu and x, for a complex one in that of nu, which x must
+/// have.
+fn k_bessel(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let complex = match &a.args[0] {
+        Value::Complex(nu) => Some(nu.clone()),
+        _ => None,
+    };
+    let bits = complex.as_ref().map_or_else(|| common_real_bits(a), |nu| nu.prec());
+    if complex.is_some() && prec_of(&a.args[1]) < Some(bits) {
+        return Err(RuntimeError::runtime("Argument 2 must have at least the precision of argument 1"));
+    }
+    let x = to_real(&a.args[1], bits).unwrap();
+    if x.sign() <= 0 {
+        return Err(RuntimeError::runtime("Argument must be positive"));
+    }
+    if let Some(nu) = complex {
+        return one(super::complex::cv(calyx_flint::Complex::bessel_k(&nu, &calyx_flint::Complex::from_real(x), bits)));
+    }
+    let nu = to_real(&a.args[0], bits).unwrap();
+    one(Value::real(Real::bessel_k(&nu, &x, bits)))
+}
+
+/// `HypergeometricU(a, b, x)`: the confluent hypergeometric function
+/// `U(a, b, x)`, x > 0. Reals a and b of the same precision need x in their
+/// field.
+fn hypergeometric_u(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    if let (Some(p), Some(q), Some(r)) = (prec_of(&a.args[0]), prec_of(&a.args[1]), prec_of(&a.args[2])) {
+        if p == q && q != r {
+            return Err(RuntimeError::runtime("Arguments are not compatible"));
+        }
+    }
+    let bits = shared_bits(&a.args);
+    let r = |i: usize| to_real(&a.args[i], bits).unwrap();
+    let x = r(2);
+    if x.sign() <= 0 {
+        return Err(RuntimeError::runtime("Argument 3 must be positive"));
+    }
+    one(Value::real(Real::hypergeometric_u(&r(0), &r(1), &x, bits)))
 }
 
 fn mpfr_version(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
@@ -749,6 +922,43 @@ pub fn register(it: &mut Interp) {
             it.def("Log", &format!("b::{t}, x::{u} -> FldReElt"), "The logarithm of x to the base b.", log_base);
             for name in ["Arctan", "Arctan2"] {
                 it.def(name, &format!("x::{t}, y::{u} -> FldReElt"), "The angle of the point (x, y) in (-pi, pi], the inverse tangent of y/x.", arctan2);
+            }
+        }
+    }
+
+    // Gamma, Bessel and associated functions; integers and rationals are in
+    // the default field.
+    const REAL_ARGS: [&str; 3] = ["RngIntElt", "FldRatElt", "FldReElt"];
+    for t in ["RngIntElt", "FldRatElt", "FldReElt", "FldComElt"] {
+        let r = if t == "FldComElt" { t } else { "FldReElt" };
+        it.def("Gamma", &format!("x::{t} -> {r}"), "The gamma function of x.", gamma_function);
+        it.def("LogGamma", &format!("x::{t} -> {r}"), "The logarithm of the gamma function of x (its principal branch).", gamma_function);
+        for name in ["Psi", "LogDerivative"] {
+            it.def(name, &format!("x::{t} -> {r}"), "The logarithmic derivative of the gamma function at x.", gamma_function);
+        }
+    }
+    let incomplete = [("Complementary", Value::Bool(false)), ("Gamma", Value::Undef)];
+    for t in REAL_ARGS {
+        for u in REAL_ARGS {
+            it.def_params("Gamma", &format!("s::{t}, t::{u} -> FldReElt"), &incomplete, "The incomplete gamma function: the integral of u^(s-1) e^-u from 0 to t (from t to infinity with Complementary).", incomplete_gamma);
+        }
+        it.def("GammaD", &format!("s::{t} -> FldReElt"), "The gamma function of s + 1/2.", gamma_d);
+        it.def("BesselFunction", &format!("n::RngIntElt, x::{t} -> FldReElt"), "The Bessel function of the first kind J_n(x).", bessel_function);
+        it.def("BesselFunctionSecondKind", &format!("n::RngIntElt, x::{t} -> FldReElt"), "The Bessel function of the second kind Y_n(x).", bessel_function);
+    }
+    for t in ["RngIntElt", "FldReElt"] {
+        it.def("JBessel", &format!("n::{t}, x::FldReElt -> FldReElt"), "The Bessel function of the first kind of half-integral order J_(n+1/2)(x).", j_bessel);
+    }
+    for name in ["KBessel", "KBessel2"] {
+        for (t, u) in [("FldReElt", "FldReElt"), ("RngIntElt", "FldReElt"), ("FldRatElt", "FldReElt"), ("FldReElt", "RngIntElt"), ("FldReElt", "FldRatElt"), ("FldComElt", "FldReElt")] {
+            let r = if t == "FldComElt" { t } else { "FldReElt" };
+            it.def(name, &format!("n::{t}, x::{u} -> {r}"), "The modified Bessel function of the second kind K_n(x), x > 0.", k_bessel);
+        }
+    }
+    for t in REAL_ARGS {
+        for u in REAL_ARGS {
+            for v in REAL_ARGS {
+                it.def("HypergeometricU", &format!("a::{t}, b::{u}, x::{v} -> FldReElt"), "The confluent hypergeometric function U(a, b, x), x > 0.", hypergeometric_u);
             }
         }
     }

@@ -17,6 +17,7 @@ pub mod mpfr;
 mod nmod;
 mod rational;
 mod real;
+mod special;
 
 pub use complex::{Complex, Elementary, ModifiedPolylog};
 pub use integer::{Factorization, Integer};
