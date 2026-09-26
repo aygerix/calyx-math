@@ -62,3 +62,6 @@ GegenbauerPolynomial(-1, 2);
 DicksonFirst(-1, 2);
 DicksonSecond(-1, 2);
 ChebyshevT(2^30);
+
+// The other names of the Chebyshev polynomials.
+ChebyshevFirst(5), ChebyshevSecond(5);

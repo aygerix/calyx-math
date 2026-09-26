@@ -76,3 +76,7 @@ Sign(a);
 MaxNorm(a);
 Abs(a);
 Sign(P!0), Abs(P!0), MaxNorm(P!0), SumNorm(P!0);
+
+// LeastCommonMultiple, the long name of Lcm.
+Q2<c2, d2> := PolynomialRing(Rationals(), 2);
+LeastCommonMultiple(c2^2 - d2^2, c2 - d2), LeastCommonMultiple(4*c2, 6*d2);
