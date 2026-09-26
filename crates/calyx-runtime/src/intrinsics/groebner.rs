@@ -166,12 +166,19 @@ fn groebner_basis_of(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = polys(a, 0)?;
     let r = s.ring();
     let (base, n, order) = shape(r);
-    let g = engine(r, gb::groebner(base, n, order, &s.terms()))?;
+    let g = engine(r, gb::groebner_with(base, n, order, &s.terms(), strategy(a)?))?;
     // The degrees of the steps of F4 and the denominators, which Magma
     // leaves unassigned here.
     let mut out = vals![s.seq(&g)?];
     out.extend((1..a.nresults.min(3)).map(|_| Value::Undef));
     Ok(out)
+}
+
+/// How the parameters of `a` have a basis computed: over the rationals by
+/// the modular method, Monte Carlo as in Magma, unless GlobalModular is
+/// false.
+fn strategy(a: &CallArgs) -> RResult<gb::Strategy> {
+    Ok(gb::Strategy { rational: !a.param_bool("GlobalModular")? })
 }
 
 /// `GroebnerBasis(S, d)`: the basis truncated at weighted degree d.
@@ -512,8 +519,8 @@ fn small_basis(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 }
 
 /// The parameters of Magma's Gröbner basis functions that choose among
-/// algorithms and strategies: they leave the result as it is, so they are
-/// accepted and have no effect.
+/// algorithms and strategies, which leave the result as it is. Only
+/// GlobalModular has an effect (see `strategy`).
 fn strategy_params() -> Vec<(&'static str, Value)> {
     let (yes, no) = (Value::Bool(true), Value::Bool(false));
     vec![

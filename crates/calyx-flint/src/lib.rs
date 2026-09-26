@@ -7,6 +7,7 @@
 
 pub mod ball;
 mod complex;
+mod crt;
 pub mod fq;
 pub mod gf2x;
 pub mod gr;
@@ -24,6 +25,7 @@ mod series;
 mod special;
 
 pub use complex::{Complex, Elementary, ModifiedPolylog};
+pub use crt::Crt;
 pub use integer::{Factorization, Integer};
 pub use modular::{Modular, ThetaCost};
 pub use nmod::{Nmod, gcd as gcd_u64};
