@@ -50,7 +50,7 @@ pub fn res_ideal_parts(v: &Value) -> Option<(Rc<Struct>, Integer)> {
 }
 
 /// A map given by coercion (an inclusion or a quotient map).
-fn coercion_map(domain: Value, codomain: Value) -> Value {
+pub fn coercion_map(domain: Value, codomain: Value) -> Value {
     Value::Map(Rc::new(MapObj { kind: MapKind::Map, domain, codomain, imp: MapImpl::Coercion }))
 }
 
@@ -141,11 +141,11 @@ impl Interp {
             BinOp::Meet => self.int_ideal(&m.lcm(&n)),
             BinOp::Subset => Value::Bool(contained(&m, &n)),
             BinOp::Notsubset => Value::Bool(!contained(&m, &n)),
-            // Ideal division, defined when J divides I. (Magma also
-            // returns the inclusion of the quotient in Z.)
+            // Ideal division, defined when J divides I (see eval_multi for
+            // its second value).
             BinOp::Div if n.is_zero() => return Err(RuntimeError::runtime("Division by zero").in_context("mod")),
             BinOp::Div if contained(&m, &n) => self.int_ideal(&m.divexact(&n).abs()),
-            BinOp::Div => return Err(RuntimeError::runtime("Argument 2 must divide argument 1.")),
+            BinOp::Div => return Err(RuntimeError::runtime("Argument 2 must divide argument 1.").in_context("/")),
             _ => return Ok(None),
         }))
     }

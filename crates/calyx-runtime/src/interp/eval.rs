@@ -81,6 +81,16 @@ impl Interp {
                 self.bind_values(slots, v, f)?;
                 self.eval_multi(body, f, nres)
             }
+            // I / J for ideals of Z also returns the inclusion of the
+            // quotient in Z.
+            Ex::Bin(calyx_syntax::ast::BinOp::Div, a, b) if nres != 1 => {
+                use crate::rings::ideals::{coercion_map, int_ideal_gen};
+                let x = self.eval(a, f)?;
+                let y = self.eval(b, f)?;
+                let ideals = int_ideal_gen(&x).is_some() && int_ideal_gen(&y).is_some();
+                let q = self.binop(calyx_syntax::ast::BinOp::Div, x, y).map_err(|err| err.at(e.span))?;
+                Ok(if ideals { vec![q.clone(), coercion_map(q, Value::integers())] } else { vec![q] })
+            }
             _ => Ok(vec![self.eval(e, f)?]),
         }
     }

@@ -32,3 +32,10 @@ I2 := ideal<R | 8>; I2 eq I;
 print I: Magma;
 print K: Magma;
 Sprint(I);
+
+// Ideal division also returns the inclusion of the quotient (#50).
+Z := Integers(); I := ideal<Z | 12>; J := ideal<Z | 4>;
+K, f := I / J; K; f;
+f(3); f(6); 3 @@ f;
+Domain(f); Codomain(f);
+K2, g := ideal<Z | 5> / ideal<Z | 10>;
