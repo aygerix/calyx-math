@@ -11,6 +11,7 @@ rust-version = "1.85"
 
 [workspace.dependencies]
 calyx-flint = { path = "crates/calyx-flint" }
+calyx-groebner = { path = "crates/calyx-groebner" }
 calyx-syntax = { path = "crates/calyx-syntax" }
 calyx-runtime = { path = "crates/calyx-runtime" }
 flint3-sys = { version = "3.6.1" }
