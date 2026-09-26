@@ -7,6 +7,7 @@ use calyx_syntax::ast::BinOp;
 
 use super::{Frame, Interp};
 use crate::error::{RResult, RuntimeError};
+use crate::intrinsics::nearfields;
 use crate::ir::*;
 use crate::sym::Sym;
 use crate::value::*;
@@ -504,6 +505,18 @@ impl Interp {
                 }
                 Ok(())
             }
+            Value::Nfd(_) => {
+                self.check_attr_valid(cur, name).map_err(|e| RuntimeError::statement(":=", e.message.clone()))?;
+                let v = if rest.is_empty() {
+                    v
+                } else {
+                    let Value::Nfd(x) = &*cur else { unreachable!() };
+                    let mut inner = nearfields::attr(x, name).ok_or_else(|| RuntimeError::runtime(format!("Attribute '{name}' is not assigned")))?;
+                    self.set_path(&mut inner, rest, v)?;
+                    inner
+                };
+                nearfields::set_attr(self, cur, name, v)
+            }
             Value::Seq(_) => Err(RuntimeError::statement(":=", "Sequence mutation failed")),
             other if attr_owner(other) == "structure" => Err(RuntimeError::statement(":=", invalid_attr(other, name))),
             _ => Err(RuntimeError::statement(":=", "Bad LHS for indexed assign")),
@@ -549,6 +562,13 @@ impl Interp {
                 self.check_attr_valid(v, name).map_err(|e| e.in_context("`"))?;
                 Err(RuntimeError::runtime(format!("Attribute '{name}' for this {} is valid but not assigned", attr_owner(v))).in_context("`"))
             }
+            Value::Nfd(x) => {
+                if let Some(a) = nearfields::attr(x, name) {
+                    return Ok(a);
+                }
+                self.check_attr_valid(v, name).map_err(|e| e.in_context("`"))?;
+                Err(RuntimeError::runtime(format!("Attribute '{name}' for this structure is valid but not assigned")).in_context("`"))
+            }
             Value::Cat(ty) => match self.category_attr(*ty, name) {
                 Some(x) => Ok(x),
                 None => Err(RuntimeError::runtime(format!("Invalid attribute '{name}' for this category")).in_context("`")),
@@ -587,6 +607,13 @@ impl Interp {
             }
             Value::Obj(o) => {
                 if o.attrs.borrow().contains_key(&name) {
+                    return Ok(true);
+                }
+                self.check_attr_valid(v, name).map_err(|e| e.in_context(CTX))?;
+                Ok(false)
+            }
+            Value::Nfd(x) => {
+                if nearfields::attr(x, name).is_some() {
                     return Ok(true);
                 }
                 self.check_attr_valid(v, name).map_err(|e| e.in_context(CTX))?;
@@ -644,6 +671,12 @@ impl Interp {
                     Value::Obj(o) => o.attrs.borrow_mut().remove(&name),
                     _ => unreachable!(),
                 };
+                Ok(())
+            }
+            Value::Nfd(_) => {
+                self.check_attr_valid(cur, name).map_err(|e| RuntimeError::statement("delete", e.message.clone()))?;
+                let Value::Nfd(x) = &*cur else { unreachable!() };
+                x.attrs.borrow_mut().retain(|(n, _)| *n != name);
                 Ok(())
             }
             other if attr_owner(other) == "structure" => Err(RuntimeError::statement("delete", invalid_attr(other, name))),
@@ -894,7 +927,7 @@ fn int_value(i: i64) -> Value {
 fn attr_owner(v: &Value) -> &'static str {
     match v {
         Value::Struct(s) if !matches!(s.kind, StructKind::RecFormat(_)) => "structure",
-        Value::Seq(_) | Value::Set(_) | Value::ISet(_) | Value::MSet(_) | Value::Map(_) | Value::Assoc(_) => "structure",
+        Value::Seq(_) | Value::Set(_) | Value::ISet(_) | Value::MSet(_) | Value::Map(_) | Value::Assoc(_) | Value::Nfd(_) => "structure",
         _ => "object",
     }
 }

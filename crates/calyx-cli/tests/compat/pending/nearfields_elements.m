@@ -166,3 +166,23 @@ Sprint(c);
 // The generator of the field goes by a name given with < > only
 N9 := DicksonNearfield(7, 9); K9 := N9`gf; c9 := N9!(K9.1);
 c9; K9.1; [c9]; c9*c9; Sprint(c9); Eltseq(c9);
+
+// Attributes of elements (#68): elt and parent, and log once assigned.
+D := DicksonNearfield(5, 2); K<k> := GF(25); y := D!1;
+y`elt; y`parent;
+assigned y`elt, assigned y`parent, assigned y`log;
+y`log;
+y`foo;
+y`foo := 1;
+assigned y`foo;
+y`log := 2; y`log;
+z := y; z`log := 3; y`log;
+u := D!k; v := D!(k^2);
+w := u * v; assigned u`log, assigned v`log, assigned w`log;
+x := D!k; x`elt := K!0; x`elt; x; x eq D!0; IsZero(x);
+y := D!k; y`parent := 5; y`parent;
+y := D!k; y`log := 7; y`log; y * y; y`log;
+delete y`log; assigned y`log;
+Z := ZassenhausNearfield(1); a := Z!1; a`elt; Parent(a`elt); a`parent;
+b := D!k; b`log := [1, 2]; b`log[2] := 5; b`log;
+HasAttribute(b, "log"), HasAttribute(y, "log");
