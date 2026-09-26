@@ -13,6 +13,7 @@ pub mod gr;
 pub mod mpoly;
 pub mod upoly;
 mod integer;
+mod packed;
 mod modular;
 pub mod mpfr;
 mod nmod;

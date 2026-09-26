@@ -116,6 +116,9 @@ pub enum CtxKind {
     FqNmod { p: u64, degree: u64 },
     /// A finite field with large characteristic.
     Fq { p: Integer, degree: u64 },
+    /// A finite field of small characteristic with its elements packed
+    /// into words (see `packed`).
+    FqPacked { p: u64, degree: u64 },
     /// Dense univariate polynomials over the base context.
     Poly,
     /// Sparse multivariate polynomials over the base context.
@@ -162,7 +165,7 @@ impl Ctx {
 
     /// Like `build`, for initialisers that can fail (in which case nothing
     /// needs to be cleared).
-    fn try_build(kind: CtxKind, base: Option<Rc<Ctx>>, init: impl FnOnce(*mut sys::gr_ctx_struct) -> c_int) -> GrResult<Rc<Ctx>> {
+    pub(crate) fn try_build(kind: CtxKind, base: Option<Rc<Ctx>>, init: impl FnOnce(*mut sys::gr_ctx_struct) -> c_int) -> GrResult<Rc<Ctx>> {
         let raw = new_raw();
         check(init(raw.get()))?;
         Ok(Rc::new(Ctx { raw, kind, base }))
@@ -666,6 +669,7 @@ impl Elem {
                 out
             }
             CtxKind::FqNmod { degree, .. } => nmod_coeffs(unsafe { &*(self.as_ptr() as *const sys::nmod_poly_struct) }, degree as usize),
+            CtxKind::FqPacked { .. } => crate::packed::coords(self).into_iter().map(Integer::from_u64).collect(),
             CtxKind::Fq { degree, .. } => {
                 let f = unsafe { &*(self.as_ptr() as *const sys::fmpz_poly_struct) };
                 let mut out = Vec::with_capacity(degree as usize);
