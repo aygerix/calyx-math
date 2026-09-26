@@ -223,3 +223,29 @@ NumericalDerivative(func< x | x gt 1 select "a" else x >, 2, R!1);
 NumericalDerivative(func< x | [x] >, 1, R!1);
 Interpolation([R | ], [R | ], R!2);
 try Interpolation([R | ], [R | ], R!2); catch e print e; end try;
+
+// Errors of the integrand show the intrinsic's frame before its own, and
+// in RombergQuadrature the frame of its n-th trapezoidal sum,
+// TrapezoidalRefinement(f, a, b, n, s, it), with s the last sum (in the
+// default real field) and it the number of new points.
+z0 := 0;
+f := func< x | x eq R!1/2 select 1/z0 else x^2 >;
+g := func< x | x eq R!1/4 select 1/z0 else x^2 >;
+k := func< x | x eq R!1/32 select 1/z0 else x^2 >;
+RombergQuadrature(f, R!0, R!1);
+RombergQuadrature(g, R!0, R!1 : Precision := 1e-3);
+RombergQuadrature(k, R!0, R!1);
+RombergQuadrature(func< x | x eq R!1 select 1/z0 else x^2 >, R!0, R!1);
+RombergQuadrature(f, R!0, RealField(10)!1);
+RombergQuadrature(func< x | x eq R!1/4 select 1/z0 else RealField(40)!1/3 >, R!0, R!1);
+TrapezoidalQuadrature(f, R!0, R!1, 4);
+SimpsonQuadrature(f, R!0, R!1, 4);
+SimpsonQuadrature(func< x | x eq R!1 select 1/z0 else x^2 >, R!0, R!1, 4);
+NumericalDerivative(func< x | 1/z0 >, 2, R!1);
+NumericalDerivative(func< x | 1/z0 >, 0, C!1);
+p := function(x) error "boom"; end function;
+TrapezoidalQuadrature(p, R!0, R!1, 2);
+q := function(x) return 1/z0; end function;
+h := function(x) return q(x); end function;
+SimpsonQuadrature(h, R!0, R!1, 2);
+RombergQuadrature(h, R!0, R!1);
