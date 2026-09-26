@@ -112,8 +112,15 @@ pub fn fact_int(f: &[(Integer, u64)]) -> Integer {
     n
 }
 
-/// The factorization of a non-zero integer (of its absolute value).
+/// The factorization of a non-zero integer (of its absolute value), as
+/// Factorization finds it.
 pub fn factor(n: &Integer) -> Fact {
+    super::factoring::factor_default(n)
+}
+
+/// The factorization of a non-zero integer (of its absolute value) by
+/// FLINT alone.
+pub fn flint_factor(n: &Integer) -> Fact {
     n.factor().map(|f| f.factors).unwrap_or_default()
 }
 
@@ -203,7 +210,7 @@ impl Interp {
                 }
                 // A negative difference gives the factorization of its
                 // absolute value.
-                fact_value(&factor(&n))
+                fact_value(&self.factor_int(&n))
             }
             _ => return Ok(None),
         }))
@@ -243,11 +250,11 @@ pub fn divisors_of(f: &Fact) -> Vec<Integer> {
 
 /// The factorization of an integer argument (which must be positive) or of
 /// a factorization sequence.
-fn fact_arg(a: &CallArgs, i: usize, check: fn(usize, &Integer) -> RResult<()>) -> RResult<Fact> {
+fn fact_arg(it: &mut Interp, a: &CallArgs, i: usize, check: fn(usize, &Integer) -> RResult<()>) -> RResult<Fact> {
     match &a.args[i] {
         Value::Int(n) => {
             check(i + 1, n)?;
-            Ok(factor(n))
+            Ok(it.factor_int(n))
         }
         v => fact_of(v),
     }
@@ -265,14 +272,14 @@ fn at_least_two(i: usize, n: &Integer) -> RResult<()> {
     if *n < Integer::from_i64(2) { Err(arg_ge(i, n, 2)) } else { Ok(()) }
 }
 
-fn divisors(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    one(Value::int_seq(divisors_of(&fact_arg(a, 0, at_least_one)?)))
+fn divisors(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    one(Value::int_seq(divisors_of(&fact_arg(it, a, 0, at_least_one)?)))
 }
 
-fn prime_divisors(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+fn prime_divisors(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = match &a.args[0] {
         Value::Int(n) if n.is_zero() => return Err(arg_not(1, "non-zero")),
-        Value::Int(n) => factor(n),
+        Value::Int(n) => it.factor_int(n),
         v => fact_of(v)?,
     };
     one(Value::int_seq(f.into_iter().map(|(p, _)| p)))
@@ -293,17 +300,17 @@ fn sigma(f: &Fact, k: u64) -> Integer {
     s
 }
 
-fn number_of_divisors(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    intv(sigma(&fact_arg(a, 0, positive)?, 0))
+fn number_of_divisors(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    intv(sigma(&fact_arg(it, a, 0, positive)?, 0))
 }
 
-fn sum_of_divisors(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    intv(sigma(&fact_arg(a, 0, positive)?, 1))
+fn sum_of_divisors(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    intv(sigma(&fact_arg(it, a, 0, positive)?, 1))
 }
 
-fn divisor_sigma(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+fn divisor_sigma(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let k = a.small_ge(0, 0)?;
-    intv(sigma(&fact_arg(a, 1, at_least_one)?, k))
+    intv(sigma(&fact_arg(it, a, 1, at_least_one)?, k))
 }
 
 pub fn phi(f: &Fact) -> Integer {
@@ -315,8 +322,8 @@ pub fn phi(f: &Fact) -> Integer {
     r
 }
 
-fn euler_phi(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    intv(phi(&fact_arg(a, 0, positive)?))
+fn euler_phi(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    intv(phi(&fact_arg(it, a, 0, positive)?))
 }
 
 /// The factorization of phi(n) from that of n.
@@ -332,8 +339,8 @@ pub fn factored_phi(f: &Fact) -> RResult<Fact> {
     Ok(out)
 }
 
-fn factored_euler_phi(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    one(fact_value(&factored_phi(&fact_arg(a, 0, positive)?)?))
+fn factored_euler_phi(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    one(fact_value(&factored_phi(&fact_arg(it, a, 0, positive)?)?))
 }
 
 /// The factorization of the Carmichael function of the integer with
@@ -360,16 +367,16 @@ fn factored_lambda(f: &Fact) -> RResult<Fact> {
     Ok(out)
 }
 
-fn carmichael_lambda(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    intv(fact_int(&factored_lambda(&fact_arg(a, 0, at_least_two)?)?))
+fn carmichael_lambda(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    intv(fact_int(&factored_lambda(&fact_arg(it, a, 0, at_least_two)?)?))
 }
 
-fn factored_carmichael_lambda(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    one(fact_value(&factored_lambda(&fact_arg(a, 0, positive)?)?))
+fn factored_carmichael_lambda(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    one(fact_value(&factored_lambda(&fact_arg(it, a, 0, positive)?)?))
 }
 
-fn moebius_mu(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let f = fact_arg(a, 0, at_least_one)?;
+fn moebius_mu(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let f = fact_arg(it, a, 0, at_least_one)?;
     let mu = if f.iter().any(|(_, e)| *e > 1) {
         0
     } else if f.len() % 2 == 0 {

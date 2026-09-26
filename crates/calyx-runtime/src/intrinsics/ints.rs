@@ -379,20 +379,20 @@ fn is_power(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     }
 }
 
-fn is_squarefree(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+fn is_squarefree(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int(0)?;
     if n.is_zero() {
         return Err(arg_not(1, "non-zero"));
     }
-    boolv(super::factseq::factor(n).iter().all(|(_, e)| *e == 1))
+    boolv(it.factor_int(n).iter().all(|(_, e)| *e == 1))
 }
 
-fn squarefree_factorization(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+fn squarefree_factorization(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int(0)?;
     if n.is_zero() {
         return Err(arg_not(1, "non-zero"));
     }
-    let (x, y) = super::factseq::squarefree_split(&super::factseq::factor(n));
+    let (x, y) = super::factseq::squarefree_split(&it.factor_int(n));
     let x = super::factseq::fact_int(&x);
     Ok(vals![Value::Int(if n.sign() < 0 { -x } else { x }), Value::Int(super::factseq::fact_int(&y))])
 }
@@ -813,7 +813,7 @@ pub fn register(it: &mut Interp) {
 
 /// Euler's totient of a positive integer.
 pub fn totient(m: &Integer) -> Integer {
-    m.euler_phi()
+    super::factseq::phi(&super::factseq::factor(m))
 }
 
 /// The multiplicative order of `x` modulo `m > 1`, or 0 if `x` is not a
@@ -827,8 +827,7 @@ pub fn modorder(x: &Integer, m: &Integer) -> Integer {
         return Integer::zero();
     }
     let mut order = totient(m);
-    let f = order.factor().expect("factorisation of a positive integer");
-    for (p, e) in &f.factors {
+    for (p, e) in &super::factseq::factor(&order) {
         for _ in 0..*e {
             let cand = order.div_rem_euclid(p).unwrap().0;
             if x.powm(&cand, m).is_some_and(|r| r.is_one()) {
@@ -858,12 +857,12 @@ pub fn primitive_root(m: &Integer) -> Option<Integer> {
     }
     // m must be p^k or 2p^k for an odd prime p.
     let odd = if m.div_rem_euclid(&two).unwrap().1.is_zero() { m.div_rem_euclid(&two).unwrap().0 } else { m.clone() };
-    let f = odd.factor()?;
-    if f.factors.len() != 1 || f.factors[0].0 == two {
+    let f = super::factseq::factor(&odd);
+    if f.len() != 1 || f[0].0 == two {
         return None;
     }
     let phi = totient(m);
-    let primes: Vec<Integer> = phi.factor()?.factors.into_iter().map(|(p, _)| p).collect();
+    let primes: Vec<Integer> = super::factseq::factor(&phi).into_iter().map(|(p, _)| p).collect();
     let mut g = two.clone();
     while &g < m {
         if g.gcd(m).is_one() && primes.iter().all(|p| !g.powm(&phi.div_rem_euclid(p).unwrap().0, m).is_some_and(|r| r.is_one())) {

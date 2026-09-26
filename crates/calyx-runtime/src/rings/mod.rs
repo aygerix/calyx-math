@@ -191,7 +191,7 @@ impl Ring {
     /// primes; empty for `Z/1Z`).
     pub fn modulus_factors(&self) -> Option<Rc<[(Integer, u64)]>> {
         let RingKind::Residue(m) = &self.kind else { return None };
-        Some(self.factored.get_or_init(|| m.factor().map(|f| f.factors).unwrap_or_default().into()).clone())
+        Some(self.factored.get_or_init(|| crate::intrinsics::factseq::factor(m).into()).clone())
     }
 
     /// The coefficient ring of a polynomial ring (or of a quotient of one).

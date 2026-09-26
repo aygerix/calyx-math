@@ -515,9 +515,8 @@ fn all_sqrt_mod_prime_power(n: &Integer, p: &Integer, k: u64, limit: usize) -> V
 /// (up to `limit` of them).
 fn sqrts_mod(n: &Integer, m: &Integer, limit: usize) -> Vec<Integer> {
     let Some(first) = modsqrt(n, m) else { return Vec::new() };
-    let Some(f) = m.factor() else { return vec![first] };
     let mut combos: Vec<(Integer, Integer)> = vec![(Integer::zero(), Integer::one())];
-    for (p, k) in &f.factors {
+    for (p, k) in &super::factseq::factor(m) {
         let pk = p.pow(*k);
         let roots = all_sqrt_mod_prime_power(n, p, *k, limit);
         let mut next = Vec::new();
@@ -548,7 +547,7 @@ pub fn modsqrt(n: &Integer, m: &Integer) -> Option<Integer> {
     if n.is_square() {
         return n.isqrt();
     }
-    modsqrt_factored(&n, &m.factor()?.factors)
+    modsqrt_factored(&n, &super::factseq::factor(m))
 }
 
 /// `x + big * t` with `t` chosen so that the result is `r` modulo `pk`
@@ -621,7 +620,7 @@ fn is_primitive(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
         return Err(arg_le(1, &n, &top));
     }
     let order = super::ints::modorder(&n, &m);
-    boolv(!order.is_zero() && order == m.euler_phi())
+    boolv(!order.is_zero() && order == super::ints::totient(&m))
 }
 
 fn primitive_root(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
@@ -779,8 +778,8 @@ pub fn norm_equation(d: &Integer, m: &Integer) -> Option<(Integer, Integer)> {
     }
     // Cornacchia modulo m / g^2 for g^2 | m, from g = 1 up, over the square
     // roots of -d in increasing order (r and m - r lead to the same solution).
-    let f = m.factor()?;
-    let mut gs = super::factseq::divisors_of(&f.factors.iter().filter(|(_, e)| *e >= 2).map(|(p, e)| (p.clone(), e / 2)).collect());
+    let f = super::factseq::factor(m);
+    let mut gs = super::factseq::divisors_of(&f.iter().filter(|(_, e)| *e >= 2).map(|(p, e)| (p.clone(), e / 2)).collect());
     gs.sort();
     for g in gs {
         let mm = m.divexact(&(&g * &g));

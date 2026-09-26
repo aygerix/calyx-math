@@ -6,11 +6,12 @@ use std::collections::HashMap;
 
 use calyx_flint::Integer;
 
-use super::factseq::{Fact, fact_mul, fact_value, factor};
+use super::factseq::{Fact, fact_mul, fact_value, factor, flint_factor};
 use super::numtheory::{each_prime, modp, modsqrt, primes_up_to};
 use super::{arg_not, arg_range, intv, one};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
+use crate::random::Rng;
 use crate::value::*;
 
 mod siqs;
@@ -103,39 +104,18 @@ fn factorization(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
         return Err(arg_not(1, "non-zero"));
     }
     let sign = Value::int(n.sign() as i64);
-    let mut m = n.abs();
-    let mut fact = Fact::new();
     // Negative limits count as not given, as in Magma.
     let given = |name: &str| param_int(a, name).filter(|b| b.sign() >= 0).map(|b| b.to_u64().unwrap_or(u64::MAX));
-    let stages = Stages {
+    let mut stages = Stages {
+        trial: given("TrialDivisionLimit").unwrap_or(10000),
         squfof: given("SQUFOFLimit").unwrap_or(24),
         rho: given("PollardRhoLimit").unwrap_or(8191),
         ecm: given("ECMLimit"),
         mpqs: given("MPQSLimit"),
+        proof: proof(a),
+        b1: None,
     };
-    if stages.ecm.is_none() && stages.mpqs.is_none() && stages.squfof >= 20 && m.bits() <= 64 {
-        // The stages would end with SQUFOF: FLINT's word methods are faster.
-        fact.extend(factor(&m));
-        m = Integer::one();
-    }
-    let (f, r) = trial_division(&m, given("TrialDivisionLimit").unwrap_or(10000));
-    fact.extend(f);
-    let proof = proof(a);
-    let (rng, stored) = (&mut it.rng, &mut it.stored_factors);
-    let (f, rest) = split_with(&r, proof, &mut |x: &Integer| {
-        let (d, by_ecm_or_mpqs) = stages.split(x, rng, stored)?;
-        // The primes that ECM and MPQS split off are stored for later calls.
-        if by_ecm_or_mpqs {
-            for y in [d.clone(), x.divexact(&d)] {
-                if !stored.contains(&y) && if proof { y.is_prime() } else { y.is_probable_prime() } {
-                    stored.push(y);
-                }
-            }
-        }
-        Some(d)
-    });
-    fact.extend(f);
-    let fact = sorted_fact(fact);
+    let (fact, rest) = stages.factor(&n, &mut it.rng, &mut it.stored_factors);
     // The sign and the unfactored part are returned only when asked for;
     // the latter stays unassigned when the factorization is complete.
     let mut out: Vals = vals![fact_value(&fact), sign, if rest.is_empty() { Value::Undef } else { Value::int_seq(rest) }];
@@ -143,8 +123,25 @@ fn factorization(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     Ok(out)
 }
 
-/// The stages of Factorization after trial division, with their limits.
+impl Interp {
+    /// The factorization of |n| (non-zero) as Factorization finds it by
+    /// default, storing the primes that ECM and MPQS split off, as Magma's
+    /// functions that factorize their arguments do.
+    pub fn factor_int(&mut self, n: &Integer) -> Fact {
+        Stages::default().factor(n, &mut self.rng, &mut self.stored_factors).0
+    }
+}
+
+/// The factorization of |n| (non-zero) as Factorization finds it by
+/// default, for callers without an interpreter.
+pub fn factor_default(n: &Integer) -> Fact {
+    Stages::default().factor(n, &mut Rng::new(1), &mut Vec::new()).0
+}
+
+/// The stages of Factorization, with their limits.
 struct Stages {
+    /// The bound on the primes for trial division.
+    trial: u64,
     /// The most digits for SQUFOF.
     squfof: u64,
     /// The iterations of Pollard rho.
@@ -153,16 +150,55 @@ struct Stages {
     ecm: Option<u64>,
     /// The most digits for MPQS (by default no limit).
     mpqs: Option<u64>,
+    /// Whether the factors must be proven prime.
+    proof: bool,
+    /// The B1 that ECM has reached on the number being factored.
+    b1: Option<u64>,
+}
+
+impl Default for Stages {
+    fn default() -> Stages {
+        Stages { trial: 10000, squfof: 24, rho: 8191, ecm: None, mpqs: None, proof: true, b1: None }
+    }
 }
 
 impl Stages {
+    /// The factorization of |n| (non-zero), and the composites left, which
+    /// only both ECMLimit and MPQSLimit can leave. The primes that ECM and
+    /// MPQS split off are stored for later calls.
+    fn factor(&mut self, n: &Integer, rng: &mut Rng, stored: &mut Vec<Integer>) -> (Fact, Vec<Integer>) {
+        let mut m = n.abs();
+        let mut fact = Fact::new();
+        if self.ecm.is_none() && self.mpqs.is_none() && self.squfof >= 20 && m.bits() <= 64 {
+            // The stages would end with SQUFOF: FLINT's word methods are faster.
+            fact.extend(flint_factor(&m));
+            m = Integer::one();
+        }
+        let (f, r) = trial_division(&m, self.trial);
+        fact.extend(f);
+        let proof = self.proof;
+        let (f, rest) = split_with(&r, proof, &mut |x: &Integer| {
+            let (d, by_ecm_or_mpqs) = self.split(x, rng, stored)?;
+            if by_ecm_or_mpqs {
+                for y in [d.clone(), x.divexact(&d)] {
+                    if !stored.contains(&y) && if proof { y.is_prime() } else { y.is_probable_prime() } {
+                        stored.push(y);
+                    }
+                }
+            }
+            Some(d)
+        });
+        fact.extend(f);
+        (sorted_fact(fact), rest)
+    }
+
     /// A proper divisor of the composite m (prime to 6 and not a perfect
     /// power) from the first stage that finds one: SQUFOF, Pollard rho, the
     /// stored factors, ECM and MPQS. Unless both ECM and MPQS are bounded,
     /// whatever it takes follows: ECM without end when MPQS may not be used,
     /// or else FLINT's factorization. With the divisor comes whether ECM or
     /// MPQS found it.
-    fn split(&self, m: &Integer, rng: &mut crate::random::Rng, stored: &[Integer]) -> Option<(Integer, bool)> {
+    fn split(&mut self, m: &Integer, rng: &mut Rng, stored: &[Integer]) -> Option<(Integer, bool)> {
         let digits = m.to_string().len() as u64;
         if digits <= self.squfof && m.bits() <= 125 {
             if let Some(d) = squfof(m, 200_000) {
@@ -179,23 +215,34 @@ impl Stages {
         // MPQS is not used below 26 digits.
         let mpqs = digits > 25 && self.mpqs.is_none_or(|l| digits <= l);
         let complete = self.ecm.is_none() || self.mpqs.is_none();
-        // B1 grows from 500 by 100 a curve, or to the top of the default
-        // range for the size when MPQS follows.
-        let (curves, top) = match self.ecm {
-            Some(c) => (c, None),
-            None if mpqs || digits <= 25 => {
-                let (c, t) = default_ecm(digits);
-                (c, Some(t))
+        match self.ecm {
+            // Without a limit on the curves, B1 grows by its square root a
+            // curve and carries over to the cofactors, as in Magma: while
+            // the curves cost less than sieving when MPQS follows, else
+            // until a factor turns up.
+            None if digits > 25 => {
+                let bound = if mpqs { ecm_bound(digits) } else { u64::MAX };
+                let b1 = self.b1.get_or_insert((bound / 4).clamp(100, 2000));
+                while *b1 <= bound {
+                    if let Some(d) = m.ecm(1, *b1, b1.saturating_mul(100), rng.below_u64(u64::MAX)) {
+                        return Some((d, true));
+                    }
+                    *b1 += b1.isqrt();
+                }
             }
-            None => (u64::MAX, None),
-        };
-        for i in 0..curves {
-            let b1 = match top {
-                Some(t) => 500 + (t - 500) * i / (curves - 1).max(1),
-                None => 500u64.saturating_add(i.saturating_mul(100)),
-            };
-            if let Some(d) = m.ecm(1, b1, b1.saturating_mul(100), rng.below_u64(u64::MAX)) {
-                return Some((d, true));
+            // B1 grows from 500 by 100 a curve, or to 600 over the 2 curves
+            // Magma gives numbers of up to 25 digits.
+            _ => {
+                let (curves, top) = self.ecm.map_or((2, Some(600)), |c| (c, None));
+                for i in 0..curves {
+                    let b1 = match top {
+                        Some(t) => 500 + (t - 500) * i / (curves - 1).max(1),
+                        None => 500u64.saturating_add(i.saturating_mul(100)),
+                    };
+                    if let Some(d) = m.ecm(1, b1, b1.saturating_mul(100), rng.below_u64(u64::MAX)) {
+                        return Some((d, true));
+                    }
+                }
             }
         }
         if mpqs {
@@ -204,18 +251,17 @@ impl Stages {
             }
         }
         if complete {
-            return factor(m).first().map(|(p, _)| (p.clone(), false));
+            return flint_factor(m).first().map(|(p, _)| (p.clone(), false));
         }
         None
     }
 }
 
-/// Magma's default number of ECM curves before MPQS, and the largest B1:
-/// 2 curves with B1 up to 600 below 37 digits, growing to about 500 curves
-/// with B1 up to 10000 at 80 digits.
-fn default_ecm(digits: u64) -> (u64, u64) {
-    let t = (digits.saturating_sub(37) as f64 / 43.0).min(2.0);
-    ((2.0 * 250f64.powf(t)).round() as u64, (600.0 * (10000.0f64 / 600.0).powf(t)).round() as u64)
+/// The largest B1 for ECM on a composite of the given size before MPQS:
+/// past it, sieving costs less than more curves. It grows tenfold every 15
+/// digits, from 5000 at 60 digits.
+fn ecm_bound(digits: u64) -> u64 {
+    (5000.0 * 10f64.powf((digits as f64 - 60.0) / 15.0)).min(1e18) as u64
 }
 
 fn store_factor(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
@@ -1345,7 +1391,7 @@ mod tests {
         let n = &p * &q;
         let mut rng = crate::random::Rng::new(1);
         // Both ECM and MPQS bounded: nothing splits a 29-digit semiprime.
-        let bounded = Stages { squfof: 24, rho: 8191, ecm: Some(0), mpqs: Some(0) };
+        let mut bounded = Stages { ecm: Some(0), mpqs: Some(0), ..Stages::default() };
         assert_eq!(split_with(&n, true, &mut |x: &Integer| bounded.split(x, &mut rng, &[]).map(|r| r.0)), (Fact::new(), vec![n.clone()]));
         assert_eq!(split_with(&n.pow(2), true, &mut |x: &Integer| bounded.split(x, &mut rng, &[]).map(|r| r.0)).1, vec![n.clone(), n.clone()]);
         // A stored factor splits it all the same.
@@ -1353,14 +1399,14 @@ mod tests {
         assert_eq!(split_with(&n, true, &mut |x: &Integer| bounded.split(x, &mut rng, &stored).map(|r| r.0)), (vec![(p.clone(), 1), (q.clone(), 1)], vec![]));
         // Either one unbounded: the factorization is complete.
         for (ecm, mpqs) in [(None, Some(0)), (Some(0), None), (None, None)] {
-            let stages = Stages { squfof: 24, rho: 8191, ecm, mpqs };
+            let mut stages = Stages { ecm, mpqs, ..Stages::default() };
             let (f, rest) = split_with(&n, true, &mut |x: &Integer| stages.split(x, &mut rng, &[]).map(|r| r.0));
             assert_eq!(f, vec![(p.clone(), 1), (q.clone(), 1)]);
             assert!(rest.is_empty());
         }
         // SQUFOF alone splits 24 digits.
         let m = &int(300000000077) * &int(700000000009);
-        let squfof_only = Stages { squfof: 24, rho: 0, ecm: Some(0), mpqs: Some(0) };
+        let mut squfof_only = Stages { rho: 0, ecm: Some(0), mpqs: Some(0), ..Stages::default() };
         assert!(split_with(&m, true, &mut |x: &Integer| squfof_only.split(x, &mut rng, &[]).map(|r| r.0)).1.is_empty());
     }
 
@@ -1399,7 +1445,7 @@ mod tests {
 
     #[test]
     fn the_stages_factor_completely() {
-        let stages = Stages { squfof: 24, rho: 8191, ecm: None, mpqs: None };
+        let mut stages = Stages::default();
         let mut rng = crate::random::Rng::new(7);
         let mut s = 0x2545_f491_4f6c_dd1d;
         for i in 0..150 {
