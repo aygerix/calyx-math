@@ -79,6 +79,9 @@ pub struct Cache {
     /// The image of the generator of the context in the default field of
     /// the same size, through a default overfield.
     anchor: OnceCell<Option<Elem>>,
+    /// For square roots: the least non-square z (in counting order) to the
+    /// power of the odd part of q - 1.
+    pub non_square: OnceCell<Elem>,
 }
 
 pub fn field_of(st: &Struct) -> Option<(&Ring, &FiniteField)> {
@@ -659,9 +662,48 @@ pub fn poly_from_roots(rs: &[Elem], ctx: &Rc<Ctx>) -> Vec<Elem> {
     c
 }
 
+/// The minimal polynomial over GF(p), p a word, of an element x of a field
+/// of degree d over it, as residues (constant term first): the first
+/// linear dependency among the coordinates of 1, x, x^2, ..., found by
+/// elimination over GF(p). This takes d products instead of d conjugates.
+fn min_poly_prime(x: &Elem, p: u64, d: usize) -> Option<Vec<u64>> {
+    let m = Nmod::new(p);
+    // Rows in echelon form: the pivot, the coordinates and the combination
+    // of powers of x that they are.
+    let mut rows: Vec<(usize, Vec<u64>, Vec<u64>)> = Vec::with_capacity(d);
+    let mut pw = Elem::one(x.ctx()).ok()?;
+    for k in 0..=d {
+        let mut v = pw.fq_coords_u64();
+        let mut c = vec![0; k + 1];
+        c[k] = 1;
+        for (piv, rv, rc) in &rows {
+            let a = v[*piv];
+            if a != 0 {
+                v.iter_mut().zip(rv).for_each(|(vi, &ri)| *vi = m.sub(*vi, m.mul(a, ri)));
+                c.iter_mut().zip(rc).for_each(|(ci, &ri)| *ci = m.sub(*ci, m.mul(a, ri)));
+            }
+        }
+        // A dependency: c is monic of degree k, as the rows have lower degrees.
+        let Some(piv) = v.iter().position(|&a| a != 0) else { return Some(c) };
+        let inv = m.inv(v[piv])?;
+        v.iter_mut().for_each(|vi| *vi = m.mul(*vi, inv));
+        c.iter_mut().for_each(|ci| *ci = m.mul(*ci, inv));
+        rows.push((piv, v, c));
+        pw = pw.mul(x).ok()?;
+    }
+    None
+}
+
 /// The minimal polynomial of `x` in `f` over the subfield `e`, with
 /// coefficients in the context of `e`.
 pub fn min_poly(x: &Elem, f: &Rc<Struct>, e: &Rc<Struct>) -> Option<Vec<Elem>> {
+    if degree(e) == 1 && (2..=512).contains(&degree(f)) {
+        if let Some(p) = ff(f).1.p.to_u64() {
+            let cs = min_poly_prime(x, p, x.fq_coords_u64().len())?;
+            let ectx = &ff(e).0.ctx;
+            return Some(cs.into_iter().map(|c| Elem::from_word(ectx, c)).collect());
+        }
+    }
     let img = find_emb(e, f)?;
     let (fr, fd) = ff(f);
     let rs = conjugates(x, degree(e), fd.degree / degree(e));
@@ -680,6 +722,42 @@ pub fn qm1_primes(st: &Struct) -> &[Integer] {
     ff(st).1.cache.qm1_primes.get_or_init(|| qm1_factors(st).iter().map(|(p, _)| p.clone()).collect())
 }
 
+/// The product of some integers.
+fn product(xs: &[Integer]) -> Integer {
+    xs.iter().fold(Integer::one(), |a, b| &a * b)
+}
+
+/// Whether none of y^(P/r) is one, for P the product of the distinct
+/// primes r of `rs`. The powers come from a product tree (raising y to the
+/// product of one half of the primes gives the power for the other half),
+/// which takes about log P log k squarings rather than k log P.
+fn no_power_one(y: &Elem, rs: &[Integer]) -> bool {
+    if rs.is_empty() {
+        return true;
+    }
+    if y.is_one() == Truth::True {
+        return false;
+    }
+    if rs.len() == 1 {
+        return true;
+    }
+    let (l, r) = rs.split_at(rs.len() / 2);
+    let pow = |e: &Integer| y.pow(e).expect("a power");
+    no_power_one(&pow(&product(r)), l) && no_power_one(&pow(&product(l)), r)
+}
+
+/// The powers y^(P/m) for the pairwise coprime m of `ms`, P their product,
+/// by the same product tree.
+fn cofactor_powers(y: &Elem, ms: &[Integer], out: &mut Vec<Elem>) {
+    if ms.len() <= 1 {
+        out.extend(ms.iter().map(|_| y.clone()));
+        return;
+    }
+    let (l, r) = ms.split_at(ms.len() / 2);
+    cofactor_powers(&y.pow(&product(r)).expect("a power"), l, out);
+    cofactor_powers(&y.pow(&product(l)).expect("a power"), r, out);
+}
+
 /// Whether `x` generates the multiplicative group of `st`.
 pub fn is_primitive(st: &Struct, x: &Elem) -> bool {
     if x.is_zero() == Truth::True {
@@ -688,29 +766,29 @@ pub fn is_primitive(st: &Struct, x: &Elem) -> bool {
     if let (Some(k), Some(n)) = (x.zech_log(), Elem::zech_order(x.ctx())) {
         return calyx_flint::gcd_u64(k, n) == 1;
     }
-    let f = ff(st).1;
-    let q1 = &f.order() - &Integer::one();
-    if f.degree == 1 {
-        let v = x.to_integer().unwrap_or_default();
-        return qm1_primes(st).iter().all(|r| !v.powm(&q1.divexact(r), &f.p).is_some_and(|y| y.is_one()));
+    let q1 = &ff(st).1.order() - &Integer::one();
+    let rs = qm1_primes(st);
+    match x.pow(&q1.divexact(&product(rs))) {
+        Ok(y) => no_power_one(&y, rs),
+        Err(_) => false,
     }
-    qm1_primes(st).iter().all(|r| x.pow(&q1.divexact(r)).map(|y| y.is_one() != Truth::True).unwrap_or(false))
 }
 
-/// The multiplicative order of a non-zero element.
+/// The multiplicative order of a non-zero element: the product over the
+/// prime powers r^e of q - 1 of the orders of x^((q - 1)/r^e).
 pub fn mult_order(st: &Struct, x: &Elem) -> Integer {
     if let (Some(k), Some(n)) = (x.zech_log(), Elem::zech_order(x.ctx())) {
         return Integer::from_u64(n / calyx_flint::gcd_u64(k, n));
     }
-    let f = ff(st).1;
-    let is_one = |e: &Integer| match f.degree {
-        1 => x.to_integer().ok().and_then(|v| v.powm(e, &f.p)).is_some_and(|y| y.is_one()),
-        _ => x.pow(e).is_ok_and(|y| y.is_one() == Truth::True),
-    };
-    let mut ord = &f.order() - &Integer::one();
-    for r in qm1_primes(st) {
-        while ord.is_divisible_by(r) && is_one(&ord.divexact(r)) {
-            ord = ord.divexact(r);
+    let fac = qm1_factors(st);
+    let pps: Vec<Integer> = fac.iter().map(|(r, e)| r.pow(*e)).collect();
+    let mut zs = Vec::with_capacity(pps.len());
+    cofactor_powers(x, &pps, &mut zs);
+    let mut ord = Integer::one();
+    for ((r, _), mut z) in fac.iter().zip(zs) {
+        while z.is_one() != Truth::True {
+            z = z.pow(r).expect("a power");
+            ord = &ord * r;
         }
     }
     ord

@@ -1,17 +1,18 @@
 // Permutation polynomials: Dickson polynomials and the probabilistic test
 // for permutation polynomials.
 
-// H22E6, leaving out the counts of values (Evaluate is in the polynomial
-// chapter)
+// H22E6
 Factorization(16^2 - 1);
 K<w> := GF(16);
 R<x> := PolynomialRing(K);
 a := w^5;
 p1 := DicksonFirst(3, a);
 p1;
+#{ Evaluate(p1, x) : x in K };
 IsProbablyPermutationPolynomial(p1);
 p1 := DicksonFirst(4, a);
 p1;
+#{ Evaluate(p1, x) : x in K };
 IsProbablyPermutationPolynomial(p1);
 
 // Dickson polynomials over other rings

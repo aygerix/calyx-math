@@ -40,16 +40,24 @@ pub(super) fn characteristic_polynomial(it: &mut Interp, a: &mut CallArgs) -> RR
     one(poly_value(it, &e, &cp)?)
 }
 
-/// The norm of `x` from `f` to its subfield `e`, in `e`.
+/// The norm of `x` from `f` to its subfield `e`, in `e`. To the prime field
+/// FLINT's norm (a resultant) is much faster than the power.
 fn norm_to(f: &Rc<Struct>, x: &Elem, e: &Rc<Struct>) -> RResult<Elem> {
+    if degree(e) == 1 && degree(f) > 1 {
+        return Ok(Elem::from_integer(&ff(e).0.ctx, &x.fq_norm()?)?);
+    }
     let (q, n) = (ff(e).1.order(), degree(f) / degree(e));
     let one_ = Integer::one();
     let y = x.pow(&(&q.pow(n) - &one_).divexact(&(&q - &one_)))?;
     Ok(down(&y, f, e))
 }
 
-/// The trace of `x` from `f` to its subfield `e`, in `e`.
+/// The trace of `x` from `f` to its subfield `e`, in `e`: to the prime
+/// field FLINT's, otherwise the sum of the conjugates.
 fn trace_to(f: &Rc<Struct>, x: &Elem, e: &Rc<Struct>) -> RResult<Elem> {
+    if degree(e) == 1 && degree(f) > 1 {
+        return Ok(Elem::from_integer(&ff(e).0.ctx, &x.fq_trace()?)?);
+    }
     let (d, n) = (degree(e), degree(f) / degree(e));
     let mut acc = x.clone();
     let mut c = x.clone();
@@ -241,7 +249,12 @@ fn nth_roots(it: &mut Interp, f: &Rc<Struct>, x: &Elem, n: &Integer, all: bool) 
     }
     let q1 = &fd.order() - &Integer::one();
     let g = n.gcd(&q1);
-    if x.pow(&q1.divexact(&g))?.is_one() != Truth::True {
+    let is_power = match g.to_u64() {
+        Some(1) => true,
+        Some(2) => is_square_elem(f, x)?,
+        _ => x.pow(&q1.divexact(&g))?.is_one() == Truth::True,
+    };
+    if !is_power {
         return Ok(Vec::new());
     }
     if let (Some(k), Some(m)) = (x.zech_log(), Elem::zech_order(&ctx)) {
@@ -332,9 +345,14 @@ fn sqrt_ts(_it: &mut Interp, f: &Rc<Struct>, a: &Elem) -> RResult<Elem> {
         // Characteristic 2: the square root is a^(q/2), q = #F.
         return Ok(a.pow(&(&q1 + &Integer::one()).fdiv_2exp(1))?);
     }
-    let z = least_non_square(f);
+    let mut c = match ff(f).1.cache.non_square.get() {
+        Some(c) => c.clone(),
+        None => {
+            let c = least_non_square(f).pow(&q)?;
+            ff(f).1.cache.non_square.get_or_init(|| c).clone()
+        }
+    };
     let mut m = s;
-    let mut c = z.pow(&q)?;
     let mut t = a.pow(&q)?;
     let mut r = a.pow(&(&q + &Integer::one()).fdiv_2exp(1))?;
     while t.is_one() != Truth::True {
@@ -416,8 +434,30 @@ fn amm_root(f: &Rc<Struct>, a: &Elem, r: &Integer) -> RResult<Elem> {
     Ok(x.div(&corr)?)
 }
 
+/// Whether x is a square: always in characteristic 2, and otherwise when its
+/// norm to the prime field is one (the norm maps the squares onto the
+/// squares), which is much faster than a power.
+fn is_square_elem(f: &Rc<Struct>, x: &Elem) -> RResult<bool> {
+    let p = &ff(f).1.p;
+    if is_zero(x) || *p == Integer::from_u64(2) {
+        return Ok(true);
+    }
+    if let (Some(k), Some(_)) = (x.zech_log(), Elem::zech_order(x.ctx())) {
+        return Ok(k % 2 == 0);
+    }
+    let n = if degree(f) == 1 { x.to_integer()? } else { x.fq_norm()? };
+    Ok(n.kronecker(p) == 1)
+}
+
 pub(super) fn is_square(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (f, x) = felt_arg(a, 0)?;
+    if !is_square_elem(&f, &x)? {
+        return Ok(vals![Value::Bool(false), Value::Undef]);
+    }
+    // The root only when it is asked for (0 asks for every result).
+    if a.nresults == 1 {
+        return boolv(true);
+    }
     match nth_roots(it, &f, &x, &Integer::from_u64(2), false)?.into_iter().next() {
         Some(y) => Ok(vals![Value::Bool(true), make_elt(&f, y)]),
         None => Ok(vals![Value::Bool(false), Value::Undef]),

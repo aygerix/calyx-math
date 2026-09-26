@@ -29,6 +29,9 @@ PrimitiveElement(GF(2^90)), PrimitiveElement(GF(3^50));
 PrimitiveElement(GF(1000003)), PrimitiveElement(GF(2^61 - 1)), PrimitiveElement(GF(1000003, 2));
 S<s> := ext< F7 | x^2 + x + 3 >; PrimitiveElement(S);
 IsPrimitive(PrimitiveElement(G)), IsPrimitive(PrimitiveElement(R)), MinimalPolynomial(PrimitiveElement(G)) eq ConwayPolynomial(7, 4);
+// GF(2), where q - 1 has no prime factors.
+Order(GF(2)!1); IsPrimitive(GF(2)!1); PrimitiveElement(GF(2));
+Order(GF(2^3)!1), IsPrimitive(GF(2^3)!1), Order(GF(2, 70)!1), IsPrimitive(GF(2, 70)!1), Order(GF(3)!2), IsPrimitive(GF(3)!1);
 K<k> := GF(2^100);
 SetPrimitiveElement(K, k^7); PrimitiveElement(K) eq k^7, Log(k^7), Log(k) eq Modinv(7, 2^100 - 1), Log(k^14);
 SetPrimitiveElement(K, k^7);

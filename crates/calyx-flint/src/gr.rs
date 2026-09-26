@@ -948,12 +948,93 @@ pub fn is_irreducible_mod_p(p: &Integer, coeffs: &[Integer]) -> bool {
     }
 }
 
+/// An nmod_poly that clears itself.
+struct NPoly(sys::nmod_poly_struct);
+
+impl NPoly {
+    fn new(p: u64) -> NPoly {
+        let mut a = sys::nmod_poly_struct::default();
+        unsafe { sys::nmod_poly_init(&mut a, p as sys::ulong) };
+        NPoly(a)
+    }
+}
+
+impl Drop for NPoly {
+    fn drop(&mut self) {
+        unsafe { sys::nmod_poly_clear(&mut self.0) };
+    }
+}
+
+/// Whether the monic polynomial with the given coefficients modulo the word
+/// prime p (constant term first) is irreducible. Ben-Or's test looks for
+/// factors of degree 1, 2, ... in turn (f is irreducible when it is coprime
+/// to x^(p^i) - x for i <= n/2), so most reducible polynomials fail early:
+/// much faster than a full test when searching for an irreducible one. The
+/// gcds are taken of products of the x^(p^i) - x, at i = 1, 2, 4, 8, ...
+pub fn is_irreducible_word(p: u64, coeffs: &[u64]) -> bool {
+    let n = coeffs.len().saturating_sub(1);
+    if n <= 1 {
+        return n == 1;
+    }
+    let mut f = NPoly::new(p);
+    unsafe {
+        for (i, &c) in coeffs.iter().enumerate() {
+            sys::nmod_poly_set_coeff_ui(&mut f.0, i as sys::slong, c as sys::ulong);
+        }
+        // Roots in the first few elements are found faster by evaluation.
+        if (0..p.min(8)).any(|a| sys::nmod_poly_evaluate_nmod(&f.0, a as sys::ulong) == 0) {
+            return false;
+        }
+        // The inverse of the reversal of f, for reduction modulo f.
+        let (mut rev, mut finv) = (NPoly::new(p), NPoly::new(p));
+        sys::nmod_poly_reverse(&mut rev.0, &f.0, (n + 1) as sys::slong);
+        sys::nmod_poly_inv_series(&mut finv.0, &rev.0, (n + 1) as sys::slong);
+        let (mut x, mut h, mut t, mut g) = (NPoly::new(p), NPoly::new(p), NPoly::new(p), NPoly::new(p));
+        let mut acc = NPoly::new(p);
+        sys::nmod_poly_set_coeff_ui(&mut x.0, 1, 1);
+        sys::nmod_poly_set_coeff_ui(&mut h.0, 1, 1);
+        sys::nmod_poly_set_coeff_ui(&mut acc.0, 0, 1);
+        for i in 1..=n / 2 {
+            // h = x^(p^i) modulo f, and acc the product of the h - x.
+            sys::nmod_poly_powmod_ui_binexp_preinv(&mut t.0, &h.0, p as sys::ulong, &f.0, &finv.0);
+            std::mem::swap(&mut h, &mut t);
+            sys::nmod_poly_sub(&mut t.0, &h.0, &x.0);
+            sys::nmod_poly_mulmod_preinv(&mut g.0, &acc.0, &t.0, &f.0, &finv.0);
+            std::mem::swap(&mut acc, &mut g);
+            if i.is_power_of_two() || i == n / 2 {
+                sys::nmod_poly_gcd(&mut g.0, &acc.0, &f.0);
+                if g.0.length != 1 {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn int(v: i64) -> Integer {
         Integer::from_i64(v)
+    }
+
+    #[test]
+    fn ben_or_agrees_with_flint() {
+        // All monic polynomials of degree 2 to 6 over GF(2) and GF(3) with
+        // non-zero constant term, against FLINT's full test.
+        for p in [2u64, 3] {
+            for n in 2..=6u32 {
+                for c in 0..p.pow(n) {
+                    let mut coeffs: Vec<u64> = (0..n).map(|i| c / p.pow(i) % p).collect();
+                    coeffs.push(1);
+                    let ints: Vec<Integer> = coeffs.iter().map(|&x| Integer::from_u64(x)).collect();
+                    let full = coeffs[0] != 0 && is_irreducible_mod_p(&Integer::from_u64(p), &ints);
+                    assert_eq!(is_irreducible_word(p, &coeffs), full, "{coeffs:?} mod {p}");
+                }
+            }
+        }
     }
 
     #[test]

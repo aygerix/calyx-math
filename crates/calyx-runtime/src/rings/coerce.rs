@@ -11,7 +11,7 @@
 use std::rc::Rc;
 
 use calyx_flint::Integer;
-use calyx_flint::gr::{Ctx, Elem, GrError, is_irreducible_mod_p};
+use calyx_flint::gr::{Ctx, Elem, GrError, is_irreducible_mod_p, is_irreducible_word};
 
 use super::{FiniteField, Ring, RingKind, ZECH_LIMIT, finite, make_elt, ring_of, small};
 use crate::error::{RResult, RuntimeError};
@@ -24,6 +24,28 @@ use crate::value::{Struct, StructKind, Value};
 /// coefficients, so sparse polynomials come first.
 pub fn default_irreducible(p: &Integer, n: u64) -> RResult<Vec<Integer>> {
     let small = p.pow(n).to_u64().is_some_and(|q| q <= ZECH_LIMIT);
+    if let Some(pw) = p.to_u64() {
+        // Over GF(2) this is the least g with x^n + g irreducible.
+        if let Some(g) = (pw == 2 && !small).then(|| calyx_flint::gf2x::least_low_term(n as usize)).flatten() {
+            return Ok((0..=n).map(|i| Integer::from_u64(if i == n { 1 } else if i < 64 { g >> i & 1 } else { 0 })).collect());
+        }
+        // The same order, counting in words.
+        let mut digits = vec![0u64; n as usize + 1];
+        digits[n as usize] = 1;
+        loop {
+            let Some(i) = (0..n as usize).find(|&i| digits[i] + 1 < pw) else {
+                return Err(RuntimeError::runtime("No irreducible polynomial found"));
+            };
+            digits[i] += 1;
+            digits[..i].iter_mut().for_each(|d| *d = 0);
+            if digits[0] != 0 && is_irreducible_word(pw, &digits) {
+                let coeffs: Vec<Integer> = digits.iter().map(|&d| Integer::from_u64(d)).collect();
+                if !small || Ctx::finite_field(p, &coeffs, true).is_ok() {
+                    return Ok(coeffs);
+                }
+            }
+        }
+    }
     let mut counter = Integer::one();
     loop {
         let mut coeffs = Vec::with_capacity(n as usize + 1);
