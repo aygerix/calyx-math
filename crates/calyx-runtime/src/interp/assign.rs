@@ -191,11 +191,15 @@ impl Interp {
     }
 
     pub fn put_place(&mut self, p: Place, v: Value, f: &mut Frame) {
-        // A structure or aggregate is known by the first name it is
-        // assigned to.
-        if let Some(cell) = v.name_cell() {
+        // A structure or aggregate is known by the first global it is
+        // assigned to (see set_global for structures).
+        if let (Place::Global(n), Some(cell)) = (&p, v.name_cell()) {
             if cell.borrow().is_none() {
-                *cell.borrow_mut() = Some(p.name());
+                *cell.borrow_mut() = Some(*n);
+            } else if let Value::Struct(s) = &v {
+                if *s.name.borrow() != Some(*n) && !s.aliases.borrow().contains(n) {
+                    s.aliases.borrow_mut().push(*n);
+                }
             }
         }
         self.store_place(p, v, f);

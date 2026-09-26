@@ -455,8 +455,12 @@ pub trait NativeMap {
 pub struct Struct {
     pub kind: StructKind,
     pub attrs: RefCell<FxHashMap<Sym, Value>>,
-    /// The identifier the structure was first assigned to (used in printing).
+    /// The identifier the structure is known by in printing: the first
+    /// global it was assigned to that still holds it.
     pub name: RefCell<Option<Sym>>,
+    /// The other globals assigned the structure since, in order; one of
+    /// them takes over the name when its holder is rebound.
+    pub aliases: RefCell<Vec<Sym>>,
 }
 
 #[derive(Clone)]
@@ -515,7 +519,7 @@ pub struct RecFormat {
 
 impl Struct {
     pub fn new(kind: StructKind) -> Rc<Struct> {
-        Rc::new(Struct { kind, attrs: RefCell::default(), name: RefCell::default() })
+        Rc::new(Struct { kind, attrs: RefCell::default(), name: RefCell::default(), aliases: RefCell::default() })
     }
 }
 

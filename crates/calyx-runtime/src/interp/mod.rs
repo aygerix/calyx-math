@@ -232,20 +232,35 @@ impl Interp {
     }
 
     pub fn set_global(&mut self, name: Sym, v: Value) {
-        if let Some(pkg) = self.package_stack.last_mut() {
-            pkg.insert(name, v);
-            return;
-        }
-        self.globals.insert(name, v);
+        let old = match self.package_stack.last_mut() {
+            Some(pkg) => pkg.insert(name, v),
+            None => self.globals.insert(name, v),
+        };
+        self.unbind_name(name, old);
     }
 
     /// Forget a global identifier, which then reads as undeclared.
     pub fn remove_global(&mut self, name: Sym) {
-        if let Some(pkg) = self.package_stack.last_mut() {
-            pkg.remove(&name);
+        let old = match self.package_stack.last_mut() {
+            Some(pkg) => pkg.remove(&name),
+            None => self.globals.remove(&name),
+        };
+        self.unbind_name(name, old);
+    }
+
+    /// A structure that `name` held no longer goes by it: the next global
+    /// assigned it that still holds it names it, if any.
+    fn unbind_name(&self, name: Sym, old: Option<Value>) {
+        let Some(Value::Struct(s)) = old else { return };
+        let holds = |n: &Sym| matches!(self.lookup_variable(*n), Some(Value::Struct(t)) if Rc::ptr_eq(&t, &s));
+        if holds(&name) {
             return;
         }
-        self.globals.remove(&name);
+        let mut aliases = s.aliases.borrow_mut();
+        aliases.retain(|n| *n != name && holds(n));
+        if *s.name.borrow() == Some(name) {
+            *s.name.borrow_mut() = (!aliases.is_empty()).then(|| aliases.remove(0));
+        }
     }
 
     pub fn unassigned_error(&self, name: Sym) -> RuntimeError {
