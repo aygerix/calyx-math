@@ -185,7 +185,7 @@ impl Spec {
     }
 
     /// The polynomial `e` (of the gr context) in the specialised type.
-    fn from_gr(&self, e: &Elem) -> Poly<'_> {
+    fn convert(&self, e: &Elem) -> Poly<'_> {
         let g = gm(e);
         let (n, bits) = (g.length, g.bits);
         let len = n as usize;
@@ -366,7 +366,7 @@ impl Spec {
 /// quotient), `None` otherwise. `b` must be non-zero.
 pub fn divides(a: &Elem, b: &Elem) -> GrResult<Option<Elem>> {
     let s = Spec::new(a.ctx())?;
-    let (x, y, mut q) = (s.from_gr(a), s.from_gr(b), s.zero());
+    let (x, y, mut q) = (s.convert(a), s.convert(b), s.zero());
     let ok = unsafe {
         match (&mut q.raw, &x.raw, &y.raw, &s.c) {
             (Raw::Z(q), Raw::Z(a), Raw::Z(b), SCtx::Z(c)) => sys::fmpz_mpoly_divides(q, a, b, &**c),
@@ -384,7 +384,7 @@ pub fn divides(a: &Elem, b: &Elem) -> GrResult<Option<Elem>> {
 /// coefficient over the integers, monic over fields (0 if both are 0).
 pub fn gcd(a: &Elem, b: &Elem) -> GrResult<Elem> {
     let s = Spec::new(a.ctx())?;
-    let (x, y, mut g) = (s.from_gr(a), s.from_gr(b), s.zero());
+    let (x, y, mut g) = (s.convert(a), s.convert(b), s.zero());
     let ok = unsafe {
         match (&mut g.raw, &x.raw, &y.raw, &s.c) {
             (Raw::Z(g), Raw::Z(a), Raw::Z(b), SCtx::Z(c)) => sys::fmpz_mpoly_gcd(g, a, b, &**c),
@@ -404,7 +404,7 @@ pub fn gcd(a: &Elem, b: &Elem) -> GrResult<Elem> {
 /// The resultant of `a` and `b` with respect to variable `var` (from 0).
 pub fn resultant(a: &Elem, b: &Elem, var: usize) -> GrResult<Elem> {
     let s = Spec::new(a.ctx())?;
-    let (x, y, mut r) = (s.from_gr(a), s.from_gr(b), s.zero());
+    let (x, y, mut r) = (s.convert(a), s.convert(b), s.zero());
     let v = var as sys::slong;
     let ok = unsafe {
         match (&mut r.raw, &x.raw, &y.raw, &s.c) {
@@ -425,7 +425,7 @@ pub fn resultant(a: &Elem, b: &Elem, var: usize) -> GrResult<Elem> {
 /// The discriminant of `a` with respect to variable `var` (from 0).
 pub fn discriminant(a: &Elem, var: usize) -> GrResult<Elem> {
     let s = Spec::new(a.ctx())?;
-    let (x, mut r) = (s.from_gr(a), s.zero());
+    let (x, mut r) = (s.convert(a), s.zero());
     let v = var as sys::slong;
     let ok = unsafe {
         match (&mut r.raw, &x.raw, &s.c) {
@@ -450,7 +450,7 @@ pub fn discriminant(a: &Elem, var: usize) -> GrResult<Elem> {
 /// the constant is the signed content; over fields they are monic.
 pub fn factor(a: &Elem, squarefree: bool) -> GrResult<(Elem, Vec<(Elem, u64)>)> {
     let s = Spec::new(a.ctx())?;
-    let x = s.from_gr(a);
+    let x = s.convert(a);
     let mut out = Vec::new();
     // Run `factor` into a factorization structure `f`, then read the
     // constant (`get_constant` writes it to a temporary) and the factors.

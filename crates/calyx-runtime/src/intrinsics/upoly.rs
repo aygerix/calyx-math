@@ -851,12 +851,12 @@ fn crt(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let mut m = mods[0].clone();
     let x0 = get(it, &xs.elems[0])?;
     let mut t = quotrem(it, &ring, &x0, &m)?.1;
-    for i in 1..mods.len() {
-        let x = get(it, &xs.elems[i])?;
-        let (_, s, _) = fu::xgcd(&m, &mods[i])?;
-        let c = quotrem(it, &ring, &x.sub(&t)?.mul(&s)?, &mods[i])?.1;
+    for (xi, mi) in xs.elems.iter().zip(&mods).skip(1) {
+        let x = get(it, xi)?;
+        let (_, s, _) = fu::xgcd(&m, mi)?;
+        let c = quotrem(it, &ring, &x.sub(&t)?.mul(&s)?, mi)?.1;
         t = t.add(&m.mul(&c)?)?;
-        m = m.mul(&mods[i])?;
+        m = m.mul(mi)?;
     }
     one(make_elt(&st, t))
 }
@@ -1786,7 +1786,7 @@ fn swinnerton_dyer_polynomial(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals
     let n = n.to_u64().filter(|&n| n <= 20).ok_or_else(|| RuntimeError::runtime(format!("Argument 1 ({n}) is too large")))?;
     let zx = it.poly_ring(&Value::integers(), true)?;
     let Some((st, r)) = ring_of(&zx) else { unreachable!() };
-    one(make_elt(&st, fu::swinnerton_dyer(&r.ctx, n)))
+    one(make_elt(st, fu::swinnerton_dyer(&r.ctx, n)))
 }
 
 // ----- ideals and quotient rings ------------------------------------------------------------

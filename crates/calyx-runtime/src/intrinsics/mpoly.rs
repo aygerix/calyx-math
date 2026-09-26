@@ -7,7 +7,7 @@
 //! (it beats Magma on Fateman's benchmark). The algorithms beyond it run
 //! on FLINT's specialised types through `calyx_flint::mpoly`.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, hash_map::Entry};
 use std::rc::Rc;
 
 use calyx_flint::Integer;
@@ -155,7 +155,7 @@ fn polynomial_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let Some(n) = n.to_i64().filter(|n| (0..1 << 29).contains(n)) else {
         return Err(RuntimeError::runtime(format!("Argument 2 ({n}) should be in the range [0 .. 536870911]")));
     };
-    let order = if a.args.len() > 2 { parse_order(&a.str(2)?)? } else { MonomialOrder::Lex };
+    let order = if a.args.len() > 2 { parse_order(a.str(2)?)? } else { MonomialOrder::Lex };
     let global = a.args.len() == 2 && a.param_bool("Global")?;
     one(it.mpoly_ring(&base, n as usize, order, global)?)
 }
@@ -231,7 +231,7 @@ fn coefficient(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let i = var_arg(a, 1, &f, "variable number")?;
     let k = a.int(2)?;
     if k.sign() < 0 {
-        return Err(arg_ge(3, &k, 0));
+        return Err(arg_ge(3, k, 0));
     }
     let ts = k.to_u64().and_then(|k| by_power(&f.x, i).remove(&k)).unwrap_or_default();
     one(build(&f, &without(&ts, i))?)
@@ -287,7 +287,7 @@ fn term(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let i = var_arg(a, 1, &f, "variable number")?;
     let k = a.int(2)?;
     if k.sign() < 0 {
-        return Err(arg_ge(3, &k, 0));
+        return Err(arg_ge(3, k, 0));
     }
     let ts = k.to_u64().and_then(|k| by_power(&f.x, i).remove(&k)).unwrap_or_default();
     one(build(&f, &ts)?)
@@ -622,8 +622,8 @@ fn evaluate(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
         let mut t = c;
         for (j, &k) in e.iter().enumerate() {
             if k > 0 {
-                if !pows.contains_key(&(j, k)) {
-                    pows.insert((j, k), lifted[j].pow(&Integer::from_u64(k))?);
+                if let Entry::Vacant(v) = pows.entry((j, k)) {
+                    v.insert(lifted[j].pow(&Integer::from_u64(k))?);
                 }
                 t = t.mul(&pows[&(j, k)])?;
             }
@@ -648,8 +648,8 @@ fn evaluate_at(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
             let mut out = Vec::new();
             for (c, mut e) in terms(&f.x) {
                 let k = std::mem::replace(&mut e[i], 0);
-                if !pows.contains_key(&k) {
-                    pows.insert(k, x.pow(&Integer::from_u64(k))?);
+                if let Entry::Vacant(v) = pows.entry(k) {
+                    v.insert(x.pow(&Integer::from_u64(k))?);
                 }
                 out.push((c.mul(&pows[&k])?, e));
             }
@@ -1045,8 +1045,8 @@ fn squarefree_part(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(like(&f, normalized(it, &Elt { parent: f.parent.clone(), x: p })?))
 }
 
-/// Whether `f` is irreducible: it has one factor, of multiplicity 1 (over
-/// the integers a prime constant is irreducible).
+/// Whether `f` is irreducible: it has one factor, of multiplicity 1. Unlike
+/// univariate polynomials in Magma, a prime constant over Z is irreducible.
 fn is_irreducible(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = mpol(a, 0);
     let (v, _) = factors(it, &f, false)?;
@@ -1072,7 +1072,7 @@ fn discriminant(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 /// The coefficients of `f`, which must be over the integers.
 fn int_coeffs(f: &Elt) -> RResult<Vec<Integer>> {
     if !is_integers(f) {
-        return Err(RuntimeError::runtime("Coefficient ring of argument must be Z"));
+        return Err(not_available());
     }
     terms(&f.x).into_iter().map(|(c, _)| Ok(c.to_integer()?)).collect()
 }
