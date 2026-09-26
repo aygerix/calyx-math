@@ -733,9 +733,9 @@ impl<'a> Compiler<'a> {
             }
             ExprKind::Select(c, a, b) => Ex::Select(self.bx(c)?, self.bx(a)?, self.bx(b)?),
             ExprKind::Call(f, args, params) => {
-                // `Self(i)` inside a sequence constructor.
+                // `Self(i)` inside a sequence constructor; elsewhere it fails when evaluated, as in Magma.
                 if let ExprKind::Ident(n) = &f.kind {
-                    if n == "Self" && self.cur().seq_compr > 0 && args.len() <= 1 && self.cur().lookup(Sym::new("Self")).is_none() {
+                    if n == "Self" && args.len() <= 1 && self.cur().lookup(Sym::new("Self")).is_none() {
                         match args.first() {
                             Some(Arg::Value(a)) => return Ok(E { kind: Ex::SelfSeq(self.bx(a)?), span }),
                             None => return Ok(E { kind: Ex::SelfSeq(Box::new(E { kind: Ex::Undef, span })), span }),
@@ -796,6 +796,7 @@ impl<'a> Compiler<'a> {
                 Ex::Agg(Box::new(AggEx { kind: *kind, universe, body }))
             }
             ExprKind::List(es) => Ex::List(self.expr_list(es)?),
+            ExprKind::ListCompr(c) => Ex::ListCompr(Box::new(self.comprehension(c, false)?)),
             ExprKind::Formal(kind, _universe, var, dom, pred) => {
                 let d = self.bx(dom)?;
                 let p = match pred {
@@ -1138,7 +1139,7 @@ fn scan_expr(e: &Expr, out: &mut Vec<String>) {
             ws.iter().for_each(|w| push_unique(out, w));
             scan_compr(c, out);
         }
-        ExprKind::TupleCompr(c) => scan_compr(c, out),
+        ExprKind::TupleCompr(c) | ExprKind::ListCompr(c) => scan_compr(c, out),
         ExprKind::Paren(a)
         | ExprKind::Unary(_, a)
         | ExprKind::Attr(a, _)

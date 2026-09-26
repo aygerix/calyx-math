@@ -59,6 +59,7 @@ pub enum Ex {
     TupleCompr(Box<ComprEx>),
     Agg(Box<AggEx>),
     List(Vec<E>),
+    ListCompr(Box<ComprEx>),
     /// `{! x in S | P !}`: the domain and the predicate closure.
     Formal(bool, Box<E>, Option<Box<E>>),
     Quant(Box<QuantEx>),

@@ -1207,7 +1207,16 @@ impl<'a> Parser<'a> {
             Tok::LBrackStar => {
                 let mut v = Vec::new();
                 if !self.at(&Tok::StarRBrack) {
-                    v = self.expr_list()?;
+                    let first = self.arrow_pair()?;
+                    if self.eat(&Tok::Colon) {
+                        let c = self.comprehension_rest(first, &Tok::StarRBrack)?;
+                        let end = self.expect(&Tok::StarRBrack)?;
+                        return Ok(Self::mk(ExprKind::ListCompr(c), sp.to(end)));
+                    }
+                    v.push(first);
+                    while self.eat(&Tok::Comma) {
+                        v.push(self.arrow_pair()?);
+                    }
                 }
                 let end = self.expect(&Tok::StarRBrack)?;
                 return Ok(Self::mk(ExprKind::List(v), sp.to(end)));
@@ -1243,14 +1252,14 @@ impl<'a> Parser<'a> {
             return Ok(Self::mk(ExprKind::Aggregate(kind, None, AggBody::Empty), start.to(end)));
         }
         let mut universe = None;
-        let mut first = self.expr()?;
+        let mut first = self.arrow_pair()?;
         if self.eat(&Tok::Pipe) {
             universe = Some(Box::new(first));
             if self.at(&close) {
                 let end = self.bump().span;
                 return Ok(Self::mk(ExprKind::Aggregate(kind, universe, AggBody::Empty), start.to(end)));
             }
-            first = self.expr()?;
+            first = self.arrow_pair()?;
         }
         // Indexed sets and multisets take no ranges, as in Magma.
         if self.at(&Tok::DotDot) && matches!(kind, AggKind::ISet | AggKind::MSet) {
@@ -1265,7 +1274,7 @@ impl<'a> Parser<'a> {
         } else {
             let mut v = vec![first];
             while self.eat(&Tok::Comma) {
-                v.push(self.expr()?);
+                v.push(self.arrow_pair()?);
             }
             AggBody::Enum(v)
         };
@@ -1473,20 +1482,22 @@ impl<'a> Parser<'a> {
 
     /// Expressions in a map graph, where `a -> b` means the pair `<a, b>`.
     fn arrow_pair_list(&mut self) -> PResult<Vec<Expr>> {
-        let mut v = Vec::new();
-        loop {
-            let a = self.expr()?;
-            if self.eat(&Tok::Arrow) {
-                let b = self.expr()?;
-                let sp = a.span.to(b.span);
-                v.push(Self::mk(ExprKind::Tuple(vec![a, b]), sp));
-            } else {
-                v.push(a);
-            }
-            if !self.eat(&Tok::Comma) {
-                return Ok(v);
-            }
+        let mut v = vec![self.arrow_pair()?];
+        while self.eat(&Tok::Comma) {
+            v.push(self.arrow_pair()?);
         }
+        Ok(v)
+    }
+
+    /// An element of an aggregate or a map graph, where `a -> b` means the pair `<a, b>`.
+    fn arrow_pair(&mut self) -> PResult<Expr> {
+        let a = self.expr()?;
+        if !self.eat(&Tok::Arrow) {
+            return Ok(a);
+        }
+        let b = self.expr()?;
+        let sp = a.span.to(b.span);
+        Ok(Self::mk(ExprKind::Tuple(vec![a, b]), sp))
     }
 
     fn at_maps_to(&mut self, k: usize) -> bool {

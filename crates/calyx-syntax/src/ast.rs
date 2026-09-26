@@ -186,6 +186,8 @@ pub enum ExprKind {
     Aggregate(AggKind, Option<Box<Expr>>, AggBody),
     /// `[* ... *]`
     List(Vec<Expr>),
+    /// `[* e : x in S | P *]`
+    ListCompr(Comprehension),
     /// `{! x in S | P !}` / `[! x in S | P !]`
     Formal(FormalKind, Option<Box<Expr>>, Name, Box<Expr>, Option<Box<Expr>>),
     /// `exists(t){ ... }`, `forall(t){ ... }`, `random{ ... }`, `rep{ ... }`

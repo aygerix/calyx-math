@@ -286,6 +286,14 @@ impl Interp {
                 }
                 Ok(Value::list(v))
             }
+            Ex::ListCompr(c) => {
+                let mut vals = Vec::new();
+                self.run_comprehension(c, f, &mut |_, v, _| {
+                    vals.push(v);
+                    Ok(true)
+                })?;
+                Ok(Value::list(vals))
+            }
             Ex::Formal(is_seq, dom, pred) => {
                 let universe = self.eval(dom, f)?;
                 let pred = match pred {
@@ -377,7 +385,7 @@ impl Interp {
             }
             Ex::SelfSeq(i) if matches!(i.kind, Ex::Undef) => {
                 let Some(cur) = self.self_seqs.last() else {
-                    return Err(RuntimeError::runtime("Self may only be used in a sequence constructor"));
+                    return Err(RuntimeError::runtime("Not in sequence code constructor").in_context("Self"));
                 };
                 Ok(Value::seq(None, cur.clone()))
             }
@@ -387,11 +395,11 @@ impl Interp {
                     return Err(RuntimeError::runtime("Self requires an integer index"));
                 };
                 let Some(cur) = self.self_seqs.last() else {
-                    return Err(RuntimeError::runtime("Self may only be used in a sequence constructor"));
+                    return Err(RuntimeError::runtime("Not in sequence code constructor").in_context("Self"));
                 };
                 match i.to_i64() {
                     Some(k) if k >= 1 && (k as usize) <= cur.len() => Ok(cur[k as usize - 1].clone()),
-                    _ => Err(RuntimeError::runtime(format!("Self({i}) refers to an element not yet defined")).in_context("Self")),
+                    _ => Err(RuntimeError::runtime("Sequence element not defined").in_context("Self")),
                 }
             }
         }
