@@ -135,10 +135,15 @@ fn round_ball(b: &sys::arb_struct, bits: u64) -> Option<Real> {
     }
 }
 
+/// The largest working precision tried for a result of `bits` bits.
+pub fn max_precision(bits: u64) -> u64 {
+    16 * bits + 4096
+}
+
 /// Working precisions to try for a result of `bits` bits.
 fn precisions(bits: u64) -> impl Iterator<Item = u64> {
     let mut wp = bits + 32;
-    let max = 16 * bits + 4096;
+    let max = max_precision(bits);
     std::iter::from_fn(move || {
         let w = wp;
         wp = wp * 2;
@@ -179,4 +184,16 @@ pub fn eval_complex(bits: u64, mut f: impl FnMut(*mut sys::acb_struct, i64)) -> 
         r
     };
     (part(&out.0.real), part(&out.0.imag))
+}
+
+/// As `eval_complex`, but `None` if no precision determines the value.
+pub fn try_eval_complex(bits: u64, mut f: impl FnMut(*mut sys::acb_struct, i64)) -> Option<(Real, Real)> {
+    let mut out = Acb::new();
+    for wp in precisions(bits) {
+        f(out.mut_ptr(), wp as i64);
+        if let (Some(re), Some(im)) = (round_ball(&out.0.real, bits), round_ball(&out.0.imag, bits)) {
+            return Some((re, im));
+        }
+    }
+    None
 }

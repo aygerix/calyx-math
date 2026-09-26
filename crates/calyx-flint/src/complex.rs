@@ -103,7 +103,7 @@ impl Complex {
         self.im.is_zero()
     }
 
-    fn acb(&self) -> Acb {
+    pub(crate) fn acb(&self) -> Acb {
         Acb::from_parts(&self.re, &self.im)
     }
 

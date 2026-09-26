@@ -8,7 +8,7 @@
 
 use std::rc::Rc;
 
-use calyx_flint::{Elementary, ModifiedPolylog, Real};
+use calyx_flint::{Elementary, ModifiedPolylog, Modular, Real, ThetaCost};
 use calyx_syntax::ast::BinOp;
 
 use super::reals::{self, default_bits, field_bits, to_real};
@@ -385,6 +385,152 @@ fn polylog_p(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     modified_polylog(a, ModifiedPolylog::P)
 }
 
+// ----- elliptic and modular functions ------------------------------------------------
+
+/// A point of the upper half plane; `numbered`: the error names the
+/// argument.
+fn upper_half_plane(z: &ComplexV, numbered: bool) -> RResult<()> {
+    if z.im.sign() > 0 {
+        return Ok(());
+    }
+    Err(RuntimeError::runtime(if numbered { "Argument 1 must have positive imaginary part" } else { "Argument must have positive imaginary part" }))
+}
+
+/// The point `tau` of the lattice `[a, b]`: `a/b`, or `1/(a/b)` if that is
+/// in the upper half plane.
+fn lattice_point(l: &SeqEnum) -> RResult<ComplexV> {
+    if l.elems.len() != 2 {
+        return Err(RuntimeError::runtime("Lattice must have two basis elements"));
+    }
+    let bits = l.universe.as_ref().and_then(reals::bits_of).unwrap_or_else(default_bits);
+    let (Some(x), Some(y)) = (to_complex(&l.elems[0], bits), to_complex(&l.elems[1], bits)) else {
+        return Err(RuntimeError::runtime("Bad argument types"));
+    };
+    let degenerate = || RuntimeError::runtime("Lattice is degenerate");
+    let w = x.div(&y).ok_or_else(degenerate)?;
+    if w.im.sign() > 0 {
+        return Ok(w);
+    }
+    let w = ComplexV::from_real(Real::from_i64(1, bits)).div(&w).ok_or_else(degenerate)?;
+    if w.im.sign() > 0 { Ok(w) } else { Err(degenerate()) }
+}
+
+/// The point of the upper half plane given as argument `i`: a complex
+/// number, or a lattice. `numbered`: the error names the argument.
+fn point_arg(it: &Interp, a: &CallArgs, i: usize, numbered: bool) -> RResult<ComplexV> {
+    let s = match &a.args[i] {
+        Value::Complex(c) => {
+            upper_half_plane(c, numbered)?;
+            return Ok((**c).clone());
+        }
+        Value::Seq(s) => s,
+        _ => unreachable!(),
+    };
+    // jInvariant takes a sequence of integers or rationals as the complex
+    // number C![a, b], as Magma does.
+    if &*a.name.as_rc() == "jInvariant" && s.universe.as_ref().is_some_and(|u| u.is_integers() || u.is_rationals()) {
+        let bits = default_bits();
+        return match (s.elems.len(), s.elems.first().and_then(|x| to_real(x, bits)), s.elems.last().and_then(|x| to_real(x, bits))) {
+            (2, Some(re), Some(im)) => {
+                let c = ComplexV::new(re, im);
+                upper_half_plane(&c, true)?;
+                Ok(c)
+            }
+            _ => Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}", it.type_name_ext(&a.args[i])))),
+        };
+    }
+    lattice_point(s)
+}
+
+/// The weight of an Eisenstein series: even, and positive and below 2^30.
+fn eisenstein_weight(a: &CallArgs) -> RResult<u64> {
+    let k = a.int(0)?;
+    let Some(k) = k.to_u64().filter(|&k| k > 0 && k < 1 << 30) else {
+        return Err(RuntimeError::runtime(format!("Argument 1 ({k}) is not small and positive")));
+    };
+    if k % 2 == 1 {
+        return Err(RuntimeError::runtime("Argument 1 (= 2 * k) must be even"));
+    }
+    Ok(k)
+}
+
+/// `Eisenstein(k, t)`: the normalized Eisenstein series E_k at t (or at the
+/// point of a lattice).
+fn eisenstein(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let k = eisenstein_weight(a)?;
+    let t = point_arg(it, a, 1, false)?;
+    one(cv(t.eisenstein(k)))
+}
+
+/// Dedekind's eta, j, the discriminant and Weber's functions at a point of
+/// the upper half plane (or, for j and the discriminant, of a lattice).
+fn modular_function(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let name = a.name.as_rc();
+    let f = match &*name {
+        "DedekindEta" => Modular::Eta,
+        "jInvariant" => Modular::J,
+        "Delta" => Modular::Delta,
+        "WeberF" => Modular::WeberF,
+        "WeberF1" => Modular::WeberF1,
+        _ => Modular::WeberF2,
+    };
+    let t = point_arg(it, a, 0, f != Modular::Delta)?;
+    one(cv(t.modular(f)))
+}
+
+/// Check the nome q of a theta function: |q| < 1.
+fn nome(q: &ComplexV, msg: &'static str) -> RResult<()> {
+    let r = q.abs();
+    if !r.is_nan() && r < Real::from_i64(1, 2) { Ok(()) } else { Err(RuntimeError::runtime(msg)) }
+}
+
+/// A real value as a real number, and a complex one (from a negative nome)
+/// as a complex number.
+fn real_or_complex(v: ComplexV, real: bool) -> Value {
+    if real && v.im.is_zero() { Value::real(v.re) } else { cv(v) }
+}
+
+/// `JacobiTheta(q, z)`: Jacobi's first theta function with nome q. The
+/// result is in the field of q and z if they are both real or both complex
+/// numbers of the same precision. Other arguments are taken (as by Magma,
+/// which makes z a power series) in the default precision.
+fn jacobi_theta(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let (x, y) = (&a.args[0], &a.args[1]);
+    let (bits, msg, real) = match (x, y) {
+        (Value::Real(p), Value::Real(q)) if p.x.prec() == q.x.prec() => (p.x.prec(), "Argument must have absolute value < 1", true),
+        (Value::Complex(p), Value::Complex(q)) if p.prec() == q.prec() => (p.prec(), "First argument must have absolute values less \nthan 1", false),
+        _ => (default_bits(), "First argument must have absolute value less \nthan 1", !matches!(x, Value::Complex(_)) && !matches!(y, Value::Complex(_))),
+    };
+    let (q, z) = (to_complex(x, bits).unwrap(), to_complex(y, bits).unwrap());
+    nome(&q, msg)?;
+    one(real_or_complex(ComplexV::jacobi_theta(&q, &z, bits), real))
+}
+
+/// `JacobiThetaNullK(q, k)`: the k-th derivative of Jacobi's theta function
+/// at z = 0. A complex q must be real, as with Magma.
+fn jacobi_theta_null(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let v = &a.args[0];
+    if matches!(v, Value::Complex(c) if !c.im.is_zero()) {
+        let types = format!("{}, {}", it.type_name_ext(v), it.type_name_ext(&a.args[1]));
+        return Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {types}")));
+    }
+    let q = to_complex(v, reals::prec_of(v).unwrap_or_else(default_bits)).unwrap();
+    nome(&q, "Argument must have absolute value < 1")?;
+    let k = a.int(1)?;
+    let Some(k) = k.to_i64() else {
+        // Beyond a machine word, Magma gives 0 for even k.
+        if k.is_even() {
+            return one(Value::real(Real::zero(q.prec())));
+        }
+        return Err(RuntimeError::runtime("Argument 2 is too large"));
+    };
+    match ComplexV::jacobi_theta_null(&q, k, q.prec()) {
+        Ok(t) => one(real_or_complex(t, true)),
+        Err(ThetaCost::Nome) => Err(RuntimeError::runtime("Argument 1 is too close to 1")),
+        Err(ThetaCost::Order) => Err(RuntimeError::runtime("Argument 2 is too large")),
+    }
+}
+
 pub fn register(it: &mut Interp) {
     it.def_params("ComplexField", "-> FldCom", &[("Bits", Value::Bool(false))], "The default complex field.", complex_field);
     it.def_params("ComplexField", "p::RngIntElt -> FldCom", &[("Bits", Value::Bool(false))], "The complex field with p decimal digits of precision (or p bits with Bits).", complex_field);
@@ -437,6 +583,32 @@ pub fn register(it: &mut Interp) {
         it.def("PolylogD", &format!("m::RngIntElt, x::{t} -> {r}"), "Zagier's modified m-th polylogarithm D~_m(x) (m >= 1).", polylog_d);
         it.def("PolylogDold", &format!("m::RngIntElt, x::{t} -> {r}"), "Zagier's modified m-th polylogarithm D_m(x) (m >= 1).", polylog_d_old);
         it.def("PolylogP", &format!("m::RngIntElt, x::{t} -> {r}"), "Zagier's modified m-th polylogarithm P_m(x) (m >= 1).", polylog_p);
+    }
+
+    // Elliptic and modular functions.
+    it.def("Eisenstein", "k::RngIntElt, t::FldComElt -> FldComElt", "The normalized Eisenstein series E_k at t in the upper half plane (k even).", eisenstein);
+    it.def("Eisenstein", "k::RngIntElt, L::SeqEnum -> FldComElt", "E_k at the point a/b (or b/a) of the upper half plane, for the lattice L = [a, b].", eisenstein);
+    for (name, doc) in [
+        ("DedekindEta", "Dedekind's eta function at s in the upper half plane."),
+        ("jInvariant", "The elliptic j-invariant at s in the upper half plane."),
+        ("Delta", "The discriminant Delta = eta^24 at s in the upper half plane."),
+        ("WeberF", "Weber's function f at s in the upper half plane."),
+        ("WeberF1", "Weber's function f1 at s in the upper half plane."),
+        ("WeberF2", "Weber's function f2 at s in the upper half plane."),
+    ] {
+        it.def(name, "s::FldComElt -> FldComElt", doc, modular_function);
+    }
+    for name in ["jInvariant", "Delta"] {
+        it.def(name, "L::SeqEnum -> FldComElt", "The value at the point a/b (or b/a) of the upper half plane, for the lattice L = [a, b].", modular_function);
+    }
+    for s in ["RngIntElt", "FldRatElt", "FldReElt", "FldComElt"] {
+        for t in ["RngIntElt", "FldRatElt", "FldReElt", "FldComElt"] {
+            let r = if s == "FldComElt" || t == "FldComElt" { "FldComElt" } else { "FldReElt" };
+            it.def("JacobiTheta", &format!("q::{s}, z::{t} -> {r}"), "Jacobi's first theta function with nome q (|q| < 1) at z.", jacobi_theta);
+        }
+    }
+    for s in ["RngIntElt", "FldRatElt", "FldReElt", "FldComElt"] {
+        it.def("JacobiThetaNullK", &format!("q::{s}, k::RngIntElt -> FldReElt"), "The k-th derivative at 0 of Jacobi's first theta function with nome q (real).", jacobi_theta_null);
     }
 }
 
