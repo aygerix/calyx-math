@@ -52,6 +52,8 @@ fn elements(it: &mut Interp, v: &Value) -> RResult<Vec<Value>> {
 /// null aggregate from `x`.
 fn fit(it: &mut Interp, universe: &mut Option<Value>, x: Value) -> RResult<Value> {
     match universe {
+        // Integers need no coercion into the integers.
+        Some(Value::Struct(st)) if matches!(st.kind, StructKind::Integers) && matches!(x, Value::Int(_)) => Ok(x),
         Some(u) => {
             let u = u.clone();
             it.coerce_into_universe(&u, &x)
