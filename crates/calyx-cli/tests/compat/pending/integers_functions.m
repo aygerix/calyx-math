@@ -44,6 +44,13 @@ Multinomial(6, [1, 2, 3]); Multinomial(4, [4]); Multinomial(0, []); Multinomial(
 Multinomial(6, [1, 2, 2]);
 Multinomial(6, [0, 6]);
 Multinomial(6, [-1, 7]);
+Multinomial(5, [6, -1]);
+Multinomial(5, [2, 7, -4]);
+Multinomial(-5, [-2, -3]);
+Binomial(5, 2^70); Binomial(-1, 2^70); Binomial(-2, 2^70); Binomial(-3, 2^70 + 1); Binomial(2^70, 2^70 - 1); Binomial(2^70, 3); Binomial(-2^70, 2);
+Binomial(2^64, 2^32);
+Binomial(-2^70, 2^70);
+Ilog2(Binomial(2^40, 2^20));
 Factorial(0); Factorial(1); Factorial(10); Factorial(25);
 Factorial(-1);
 IsFactorial(120); IsFactorial(121); IsFactorial(1); IsFactorial(2); IsFactorial(0); IsFactorial(Factorial(30));

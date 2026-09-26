@@ -505,6 +505,14 @@ impl Integer {
         z
     }
 
+    /// The rising factorial self (self + 1) ... (self + k - 1), by binary
+    /// splitting.
+    pub fn rising_factorial(&self, k: u64) -> Integer {
+        let mut z = Integer::zero();
+        unsafe { sys::fmpz_rfac_ui(&mut z.raw, &self.raw, k as sys::ulong) };
+        z
+    }
+
     pub fn fibonacci(n: u64) -> Integer {
         let mut z = Integer::zero();
         unsafe { sys::fmpz_fib_ui(&mut z.raw, n as sys::ulong) };

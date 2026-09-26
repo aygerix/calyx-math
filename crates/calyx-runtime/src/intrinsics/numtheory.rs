@@ -699,11 +699,12 @@ fn solution_seq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
         return Err(RuntimeError::runtime("Lengths of sequence arguments should be the same"));
     }
     let (mut x, mut big) = (Integer::zero(), Integer::one());
+    // In turn, as Magma takes them: a zero modulus fails once it is reached.
     for ((ai, bi), ni) in aa.iter().zip(&bb).zip(&nn) {
-        if ni.sign() <= 0 {
-            return Err(RuntimeError::runtime("Moduli must be positive"));
+        if ni.is_zero() {
+            return Err(RuntimeError::runtime("Element of third argument (moduli M) is zero"));
         }
-        let Some((r, k)) = linear_congruence(ai, bi, ni) else {
+        let Some((r, k)) = linear_congruence(ai, bi, &ni.abs()) else {
             return intv(Integer::from_i64(-1));
         };
         match crt_step(&x, &big, &r, &k) {

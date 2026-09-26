@@ -12,27 +12,26 @@ fn binomial(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     if k.sign() < 0 {
         return intv(Integer::zero());
     }
-    let k = k.to_u64().ok_or_else(|| RuntimeError::runtime("Argument 2 is too large"))?;
-    if n.sign() >= 0 {
-        if let Some(nn) = n.to_u64() {
-            return intv(if k > nn { Integer::zero() } else { Integer::binomial_u64(nn, k) });
-        }
+    // As Magma does: C(n, k) = (-1)^k C(k - n - 1, k) for n < 0, and
+    // C(m, k) = C(m, m - k). Results of more than 2^32 bits are refused.
+    let m = if n.sign() < 0 { &(&k - &n) - 1 } else { n.clone() };
+    if k > m {
+        return intv(Integer::zero());
     }
-    // General n: the falling factorial over k!.
-    let mut num = Integer::one();
-    for i in 0..k {
-        num = &num * &(&n - &Integer::from_u64(i));
-    }
-    intv(num.divexact(&Integer::factorial(k)))
+    let j = std::cmp::min(k.clone(), &m - &k);
+    let big = || RuntimeError::runtime("Binomial computation is too big");
+    let j = j.to_u64().filter(|&j| j < 1 << 32 && j * m.bits() <= 1 << 32).ok_or_else(big)?;
+    let c = (&(&m - &Integer::from_u64(j)) + 1).rising_factorial(j).divexact(&Integer::factorial(j));
+    intv(if n.sign() < 0 && k.is_odd() { -c } else { c })
 }
 
 fn multinomial(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let n = a.int(0)?.clone();
+    let n = a.int_ge(0, 0)?;
     let parts = super::ints::ints_of(&a.args[1])?;
     if parts.is_empty() {
         return Err(RuntimeError::runtime("Argument 2 has length 0: should be >= 2"));
     }
-    if let Some(r) = parts.iter().find(|r| r.sign() < 0) {
+    if let Some(r) = parts.iter().find(|r| r.sign() < 0 || **r > n) {
         return Err(RuntimeError::runtime(format!("Bad multinomial argument {r}")));
     }
     if parts.iter().fold(Integer::zero(), |s, r| &s + r) != n {

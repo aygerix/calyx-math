@@ -1011,17 +1011,22 @@ impl Curve {
 
 /// The curve ECM uses modulo the prime p for sigma: Suyama's Montgomery
 /// curve b y^2 = x^3 + A x^2 + x through (x0, 1), in the form
-/// y^2 = x^3 + bA x^2 + b^2 x.
+/// y^2 = x^3 + bA x^2 + b^2 x. Where it degenerates, Magma's package code
+/// fails in a division or in EllipticCurve.
 fn ecm_curve_mod(p: &Integer, sigma: &Integer) -> RResult<Curve> {
-    let singular = || RuntimeError::runtime("Curve is singular").in_context("EllipticCurve");
+    let fails = |msg: &str, name: &str| {
+        let mut e = super::hidden(RuntimeError::runtime(msg));
+        e.context = Some(name.into());
+        e
+    };
     let (num, den, xn, xd) = suyama(sigma);
-    let inv = modp(&den, p).invmod(p).ok_or_else(singular)?;
+    let inv = modp(&den, p).invmod(p).ok_or_else(|| fails("Division by zero", "/"))?;
     let a = modp(&(&(&(&num * &inv) * &int(4)) - &int(2)), p);
-    let x0 = modp(&(&xn * &modp(&xd, p).invmod(p).ok_or_else(singular)?), p);
+    let x0 = modp(&(&xn * &modp(&xd, p).invmod(p).ok_or_else(|| fails("Division by zero", "/"))?), p);
     let b = modp(&(&(&(&(&x0 * &x0) * &x0) + &(&(&a * &x0) * &x0)) + &x0), p);
     let disc = modp(&(&(&b * &b) * &(&(&a * &a) - &int(4))), p);
     if disc.is_zero() {
-        return Err(singular());
+        return Err(fails("Curve is singular", "EllipticCurve"));
     }
     Ok(Curve { p: p.clone(), a2: modp(&(&b * &a), p), a4: modp(&(&b * &b), p) })
 }
