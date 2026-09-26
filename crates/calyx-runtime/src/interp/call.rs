@@ -135,7 +135,7 @@ impl Interp {
             Value::Func(clo) => {
                 if clo.code.is_procedure {
                     if !stmt {
-                        return Err(RuntimeError::runtime("A procedure cannot be used as a function (it returns no value)"));
+                        return Err(RuntimeError::runtime("Attempt to call user procedure as a function"));
                     }
                 } else if refmask.iter().any(|&b| b) {
                     return Err(RuntimeError::runtime("Functions cannot take reference arguments"));
@@ -490,8 +490,10 @@ impl Interp {
             }
             return Err(RuntimeError::runtime(format!("Bad argument types{}", self.arg_types_line(args, refmask))).in_context(name.to_string()));
         };
+        // In an expression Magma matches only function signatures, with a hint when a procedure's would fit.
         if sig.returns.is_none() && !stmt {
-            return Err(RuntimeError::runtime("Procedure has no return value (it may only be called as a statement)").in_context(name.to_string()));
+            let msg = format!("Bad argument types (possibly calling function signature of intrinsic as a procedure){}", self.arg_types_line(args, refmask));
+            return Err(RuntimeError::runtime(msg).in_context(name.to_string()));
         }
         // Fill named parameters.
         let mut full_params = Vec::with_capacity(sig.params.len());
