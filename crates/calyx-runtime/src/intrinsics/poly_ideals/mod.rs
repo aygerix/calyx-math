@@ -692,7 +692,8 @@ fn in_radical(r: &Ring, f: &Elem, gens: &[Elem]) -> RResult<bool> {
 // ----- construction ----------------------------------------------------------------
 
 /// The basis of `ideal<P | ...>`: elements coercing into P, ideals of P,
-/// and sets and sequences of these.
+/// and sets and sequences of these. Polynomials of another ring of the
+/// same rank coerce as by `!`, variable to variable.
 fn generators(it: &mut Interp, pst: &Rc<Struct>, right: &[Value]) -> RResult<Vec<Elem>> {
     let invalid = |i: usize| RuntimeError::runtime(format!("Rhs argument {} is invalid for this constructor", i + 1)).in_context("ideal< ... >");
     let mut out = Vec::new();
@@ -710,7 +711,8 @@ fn generators(it: &mut Interp, pst: &Rc<Struct>, right: &[Value]) -> RResult<Vec
                 out.extend(gs);
                 continue;
             }
-            out.push(it.to_ring_elem(pst, x, false)?.ok_or_else(|| invalid(i))?);
+            let forced = matches!(x, Value::Elt(e) if matches!(e.ring().kind, RingKind::MPoly { .. }));
+            out.push(it.to_ring_elem(pst, x, forced)?.ok_or_else(|| invalid(i))?);
         }
     }
     Ok(out)
