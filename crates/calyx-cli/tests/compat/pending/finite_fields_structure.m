@@ -61,16 +61,17 @@ RootOfUnity(5, GF(2)), RootOfUnity(48, F49), RootOfUnity(19, F49), Parent(RootOf
 IsPrimitive(RootOfUnity(2^30 - 1, GF(2))), RootOfUnity(3, GF(2^100)) eq k^((2^100 - 1) div 3), RootOfUnity(25, K) eq k^((2^100 - 1) div 25);
 Order(RootOfUnity(15, GF(2))), Order(RootOfUnity(9, GF(7)));
 
-// H22E3, leaving out Factorization and Evaluate (from the polynomial
-// chapter) and naming the generator of S separately.
+// H22E3, without the timing
 K := GF(2);
 P<x> := PolynomialRing(GF(2));
 f := x^20 + x^11 + 1;
-r, S := RootsInSplittingField(f); AssignNames(~S, ["w"]);
+Factorization(f);
+r, S<w> := RootsInSplittingField(f);
 S;
 DefiningPolynomial(S);
 #r;
 r[1];
+[IsZero(Evaluate(f, t[1])): t in r];
 { MinimalPolynomial(t[1]) : t in r } eq { x^3 + x^2 + 1, x^8 + x^7 + x^3 + x^2 + 1, x^9 + x^7 + x^6 + x^4 + 1 };
 
 // errors
