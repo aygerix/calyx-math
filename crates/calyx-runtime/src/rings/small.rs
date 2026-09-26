@@ -11,7 +11,7 @@
 //! The generic code paths work with FLINT elements (`Value::Elt`); `expand`
 //! turns an inline element into one, and `make_elt` turns results back.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::rc::Rc;
 
@@ -20,6 +20,8 @@ use calyx_flint::gr::{Ctx, CtxKind, Elem};
 use calyx_flint::{Integer, Nmod};
 
 use super::{Elt, Ring, RingKind};
+use crate::interp::Interp;
+use crate::sym::Sym;
 use crate::types::{TypeId, t};
 use crate::value::{Struct, StructKind, Value};
 
@@ -192,4 +194,89 @@ pub fn elt_of(v: &Value) -> Option<Rc<Elt>> {
         Value::Small(r, x) => Some(to_elt(*r, *x)),
         _ => None,
     }
+}
+
+/// Where `reachable` last found an inline element of a ring, and how many
+/// more calls take it to be there still, after a costly search.
+#[derive(Default)]
+pub struct Sighting {
+    global: Cell<Option<Sym>>,
+    skip: Cell<u32>,
+}
+
+/// The most values `reachable` looks at.
+const SEARCH_LIMIT: usize = 1 << 16;
+
+/// Whether an inline element of `s` is among the values the program can
+/// reach outside the calls of user functions: its results `$1`, `$2`, ...,
+/// its globals and the variables of `eval` code and packages. It is also
+/// true when the search gives up.
+pub fn reachable(it: &Interp, s: SmallRing, seen: &Sighting) -> bool {
+    if seen.skip.get() > 0 {
+        seen.skip.set(seen.skip.get() - 1);
+        return true;
+    }
+    let mut budget = SEARCH_LIMIT;
+    let found = find(it, s, seen, &mut budget);
+    let cost = SEARCH_LIMIT - budget;
+    if found != Some(false) && cost > 4096 {
+        // Spread the cost of a long search over the calls that follow.
+        seen.skip.set((cost / 8) as u32);
+    }
+    found != Some(false)
+}
+
+fn find(it: &Interp, s: SmallRing, seen: &Sighting, budget: &mut usize) -> Option<bool> {
+    let first = seen.global.get().and_then(|g| it.globals.get(&g));
+    if search(first.into_iter().chain(it.previous.iter().flatten()).chain(it.self_seqs.iter().flatten()), s, budget)? {
+        return Some(true);
+    }
+    for (g, v) in &it.globals {
+        if search([v], s, budget)? {
+            seen.global.set(Some(*g));
+            return Some(true);
+        }
+    }
+    let envs = it.eval_env.iter().chain(&it.package_stack).chain(it.packages.iter().map(|p| &p.globals));
+    search(envs.flat_map(|e| e.values()), s, budget)
+}
+
+/// Whether the values `vs`, or the values inside them, include an inline
+/// element of `s`; `None` when that takes more than `budget` steps.
+///
+/// When `renew_if_unreferenced` searches, no value refers to the parent of
+/// `s`, as a sequence or set of its elements would: so a sequence is
+/// searched only when it holds other containers, and a set never.
+fn search<'a>(vs: impl IntoIterator<Item = &'a Value>, s: SmallRing, budget: &mut usize) -> Option<bool> {
+    let mut todo: Vec<&Value> = Vec::new();
+    for v in vs {
+        push(&mut todo, std::slice::from_ref(v), budget)?;
+    }
+    while let Some(v) = todo.pop() {
+        match v {
+            Value::Small(r, _) if *r == s => return Some(true),
+            Value::Tuple(t) => push(&mut todo, &t.elems, budget)?,
+            Value::List(l) => push(&mut todo, l, budget)?,
+            Value::Rec(r) => push(&mut todo, &r.fields, budget)?,
+            Value::Assoc(a) => {
+                for x in a.map.values().chain(&a.default) {
+                    push(&mut todo, std::slice::from_ref(x), budget)?;
+                }
+            }
+            Value::Func(c) => push(&mut todo, &c.captures, budget)?,
+            Value::Seq(q) if q.elems.first().is_some_and(container) => push(&mut todo, &q.elems, budget)?,
+            _ => {}
+        }
+    }
+    Some(false)
+}
+
+fn push<'a>(todo: &mut Vec<&'a Value>, xs: &'a [Value], budget: &mut usize) -> Option<()> {
+    *budget = budget.checked_sub(xs.len())?;
+    todo.extend(xs);
+    Some(())
+}
+
+fn container(v: &Value) -> bool {
+    matches!(v, Value::Tuple(_) | Value::List(_) | Value::Rec(_) | Value::Assoc(_) | Value::Func(_) | Value::Seq(_))
 }

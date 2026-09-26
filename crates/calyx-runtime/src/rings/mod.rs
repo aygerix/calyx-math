@@ -92,9 +92,11 @@ pub struct FiniteField {
     /// For an extension of a non-prime field: that field and the defining
     /// polynomial over it.
     pub ground: Option<finite::Ground>,
-    /// The default field whose FLINT context represents this field, if it
-    /// is not its own.
-    pub rep: Option<Rc<Struct>>,
+    /// When the FLINT context of the default field of its size represents
+    /// this field: whether that field is defined by a Conway polynomial, and
+    /// its polynomial. (Copies: as in Magma, the field does not keep the
+    /// default field alive.)
+    pub rep: Option<(bool, Vec<Integer>)>,
     /// The known subfields and overfields.
     pub links: RefCell<finite::Links>,
     pub cache: finite::Cache,
@@ -373,7 +375,11 @@ impl Interp {
     pub fn finite_field(&mut self, p: &Integer, n: u64) -> RResult<Value> {
         let key = (p.clone(), n);
         if let Some(f) = self.rings.finite.get(&key) {
-            return Ok(f.clone());
+            let f = f.clone();
+            if n > 1 {
+                self.renew_if_unreferenced(&f);
+            }
+            return Ok(f);
         }
         let f = if n == 1 {
             let ctx = Ctx::residue_ring(p);
@@ -494,9 +500,13 @@ impl Interp {
         let (ctx, st) = (r.ctx.clone(), st.clone());
         Some(match (&r.kind, r.small) {
             (RingKind::Finite(f), Some(s)) if f.degree > 1 => {
-                // Zero, then the powers of the primitive element.
+                // Zero, then the powers of the primitive element. The loop
+                // holds the field, as in Magma (see `renew_if_unreferenced`).
                 let n = s.zech()?.zero();
-                Box::new(std::iter::once(n).chain(0..n).map(move |k| Value::Small(s, k)))
+                Box::new(std::iter::once(n).chain(0..n).map(move |k| {
+                    let _field = &st;
+                    Value::Small(s, k)
+                }))
             }
             (RingKind::Finite(f), None) if f.degree > 1 => {
                 // The coordinates counting in base p, the constant term fastest.

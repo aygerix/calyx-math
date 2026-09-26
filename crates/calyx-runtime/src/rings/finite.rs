@@ -18,7 +18,7 @@
 //! identified with the default field of its size when a field containing
 //! elements of both is needed.
 
-use std::cell::{OnceCell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::rc::{Rc, Weak};
 
 use calyx_flint::gr::{Ctx, CtxKind, Elem, Truth};
@@ -64,7 +64,7 @@ pub struct Cache {
     pub primitive: RefCell<Option<Elem>>,
     /// Whether the primitive element was set or had to be found, so that
     /// `SetPrimitiveElement` cannot change it.
-    pub primitive_fixed: std::cell::Cell<bool>,
+    pub primitive_fixed: Cell<bool>,
     /// Context coordinates to coordinates over the ground field in the
     /// power basis of `F.1` (`None` when they are the same).
     basis: OnceCell<Option<LinMap>>,
@@ -82,6 +82,9 @@ pub struct Cache {
     /// For square roots: the least non-square z (in counting order) to the
     /// power of the odd part of q - 1.
     pub non_square: OnceCell<Elem>,
+    /// Where an inline element of the field was last seen (see
+    /// `renew_if_unreferenced`).
+    pub seen: super::small::Sighting,
 }
 
 pub fn field_of(st: &Struct) -> Option<(&Ring, &FiniteField)> {
@@ -158,18 +161,18 @@ pub fn log_gen1(f: &FiniteField, x: &Elem) -> Option<u64> {
 
 /// Whether the FLINT context of a field is defined by a Conway polynomial.
 fn ctx_conway(f: &FiniteField) -> bool {
-    match &f.rep {
-        Some(d) => ff(d).1.conway,
-        None => f.conway,
-    }
+    f.rep.as_ref().map_or(f.conway, |r| r.0)
 }
 
 /// The polynomial defining the FLINT context of a field.
 fn ctx_modulus(f: &FiniteField) -> &[Integer] {
-    match &f.rep {
-        Some(d) => &ff(d).1.modulus,
-        None => &f.modulus,
-    }
+    f.rep.as_ref().map_or(&f.modulus, |r| &r.1)
+}
+
+/// The context data of the default field `d` for a field it represents.
+fn rep_of(d: &Struct) -> (bool, Vec<Integer>) {
+    let f = ff(d).1;
+    (f.conway, f.modulus.clone())
 }
 
 /// The polynomial with integer coefficients as one over a context.
@@ -818,6 +821,37 @@ impl Interp {
         struct_of(&self.new_ring(RingKind::Finite(ff), ctx))
     }
 
+    /// Magma frees a field that nothing refers to any more (no identifier,
+    /// value or result `$1`, `$2`, `$3`), and a later `GF(q)` builds a new
+    /// one, without the names, attributes and power printing the old one was
+    /// given. calyx keeps its default fields, so it resets `v`, one of them
+    /// fetched from the cache, when only the caches refer to it.
+    pub(super) fn renew_if_unreferenced(&self, v: &Value) {
+        let Value::Struct(st) = v else { return };
+        let (r, f) = ff(st);
+        // A default field prints its elements as powers when it has Zech
+        // logarithms, that is when they are stored inline.
+        let inline = r.small.is_some();
+        if r.names.borrow().is_empty() && f.power_printing.get() == inline && st.attrs.borrow().is_empty() {
+            return;
+        }
+        // `v`, the cache and the table of rings with inline elements hold it.
+        if Rc::strong_count(st) > 2 + inline as usize {
+            return;
+        }
+        // Inline elements do not refer to their field: look for them among
+        // the values the program can reach, unless a user function is running
+        // (its locals are out of sight).
+        if let Some(s) = r.small {
+            if !self.nresults_stack.is_empty() || super::small::reachable(self, s, &f.cache.seen) {
+                return;
+            }
+        }
+        r.names.borrow_mut().clear();
+        f.power_printing.set(inline);
+        st.attrs.borrow_mut().clear();
+    }
+
     /// The field `F_p[x]/(f)` for a monic irreducible `f` of degree at least
     /// 2 (constant term first), with `F.1` a root of `f`.
     pub fn ff_from_poly(&mut self, p: &Integer, f: Vec<Integer>) -> RResult<Rc<Struct>> {
@@ -833,7 +867,7 @@ impl Interp {
         let pp = g.as_ref().is_none_or(|g| g.zech_log().is_some_and(|k| calyx_flint::gcd_u64(k, Elem::zech_order(&ctx).unwrap()) == 1));
         let mut field = FiniteField::new(p.clone(), n, f, conway, false, pp);
         field.generator = g;
-        field.rep = Some(d);
+        field.rep = Some(rep_of(&d));
         Ok(self.new_field(field, ctx))
     }
 
@@ -869,7 +903,7 @@ impl Interp {
         let mut field = FiniteField::new(p, n, Vec::new(), false, false, pp);
         field.generator = Some(beta);
         field.ground = Some(Ground { field: k.clone(), degree: m, poly });
-        field.rep = Some(d);
+        field.rep = Some(rep_of(&d));
         let l = self.new_field(field, ctx);
         register(k, &l, kimg);
         Ok(l)
