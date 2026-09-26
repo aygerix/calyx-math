@@ -6,7 +6,7 @@ use std::rc::Rc;
 use calyx_flint::Integer;
 use calyx_syntax::ast::AggKind;
 
-use super::{bare, boolv, intv, one};
+use super::{boolv, intv, one, require};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
 use crate::rings::ideals::int_ideal_gen;
@@ -48,7 +48,7 @@ fn is_zero(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 fn prime_generator(a: &CallArgs) -> RResult<Integer> {
     let p = generator(a);
     if !p.is_prime() {
-        return Err(bare(RuntimeError::runtime("Argument must be a prime ideal")));
+        return Err(require(RuntimeError::runtime("Argument must be a prime ideal")));
     }
     Ok(p)
 }
@@ -56,7 +56,7 @@ fn prime_generator(a: &CallArgs) -> RResult<Integer> {
 fn decomposition(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let p = a.int(1)?.abs();
     if !p.is_prime() {
-        return Err(bare(RuntimeError::runtime("Argument 2 must be prime")));
+        return Err(require(RuntimeError::runtime("Argument 2 must be prime")));
     }
     let ideal = it.int_ideal(&p);
     one(it.build_aggregate(AggKind::Seq, None, vec![Value::tuple(vec![ideal, Value::int(1)])], false)?)
@@ -71,10 +71,10 @@ fn ramification_index(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 fn ramification_index_over(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let p = a.int(1)?;
     if !p.abs().is_prime() {
-        return Err(bare(RuntimeError::runtime("Argument 2 must be a prime")));
+        return Err(require(RuntimeError::runtime("Argument 2 must be a prime")));
     }
     if &generator(a) != p {
-        return Err(bare(RuntimeError::runtime("Argument 1 must contain argument 2.")));
+        return Err(require(RuntimeError::runtime("Argument 1 must contain argument 2.")));
     }
     intv(Integer::one())
 }

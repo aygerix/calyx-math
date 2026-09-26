@@ -42,6 +42,8 @@ f(G.1);
 Decomposition(Q, 2); Decomposition(Q, 5); Decomposition(Q, 101);
 d := Decomposition(Q, 7); Type(d); Type(d[1]); d[1, 1]; Parent(d[1, 1]); d[1, 2]; Parent(d[1, 2]);
 Decomposition(Q, 4);
+x := Decomposition(Q, 4);
+Decomposition(Rationals(), 4); x := Decomposition(Rationals(), 4);
 Decomposition(Q, 1);
 Decomposition(Q, 0);
 Decomposition(Q, -5);

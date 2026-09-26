@@ -110,7 +110,7 @@ fn generator(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 fn decomposition(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let p = match &a.args[1] {
         Value::Int(p) if p.abs().is_prime() => Value::Int(p.abs()),
-        Value::Int(_) => return Err(super::bare(RuntimeError::runtime("Argument 2 must be a prime element."))),
+        Value::Int(_) => return Err(super::require(RuntimeError::runtime("Argument 2 must be a prime element."))),
         // The infinite prime (either infinity) is real, unramified.
         _ => Value::Infinity(true),
     };
