@@ -547,6 +547,8 @@ impl Interp {
                     MapImpl::Native(n) => {
                         if n.rule() {
                             p.write(" given by a rule [no inverse]");
+                        } else if n.rule_with_inverse() {
+                            p.write(" given by a rule");
                         }
                         if let Some(pairs) = n.graph(&m) {
                             self.fmt_map_graph(p, &pairs, indent)?;
@@ -587,16 +589,20 @@ impl Interp {
             // Magma prints nearfield elements as text: unlike field elements,
             // their continuation lines are not indented further, and the
             // field's generator goes by a name given with < > only, not by
-            // the identifier the field is assigned to.
-            Value::Nfd(x) => match crate::intrinsics::nearfields::as_field_value(x) {
-                Value::Elt(e) => {
-                    let name = e.parent.name.take();
-                    let s = crate::rings::format_ring_elt(self, &e, p.level);
-                    *e.parent.name.borrow_mut() = name;
-                    p.write(&s?);
+            // the identifier the field is assigned to. As for nearfields,
+            // the line counts as empty after the text.
+            Value::Nfd(x) => {
+                match crate::intrinsics::nearfields::as_field_value(x) {
+                    Value::Elt(e) => {
+                        let name = e.parent.name.take();
+                        let s = crate::rings::format_ring_elt(self, &e, p.level);
+                        *e.parent.name.borrow_mut() = name;
+                        p.write(&s?);
+                    }
+                    v => self.fmt(p, &v, indent)?,
                 }
-                v => self.fmt(p, &v, indent)?,
-            },
+                p.col = 0;
+            }
             Value::Elt(e) => {
                 let s = crate::rings::format_ring_elt(self, e, p.level)?;
                 // Continuation lines of a sum are indented further.
@@ -806,11 +812,17 @@ impl Interp {
         }
         match &s.kind {
             StructKind::AbGroup(g) => fmt_abgroup(p, s, g, indent),
+            // Magma's package code prints nearfields (without the order at
+            // the minimal level), and what it prints does not count toward
+            // the width of the line: the line counts as empty after it.
             StructKind::Nearfield(_) => {
                 let [kind, order] = crate::intrinsics::nearfields::describe(s);
                 p.write(&kind);
-                p.newline(indent);
-                p.write(&order);
+                if p.level != Level::Minimal {
+                    p.newline(indent);
+                    p.write(&order);
+                }
+                p.col = 0;
             }
             StructKind::Integers => p.write("Integer Ring"),
             StructKind::Rationals => p.write("Rational Field"),
