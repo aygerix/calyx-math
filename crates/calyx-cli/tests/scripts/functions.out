@@ -66,6 +66,11 @@ MyRational(
              ^
 Runtime error in 'MyRational': Denominator must be non-zero
 
+
+>> MyRational(1, 2 : Foo := 1);
+             ^
+Runtime error in 'MyRational': No parameters are possible
+
 <1, 2/3>
 Direct product of <Integer Ring, Rational Field>
 <3, 17/12>

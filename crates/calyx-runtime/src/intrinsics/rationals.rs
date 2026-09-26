@@ -525,7 +525,7 @@ pub fn register(it: &mut Interp) {
         "The partial quotients of the continued fraction of q, at most Bound of them.",
         cf_intr,
     );
-    it.def("ContinuedFraction", "n::RngIntElt -> [RngIntElt]", "The continued fraction [ n ] of n.", cf_intr);
+    it.def("ContinuedFraction", "n::RngIntElt -> [RngIntElt]", "The continued fraction [ n ] of n.", cf_intr).package = true;
     it.def("ContinuedFractionValue", "C::[RngIntElt] -> FldRatElt", "The rational with continued fraction C.", cf_value_intr);
     for name in ["HirzebruchJungContinuedFraction", "HJContinuedFraction"] {
         it.def(name, "q::FldRatElt -> [RngIntElt]", "The partial quotients of the Hirzebruch-Jung continued fraction of q.", hj_cf_intr);

@@ -1161,9 +1161,9 @@ fn sqrt(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 pub fn register(it: &mut Interp) {
     const G: &str = "GrpDrch";
     const E: &str = "GrpDrchElt";
-    it.def("DirichletGroup", &format!("N::RngIntElt -> {G}"), "The group of Dirichlet characters modulo N with values in the rationals.", dirichlet_group);
-    it.def("DirichletGroup", &format!("N::RngIntElt, R::Rng -> {G}"), "The group of Dirichlet characters modulo N with values in R (the integers, the rationals or a finite field).", dirichlet_group);
-    it.def("DirichletGroup", &format!("N::RngIntElt, R::Rng, z::RngElt, r::RngIntElt -> {G}"), "The group of Dirichlet characters modulo N with values in the powers of z, a root of unity of order r in R.", dirichlet_group_root);
+    it.def("DirichletGroup", &format!("N::RngIntElt -> {G}"), "The group of Dirichlet characters modulo N with values in the rationals.", dirichlet_group).package = true;
+    it.def("DirichletGroup", &format!("N::RngIntElt, R::Rng -> {G}"), "The group of Dirichlet characters modulo N with values in R (the integers, the rationals or a finite field).", dirichlet_group).package = true;
+    it.def("DirichletGroup", &format!("N::RngIntElt, R::Rng, z::RngElt, r::RngIntElt -> {G}"), "The group of Dirichlet characters modulo N with values in the powers of z, a root of unity of order r in R.", dirichlet_group_root).package = true;
     it.def("BaseExtend", &format!("G::{G}, R::Rng -> {G}"), "The characters of G with values in R.", base_extend);
     it.def("BaseExtend", &format!("G::{G}, R::Rng, z::RngElt -> {G}"), "The characters of G with values in R, the root of unity of G becoming z.", base_extend);
     it.def("AssignNames", &format!("~G::{G}, S::[MonStgElt]"), "Assign names to the generators of G.", assign_names);

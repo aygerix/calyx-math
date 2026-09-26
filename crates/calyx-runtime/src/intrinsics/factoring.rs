@@ -1249,7 +1249,8 @@ pub fn register(it: &mut Interp) {
         "n::RngIntElt, L::RngIntElt, U::RngIntElt -> RngIntElt, RngIntElt",
         "A factor of n found by ECM with B1 growing from L to U, and its sigma; or 0.",
         ecm_steps,
-    );
+    )
+    .package = true;
     it.def_params("MPQS", "n::RngIntElt -> RngIntEltFact, [RngIntElt]", &pb, "Factor n by the quadratic sieve.", mpqs);
     it.def("ECMOrder", "p::RngIntElt, s::RngIntElt -> RngIntElt", "The order of the ECM curve for sigma = s modulo the prime p.", ecm_order);
     it.def(

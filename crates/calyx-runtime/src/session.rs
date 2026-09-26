@@ -307,7 +307,7 @@ impl Interp {
             def.doc.clone()
         };
         let source = self.file_stack.last().cloned();
-        let sig = Signature { args, variadic, returns, params, doc, imp: Imp::User(clo), generic: false, order: 0, source };
+        let sig = Signature { args, variadic, returns, params, doc, imp: Imp::User(clo), generic: false, order: 0, source, package: true };
         self.intrinsics.add(def.name, sig);
         Ok(())
     }

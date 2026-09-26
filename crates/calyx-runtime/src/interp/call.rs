@@ -499,7 +499,9 @@ impl Interp {
         let mut full_params = Vec::with_capacity(sig.params.len());
         if let Some((pname, _)) = params.iter().find(|(n, _)| !sig.params.iter().any(|p| p.name == *n)) {
             let msg = if sig.params.is_empty() { "No parameters are possible".to_string() } else { format!("Parameter '{pname}' is not defined for this function") };
-            return Err(RuntimeError::runtime(format!("{msg}{}", self.arg_types_line(args, refmask))).in_context(name.to_string()));
+            // Package intrinsics fail as user functions do, without the argument types.
+            let types = if sig.package { String::new() } else { self.arg_types_line(args, refmask) };
+            return Err(RuntimeError::runtime(format!("{msg}{types}")).in_context(name.to_string()));
         }
         let result = match &sig.imp {
             Imp::Native(fun) => {

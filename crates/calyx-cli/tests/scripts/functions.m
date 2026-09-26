@@ -112,6 +112,8 @@ r + s;
 r * s;
 Type(r);
 MyRational(1, 0);
+// A parameter to a package intrinsic fails as for a user function, without the argument types.
+MyRational(1, 2 : Foo := 1);
 Attach("pkgs/dirprod.m");
 Z := IntegerRing();
 Q := RationalField();

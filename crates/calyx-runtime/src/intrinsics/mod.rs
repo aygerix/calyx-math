@@ -76,6 +76,9 @@ pub struct Signature {
     pub order: u64,
     /// The package file that defined this signature, if any.
     pub source: Option<PathBuf>,
+    /// Written in Magma's language (a package intrinsic): parameters it does
+    /// not take fail as for user functions, without the argument types.
+    pub package: bool,
 }
 
 /// The signature last chosen at a call site, remembered with the argument
@@ -170,10 +173,12 @@ impl IntrinsicTable {
         self.get(name).is_some_and(|sigs| sigs.iter().filter(|s| takes(s)).all(|s| s.args.iter().all(|a| matches!(a.pat, TypePat::Any | TypePat::Is(_)))))
     }
 
-    pub fn add(&mut self, name: Sym, mut sig: Signature) {
+    pub fn add(&mut self, name: Sym, mut sig: Signature) -> &mut Signature {
         self.counter += 1;
         sig.order = self.counter;
-        self.map.entry(name).or_default().push(Rc::new(sig));
+        let sigs = self.map.entry(name).or_default();
+        sigs.push(Rc::new(sig));
+        Rc::get_mut(sigs.last_mut().unwrap()).unwrap()
     }
 
     /// Changes whenever signatures are added or removed.
@@ -257,26 +262,27 @@ fn split_top(s: &str) -> Vec<&str> {
 }
 
 impl Interp {
-    /// Register a native intrinsic.
-    pub fn def(&mut self, name: &str, sig: &str, doc: &str, f: NativeFn) {
-        self.def_params(name, sig, &[], doc, f);
+    /// Register a native intrinsic. Set `package` on the signature returned
+    /// for one that Magma writes in its own language.
+    pub fn def(&mut self, name: &str, sig: &str, doc: &str, f: NativeFn) -> &mut Signature {
+        self.def_params(name, sig, &[], doc, f)
     }
 
     /// Register a native intrinsic with named parameters and defaults.
-    pub fn def_params(&mut self, name: &str, sig: &str, params: &[(&str, Value)], doc: &str, f: NativeFn) {
+    pub fn def_params(&mut self, name: &str, sig: &str, params: &[(&str, Value)], doc: &str, f: NativeFn) -> &mut Signature {
         let (args, variadic, returns) = parse_sig(self, sig).unwrap_or_else(|e| panic!("bad signature for {name}: {sig}: {e}"));
         let params = params
             .iter()
             .map(|(n, v)| ParamSig { name: Sym::new(n), default: v.clone(), default_text: Rc::from(self.format_flat(v, crate::print::Level::Magma).unwrap_or_default().as_str()) })
             .collect();
-        let sig = Signature { args, variadic, returns, params, doc: Rc::from(doc), imp: Imp::Native(f), generic: false, order: 0, source: None };
-        self.intrinsics.add(Sym::new(name), sig);
+        let sig = Signature { args, variadic, returns, params, doc: Rc::from(doc), imp: Imp::Native(f), generic: false, order: 0, source: None, package: false };
+        self.intrinsics.add(Sym::new(name), sig)
     }
 
     /// Register a catch-all operator signature.
     pub fn def_generic(&mut self, name: &str, sig: &str, doc: &str, f: NativeFn) {
         let (args, variadic, returns) = parse_sig(self, sig).unwrap();
-        let sig = Signature { args, variadic, returns, params: Vec::new(), doc: Rc::from(doc), imp: Imp::Native(f), generic: true, order: 0, source: None };
+        let sig = Signature { args, variadic, returns, params: Vec::new(), doc: Rc::from(doc), imp: Imp::Native(f), generic: true, order: 0, source: None, package: false };
         self.intrinsics.add(Sym::new(name), sig);
     }
 
