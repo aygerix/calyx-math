@@ -37,7 +37,7 @@ pub fn coerce_complex(x: &Value, bits: u64) -> Result<Value, Option<String>> {
         Value::Seq(s) if s.elems.len() != 2 => Err(Some("Sequence must have length 2 to lift into this ring".into())),
         Value::Seq(s) => match (to_real(&s.elems[0], bits), to_real(&s.elems[1], bits)) {
             (Some(re), Some(im)) => Ok(cv(ComplexV::new(re, im))),
-            _ => Err(None),
+            _ => Err(Some("Illegal coercion\n".into())),
         },
         _ => to_complex(x, bits).map(cv).ok_or(None),
     }
@@ -58,15 +58,20 @@ pub fn complex_binop(op: BinOp, a: &Value, b: &Value, bits: u64) -> RResult<Opti
         Div => cv(x.div(&y).ok_or_else(|| div_by_zero().in_context("/"))?),
         Pow => match b {
             Value::Int(n) => {
-                if x.is_zero() && n.sign() < 0 {
+                let n = reals::small_exponent(n)?;
+                if x.is_zero() && n < 0 {
                     return Err(RuntimeError::runtime("Illegal negative power of zero element").in_context("^"));
                 }
-                cv(x.pow_integer(n))
+                cv(x.pow_i64(n))
             }
             _ => cv(x.pow(&y)),
         },
         Eq | Cmpeq => Value::Bool(reals::num_eq(a, b).unwrap_or(false)),
         Ne | Cmpne => Value::Bool(!reals::num_eq(a, b).unwrap_or(false)),
+        Lt | Le | Gt | Ge => {
+            let name = match op { Lt => "lt", Le => "le", Gt => "gt", _ => "ge" };
+            return Err(RuntimeError::runtime("No comparison algorithm exists for given objects").in_context(name));
+        }
         _ => return Ok(None),
     }))
 }
@@ -168,8 +173,94 @@ fn assign_names(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 }
 
 fn is_zero(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let Value::Complex(c) = &a.args[0] else { unreachable!() };
-    boolv(c.re.is_zero() && c.im.is_zero())
+    boolv(arg_c(a, 0).is_zero())
+}
+
+// ----- elements ------------------------------------------------------------------
+
+fn arg_c(a: &CallArgs, i: usize) -> &ComplexV {
+    let Value::Complex(c) = &a.args[i] else { unreachable!() };
+    c
+}
+
+fn is_real(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    boolv(arg_c(a, 0).im.is_zero())
+}
+
+fn is_integral(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let c = arg_c(a, 0);
+    boolv(c.im.is_zero() && c.re.is_integer())
+}
+
+fn real_part(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    one(Value::real(arg_c(a, 0).re.clone()))
+}
+
+fn imaginary_part(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    one(Value::real(arg_c(a, 0).im.clone()))
+}
+
+fn modulus(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    one(Value::real(arg_c(a, 0).abs()))
+}
+
+fn argument(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    one(Value::real(arg_c(a, 0).arg()))
+}
+
+fn norm(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    one(Value::real(arg_c(a, 0).norm()))
+}
+
+fn conjugate(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    one(cv(arg_c(a, 0).conj()))
+}
+
+/// The modulus and the argument. (Magma 2.22 returns the arccosine of
+/// `Re(c)/|c|` as the argument, which loses its sign; this follows the
+/// handbook.)
+fn complex_to_polar(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let c = arg_c(a, 0);
+    Ok(vals![Value::real(c.abs()), Value::real(c.arg())])
+}
+
+/// `m·e^(ia)`, at the smaller precision of the real arguments (the default
+/// precision if neither is real).
+fn polar_to_complex(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let bits = match (reals::prec_of(&a.args[0]), reals::prec_of(&a.args[1])) {
+        (Some(x), Some(y)) => x.min(y),
+        (Some(x), None) | (None, Some(x)) => x,
+        _ => default_bits(),
+    };
+    let (m, t) = (to_real(&a.args[0], bits).unwrap(), to_real(&a.args[1], bits).unwrap());
+    one(cv(ComplexV::polar(&m, &t)))
+}
+
+fn sqrt(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    one(cv(arg_c(a, 0).sqrt()))
+}
+
+/// The n-th root that Magma returns (NaN for n < 1). Magma computes it by
+/// Newton's method and does not document which root it finds: for n = 2
+/// it is the negative of the principal square root, on the negative real
+/// axis the conjugate of the principal root (the real root for n = 3), and
+/// otherwise usually the principal root. The sign of a zero imaginary part
+/// does not matter.
+pub fn magma_root(c: &ComplexV, n: &calyx_flint::Integer) -> ComplexV {
+    let bits = c.prec();
+    let c = &if c.im.is_zero() { ComplexV::from_real(c.re.clone()) } else { c.clone() };
+    match n.to_u64().filter(|&k| k > 0) {
+        Some(2) => c.sqrt().neg(),
+        Some(3) if c.im.is_zero() && c.re.sign() < 0 => ComplexV::from_real(c.re.root(3)),
+        Some(k) if c.im.is_zero() && c.re.sign() < 0 => c.root(k).conj(),
+        Some(k) => c.root(k),
+        None => ComplexV::new(Real::nan(bits), Real::nan(bits)),
+    }
+}
+
+fn root(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let n = a.int(1)?;
+    one(cv(magma_root(arg_c(a, 0), n)))
 }
 
 pub fn register(it: &mut Interp) {
@@ -181,4 +272,32 @@ pub fn register(it: &mut Interp) {
     it.def("Name", "C::FldCom, i::RngIntElt -> FldComElt", "The square root of -1 in C.", generator);
     it.def("AssignNames", "~C::FldCom, N::[MonStgElt]", "Set the name used to print the square root of -1 in C.", assign_names);
     it.def("IsZero", "x::FldComElt -> BoolElt", "Whether x is zero.", is_zero);
+    it.def("IsReal", "x::FldComElt -> BoolElt", "Whether the imaginary part of x is zero.", is_real);
+    it.def("IsIntegral", "x::FldComElt -> BoolElt", "Whether x is an integer.", is_integral);
+    for name in ["Real", "Re"] {
+        it.def(name, "x::FldComElt -> FldReElt", "The real part of x.", real_part);
+    }
+    for name in ["Imaginary", "Im"] {
+        it.def(name, "x::FldComElt -> FldReElt", "The imaginary part of x.", imaginary_part);
+    }
+    for name in ["Modulus", "Abs", "AbsoluteValue"] {
+        it.def(name, "x::FldComElt -> FldReElt", "The modulus of x.", modulus);
+    }
+    for name in ["Arg", "Argument"] {
+        it.def(name, "x::FldComElt -> FldReElt", "The argument of x, in [-pi, pi].", argument);
+    }
+    it.def("Norm", "x::FldComElt -> FldReElt", "The norm Re(x)^2 + Im(x)^2 of x.", norm);
+    for name in ["ComplexConjugate", "Conjugate"] {
+        it.def(name, "x::FldComElt -> FldComElt", "The complex conjugate of x.", conjugate);
+    }
+    it.def("ComplexToPolar", "x::FldComElt -> FldReElt, FldReElt", "The modulus and the argument of x.", complex_to_polar);
+    for s in ["RngIntElt", "FldRatElt", "FldReElt"] {
+        for t in ["RngIntElt", "FldRatElt", "FldReElt"] {
+            it.def("PolarToComplex", &format!("m::{s}, a::{t} -> FldComElt"), "The complex number m*e^(i*a).", polar_to_complex);
+        }
+    }
+    for name in ["Sqrt", "SquareRoot"] {
+        it.def(name, "x::FldComElt -> FldComElt", "The principal square root of x.", sqrt);
+    }
+    it.def("Root", "x::FldComElt, n::RngIntElt -> FldComElt", "An n-th root of x.", root);
 }

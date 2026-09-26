@@ -185,14 +185,20 @@ pub fn num_binop(op: BinOp, a: &Value, b: &Value) -> RResult<Option<Value>> {
     }))
 }
 
+/// An integer exponent of a real or complex number: `|e| < 2^30`.
+pub fn small_exponent(e: &Integer) -> RResult<i64> {
+    e.to_i64().filter(|k| k.unsigned_abs() < 1 << 30).ok_or_else(|| RuntimeError::runtime(format!("Argument 2 ({e}) is too large")).in_context("^"))
+}
+
 /// `a^b` with a real operand and no complex one.
 fn real_pow(a: &Value, b: &Value, bits: u64) -> RResult<Value> {
     let r = match (a, b) {
         (Value::Real(x), Value::Int(e)) => {
-            if x.x.is_zero() && e.sign() < 0 {
+            let e = small_exponent(e)?;
+            if x.x.is_zero() && e < 0 {
                 return Err(RuntimeError::runtime("Illegal negative power of zero element").in_context("^"));
             }
-            return Ok(Value::Real(Rc::new(RealV { x: x.x.pow_integer(e), fixed: x.fixed })));
+            return Ok(Value::Real(Rc::new(RealV { x: x.x.pow_i64(e), fixed: x.fixed })));
         }
         _ => to_real(a, bits).unwrap().pow(&to_real(b, bits).unwrap()),
     };
@@ -250,12 +256,87 @@ pub fn field_bits(a: &CallArgs, i: usize) -> RResult<u64> {
 }
 
 fn real_field(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let bits = if a.args.is_empty() { default_bits() } else { field_bits(a, 0)? };
+    let bits = match a.args.first() {
+        None => default_bits(),
+        Some(v @ Value::Struct(_)) => bits_of(v).unwrap(),
+        Some(_) => field_bits(a, 0)?,
+    };
     one(Value::reals(bits))
 }
 
+fn get_default_real_field(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
+    one(Value::reals(default_bits()))
+}
+
+fn set_default_real_field(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    set_default_bits(bits_of(&a.args[0]).unwrap());
+    super::none()
+}
+
+fn identity(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let bits = bits_of(&a.args[0]).unwrap();
+    let x = Real::from_i64(1, bits);
+    one(if matches!(a.args[0], Value::Struct(ref s) if matches!(s.kind, StructKind::Reals(_))) { Value::real(x) } else { Value::complex(x, Real::zero(bits)) })
+}
+
+/// The precision in bits of a real or complex field or number, or of the
+/// universe of a sequence of them.
+pub fn bits_of(v: &Value) -> Option<u64> {
+    match v {
+        Value::Real(r) => Some(r.x.prec()),
+        Value::Complex(c) => Some(c.prec()),
+        Value::Struct(s) => match &s.kind {
+            StructKind::Reals(b) => Some(*b),
+            StructKind::Ring(r) => match r.kind {
+                crate::rings::RingKind::Complex(b) => Some(b),
+                _ => None,
+            },
+            _ => None,
+        },
+        Value::Seq(s) => s.universe.as_ref().and_then(bits_of),
+        _ => None,
+    }
+}
+
+fn precision(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let bits = bits_of(&a.args[0]).ok_or_else(|| RuntimeError::runtime("Bad argument types"))?;
+    one(Value::int(calyx_flint::digits_for_bits(bits) as i64))
+}
+
+fn bit_precision(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    one(Value::int(bits_of(&a.args[0]).unwrap() as i64))
+}
+
+/// `ChangePrecision(x, n)`: x in the field of precision n.
+fn change_precision(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let n = a.int(1)?;
+    if n.sign() <= 0 {
+        return Err(super::arg_not(1, "positive").in_context("RealField"));
+    }
+    let bits = n.to_u64().filter(|&d| d < 1 << 38).map(bits_for_digits).ok_or_else(|| RuntimeError::runtime("Precision is too large"))?;
+    one(match &a.args[0] {
+        Value::Complex(c) => super::complex::cv(c.round_to(bits)),
+        v => Value::real(to_real(v, bits).unwrap()),
+    })
+}
+
+fn mantissa_exponent(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let Value::Real(r) = &a.args[0] else { unreachable!() };
+    if !r.x.is_regular() {
+        return Ok(vals![Value::int(0), Value::Infinity(false)]);
+    }
+    let (m, e) = r.x.mantissa_exponent();
+    Ok(vals![Value::Int(m), Value::int(e)])
+}
+
+/// Argument `i` as a real number, with integers and rationals in the
+/// default field.
+fn real_at(a: &CallArgs, i: usize) -> Real {
+    real_arg(&a.args[i]).unwrap()
+}
+
 fn sqrt(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let x = real_arg(&a.args[0]).unwrap();
+    let x = real_at(a, 0);
     if x.sign() < 0 {
         let z = Real::zero(x.prec());
         return one(Value::complex(z, x.neg().sqrt()));
@@ -263,15 +344,139 @@ fn sqrt(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::real(x.sqrt()))
 }
 
-fn precision(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    match &a.args[0] {
-        Value::Struct(s) => match &s.kind {
-            StructKind::Reals(b) => one(Value::int(calyx_flint::digits_for_bits(*b) as i64)),
-            _ => Err(RuntimeError::runtime("Argument must be a real field")),
-        },
-        Value::Real(r) => one(Value::int(r.digits() as i64)),
-        _ => unreachable!(),
+/// The real n-th root (NaN for n < 1); even roots of negative integers
+/// and rationals are complex.
+fn root(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let x = real_at(a, 0);
+    let n = a.int(1)?;
+    let Some(k) = n.to_u64().filter(|&k| k > 0) else { return one(Value::real(Real::nan(x.prec()))) };
+    if k % 2 == 0 && x.sign() < 0 {
+        if !matches!(a.args[0], Value::Real(_)) {
+            let c = super::complex::magma_root(&calyx_flint::Complex::from_real(x), n);
+            return one(super::complex::cv(c));
+        }
+        return Err(RuntimeError::runtime("Illegal even root of negative number"));
     }
+    one(Value::real(x.root(k)))
+}
+
+fn real_part(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    one(Value::real(real_at(a, 0)))
+}
+
+fn imaginary_part(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    one(Value::real(Real::zero(real_at(a, 0).prec())))
+}
+
+/// The argument of a real: 0, or pi for negative numbers.
+fn arg(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let x = real_at(a, 0);
+    one(Value::real(Real::zero(x.prec()).binary(&x, calyx_flint::mpfr::mpfr_atan2)))
+}
+
+fn abs(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    one(Value::real(real_at(a, 0).abs()))
+}
+
+fn conjugate(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    one(a.args[0].clone())
+}
+
+fn is_integral(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    super::boolv(real_at(a, 0).is_integer())
+}
+
+fn constant(a: &CallArgs, f: calyx_flint::mpfr::Constant) -> RResult<Vals> {
+    let bits = bits_of(&a.args[0]).unwrap();
+    let x = Real::constant(f, bits);
+    one(match &a.args[0] {
+        Value::Struct(s) if matches!(s.kind, StructKind::Reals(_)) => Value::real(x),
+        _ => Value::complex(x, Real::zero(bits)),
+    })
+}
+
+fn pi(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    constant(a, calyx_flint::mpfr::mpfr_const_pi)
+}
+
+fn euler_gamma(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    constant(a, calyx_flint::mpfr::mpfr_const_euler)
+}
+
+fn catalan(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    constant(a, calyx_flint::mpfr::mpfr_const_catalan)
+}
+
+/// `|x - y|` for real or complex numbers.
+fn distance_between(x: &Value, y: &Value) -> RResult<Value> {
+    Ok(match num_binop(BinOp::Sub, x, y)? {
+        Some(Value::Real(r)) => Value::real(r.x.abs()),
+        Some(Value::Complex(c)) => Value::real(c.abs()),
+        _ => return Err(RuntimeError::runtime("Bad argument types")),
+    })
+}
+
+/// Whether a distance is below the bound `Max` (none by default).
+fn below(d: &Value, max: &Value) -> bool {
+    match max {
+        Value::Infinity(pos) => *pos,
+        _ => num_cmp(d, max).is_some_and(|o| o.is_lt()),
+    }
+}
+
+/// `Distance(x, L)`: the least distance from x to an element of L, and the
+/// index of such an element (`Max` and 0 if every distance is at least
+/// `Max`).
+fn distance(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let x = a.args[0].clone();
+    let Value::Seq(l) = &a.args[1] else { unreachable!() };
+    if l.elems.is_empty() {
+        return Err(RuntimeError::runtime("Array must be nonempty").in_context(""));
+    }
+    let max = a.param("Max").cloned().unwrap_or(Value::Infinity(true));
+    let mut best = (max.clone(), 0);
+    for (i, y) in l.elems.iter().enumerate() {
+        let d = distance_between(&x, y)?;
+        if below(&d, &best.0) {
+            best = (d, i + 1);
+        }
+    }
+    if best.1 == 0 && matches!(best.0, Value::Infinity(_)) {
+        best.0 = Value::int(0);
+    }
+    Ok(vals![best.0, Value::int(best.1 as i64)])
+}
+
+/// `Diameter(L)`: the least distance between distinct elements of L (0, or
+/// `Max`, if there is none below `Max`).
+fn diameter(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let Value::Seq(l) = &a.args[0] else { unreachable!() };
+    let l = l.clone();
+    let max = a.param("Max").cloned().unwrap_or(Value::Infinity(true));
+    let mut best = max;
+    for (i, x) in l.elems.iter().enumerate() {
+        for y in &l.elems[i + 1..] {
+            let d = distance_between(x, y)?;
+            if !matches!(&d, Value::Real(r) if r.x.is_zero()) && below(&d, &best) {
+                best = d;
+            }
+        }
+    }
+    one(if matches!(best, Value::Infinity(_)) { Value::int(0) } else { best })
+}
+
+fn mpfr_version(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
+    one(Value::str(&calyx_flint::mpfr::version()))
+}
+
+fn gmp_version(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
+    one(Value::str(&calyx_flint::mpfr::gmp_version()))
+}
+
+/// calyx computes complex functions with FLINT's ball arithmetic instead
+/// of MPC.
+fn mpc_version(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
+    one(Value::str("none"))
 }
 
 fn extended_reals(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
@@ -298,6 +503,10 @@ fn infinity_is_finite(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::Bool(false))
 }
 
+fn infinity_itself(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    one(a.args[0].clone())
+}
+
 pub fn register(it: &mut Interp) {
     it.def("Infinity", "-> Infty", "Positive infinity.", infinity);
     it.def("ExtendedReals", "-> ExtRe", "The real numbers together with plus and minus infinity.", extended_reals);
@@ -305,11 +514,57 @@ pub fn register(it: &mut Interp) {
     it.def("Abs", "x::Infty -> Infty", "Positive infinity.", infinity_abs);
     it.def("Sign", "x::Infty -> RngIntElt", "The sign of x.", infinity_sign);
     it.def("IsFinite", "x::Infty -> BoolElt", "False: x is infinite.", infinity_is_finite);
+    for name in ["Floor", "Ceiling", "Round"] {
+        it.def(name, "x::Infty -> Infty", "x itself.", infinity_itself);
+    }
+
+    // Fields.
     it.def("RealField", "-> FldRe", "The default real field.", real_field);
     it.def_params("RealField", "p::RngIntElt -> FldRe", &[("Bits", Value::Bool(false))], "The real field with p decimal digits of precision (or p bits with Bits).", real_field);
-    for t in ["RngIntElt", "FldRatElt", "FldReElt"] {
-        it.def("Sqrt", &format!("x::{t} -> FldReElt"), "The real square root of x.", sqrt);
+    it.def("RealField", "C::FldCom -> FldRe", "The real field of the precision of C.", real_field);
+    it.def("GetDefaultRealField", "-> FldRe", "The parent of real literals.", get_default_real_field);
+    it.def("SetDefaultRealField", "R::FldRe", "Make R the parent of real literals and the default real field.", set_default_real_field);
+    it.def("GetMPFRVersion", "-> MonStgElt", "The version of MPFR used.", mpfr_version);
+    it.def("GetGMPVersion", "-> MonStgElt", "The version of GMP used.", gmp_version);
+    it.def("GetMPCVersion", "-> MonStgElt", "\"none\": calyx computes with FLINT's complex balls instead of MPC.", mpc_version);
+    for t in ["FldRe", "FldCom"] {
+        it.def("Identity", &format!("R::{t} -> {t}Elt"), "The one of R.", identity);
+        it.def("Precision", &format!("R::{t} -> RngIntElt"), "The decimal precision of R.", precision);
+        it.def("BitPrecision", &format!("R::{t} -> RngIntElt"), "The precision of R in bits.", bit_precision);
+        it.def("Pi", &format!("R::{t} -> {t}Elt"), "Pi in R.", pi);
+        it.def("EulerGamma", &format!("R::{t} -> {t}Elt"), "Euler's constant in R.", euler_gamma);
+        it.def("Catalan", &format!("R::{t} -> {t}Elt"), "Catalan's constant in R.", catalan);
     }
-    it.def("Precision", "R::FldRe -> RngIntElt", "The decimal precision of R.", precision);
-    it.def("Precision", "x::FldReElt -> RngIntElt", "The decimal precision of x.", precision);
+    for t in ["FldReElt", "FldComElt"] {
+        it.def("Precision", &format!("x::{t} -> RngIntElt"), "The decimal precision of the parent of x.", precision);
+        it.def("BitPrecision", &format!("x::{t} -> RngIntElt"), "The precision in bits of the parent of x.", bit_precision);
+        it.def("Precision", &format!("L::[{t}] -> RngIntElt"), "The decimal precision of the universe of L.", precision);
+        it.def("ChangePrecision", &format!("x::{t}, n::RngIntElt -> {t}"), "x in the field of precision n.", change_precision);
+        for u in ["FldReElt", "FldComElt"] {
+            it.def_params("Distance", &format!("x::{t}, L::[{u}] -> FldReElt, RngIntElt"), &[("Max", Value::Infinity(true))], "The least distance from x to an element of L, and its index.", distance);
+        }
+        it.def_params("Diameter", &format!("L::[{t}] -> FldReElt"), &[("Max", Value::Infinity(true))], "The least distance between distinct elements of L.", diameter);
+    }
+
+    // Elements.
+    it.def("MantissaExponent", "x::FldReElt -> RngIntElt, RngIntElt", "Integers m, e with x = m*2^e, m of the precision of x.", mantissa_exponent);
+    it.def("IsIntegral", "x::FldReElt -> BoolElt", "Whether x is an integer.", is_integral);
+    it.def("ComplexConjugate", "x::FldReElt -> FldReElt", "x itself.", conjugate);
+    it.def("Norm", "x::FldReElt -> FldReElt", "The absolute value of x.", abs);
+    for t in ["RngIntElt", "FldRatElt", "FldReElt"] {
+        it.def("Modulus", &format!("x::{t} -> FldReElt"), "The absolute value of x as a real number.", abs);
+        for name in ["Arg", "Argument"] {
+            it.def(name, &format!("x::{t} -> FldReElt"), "The argument of x (0, or pi if x is negative).", arg);
+        }
+        for name in ["Sqrt", "SquareRoot"] {
+            it.def(name, &format!("x::{t} -> FldReElt"), "The square root of x (a complex number if x < 0).", sqrt);
+        }
+        it.def("Root", &format!("x::{t}, n::RngIntElt -> FldReElt"), "The real n-th root of x.", root);
+        for name in ["Real", "Re"] {
+            it.def(name, &format!("x::{t} -> FldReElt"), "The real part of x.", real_part);
+        }
+        for name in ["Imaginary", "Im"] {
+            it.def(name, &format!("x::{t} -> FldReElt"), "The imaginary part of x (zero).", imaginary_part);
+        }
+    }
 }

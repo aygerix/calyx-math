@@ -79,8 +79,11 @@ impl Interp {
                     let style = if msg_given { crate::error::ErrStyle::Normal } else { crate::error::ErrStyle::Plain };
                     return Err(crate::error::ErrorInfo { style, ..crate::error::ErrorInfo::runtime(reason) }.into());
                 }
-                let rhs = self.coercion_type_name(x);
-                let text = format!("{reason}\nLHS: {}\nRHS: {rhs}", self.type_name(s));
+                // A reason ending in a newline is reported on its own.
+                let text = match reason.strip_suffix('\n') {
+                    Some(r) => r.to_string(),
+                    None => format!("{reason}\nLHS: {}\nRHS: {}", self.type_name(s), self.coercion_type_name(x)),
+                };
                 Err(crate::error::ErrorInfo { style: crate::error::ErrStyle::Plain, ..crate::error::ErrorInfo::runtime(text) }.into())
             }
         }

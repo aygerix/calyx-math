@@ -144,4 +144,17 @@ unsafe extern "C" {
     // FLINT's conversions between `arf` and MPFR.
     pub fn arf_get_mpfr(r: *mut Mpfr, x: *const sys::arf_struct, rnd: Rnd) -> c_int;
     pub fn arf_set_mpfr(r: *mut sys::arf_struct, x: *const Mpfr);
+
+    pub fn mpfr_get_version() -> *const c_char;
+    static __gmp_version: *const c_char;
+}
+
+/// The version of the MPFR library linked.
+pub fn version() -> String {
+    unsafe { std::ffi::CStr::from_ptr(mpfr_get_version()).to_string_lossy().into_owned() }
+}
+
+/// The version of the GMP library linked.
+pub fn gmp_version() -> String {
+    unsafe { std::ffi::CStr::from_ptr(__gmp_version).to_string_lossy().into_owned() }
 }
