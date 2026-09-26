@@ -855,6 +855,18 @@ impl<'a> Compiler<'a> {
                 }
                 Ex::Case(s, out, self.bx(d)?)
             }
+            ExprKind::Constructor(n, l, r) if n == "ExtensionField" && l.len() == 2 && matches!(l[1].kind, ExprKind::Ident(_)) && r.as_ref().is_some_and(|r| r.len() == 1) => {
+                // ExtensionField< F, x | P > is ext< F | P > with x, in P
+                // only, the variable of the polynomial ring over F; the
+                // constructor keeps its name for errors.
+                let ExprKind::Ident(x) = &l[1].kind else { unreachable!() };
+                let var = E { kind: Ex::Constructor(Sym::new("__poly_var"), vec![self.expr(&l[0])?], None), span: l[1].span };
+                let slot = self.bind(Sym::new(x));
+                let p = self.expr(&r.as_ref().unwrap()[0]);
+                self.unbind(1);
+                let p = E { kind: Ex::Let(slot, Box::new(var), Box::new(p?)), span };
+                Ex::Constructor(Sym::new("ExtensionField"), vec![self.expr(&l[0])?], Some(vec![p]))
+            }
             ExprKind::Constructor(n, l, r) => {
                 let l = self.expr_list(l)?;
                 let r = r.as_ref().map(|r| self.expr_list(r)).transpose()?;

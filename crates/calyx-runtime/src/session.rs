@@ -357,6 +357,12 @@ impl Interp {
             ("quo", Some(base)) => self.quo_constructor(base, &rhs)?,
             ("sub", Some(base)) => self.sub_constructor(base, &rhs)?,
             ("ext", Some(_)) => self.ext_constructor(&left, &rhs)?,
+            ("ExtensionField", Some(_)) if left.len() == 1 => self.ext_constructor(&left, &rhs).map_err(|mut e| {
+                if e.context.as_deref() == Some("ext< ... >") {
+                    e.context = Some("ExtensionField< ... >".into());
+                }
+                e
+            })?,
             _ => None,
         };
         if let Some(vals) = built_in {
@@ -366,6 +372,11 @@ impl Interp {
             "__real_literal" => {
                 let Some(Value::Str(s)) = left.first() else { unreachable!() };
                 Ok(vec![crate::intrinsics::reals::real_literal(s)?])
+            }
+            "__poly_var" => {
+                let base = left.into_iter().next().unwrap_or_default();
+                let p = self.call_intrinsic_named(Sym::new("PolynomialRing"), vec![base])?;
+                Ok(vec![self.call_intrinsic_named(Sym::new("."), vec![p, Value::int(1)])?])
             }
             "sub" | "quo" | "ext" | "ideal" | "lideal" | "rideal" | "ncl" => {
                 let ctor = match &*name.as_rc() {
