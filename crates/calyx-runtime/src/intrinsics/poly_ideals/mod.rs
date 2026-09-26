@@ -164,7 +164,12 @@ impl MPolIdeal {
     /// reduced Gröbner basis; else it is grevlex, weighted when weights make
     /// the generators homogeneous but for their constant terms.
     pub fn easy(&self) -> RResult<Rc<Easy>> {
-        let easy = self.find_easy()?;
+        self.easy_with(gb::Strategy::default())
+    }
+
+    /// As `easy`, computed as `strategy` says.
+    pub fn easy_with(&self, strategy: gb::Strategy) -> RResult<Rc<Easy>> {
+        let easy = self.find_easy_with(strategy)?;
         self.keep_easy(&easy)?;
         Ok(easy)
     }
@@ -192,13 +197,21 @@ impl MPolIdeal {
 
     /// The easy Gröbner basis, as known or computed (without keeping it).
     fn find_easy(&self) -> RResult<Rc<Easy>> {
-        if let Some(e) = &self.known.borrow().easy {
-            return Ok(e.clone());
-        }
+        self.find_easy_with(gb::Strategy::default())
+    }
+
+    /// As `find_easy`, computed as `strategy` says. A kept basis was computed
+    /// the default way, which over the rationals is Monte Carlo: when
+    /// `strategy` asks for a proven basis there, it is computed again.
+    fn find_easy_with(&self, strategy: gb::Strategy) -> RResult<Rc<Easy>> {
         let r = self.poly_ring();
         let (base, n, _) = shape(r);
+        let kept = self.known.borrow().easy.clone();
+        if let Some(e) = kept.filter(|_| gb::Strategy::default().proven(base) || !strategy.proven(base)) {
+            return Ok(e);
+        }
         let (kind, order) = self.easy_order();
-        let terms = engine(r, gb::groebner(base, n, &order, &self.gens.iter().map(terms).collect::<Vec<_>>()))?;
+        let terms = engine(r, gb::groebner_with(base, n, &order, &self.gens.iter().map(terms).collect::<Vec<_>>(), strategy))?;
         Ok(Rc::new(Easy { kind, order, terms }))
     }
 
@@ -229,10 +242,15 @@ impl MPolIdeal {
     /// the ring's order that a colon ideal was made with is it, but does not
     /// replace the basis.
     pub fn groebner(&self) -> RResult<Rc<[Elem]>> {
+        self.groebner_with(gb::Strategy::default())
+    }
+
+    /// As `groebner`, computed as `strategy` says when it is not known.
+    pub fn groebner_with(&self, strategy: gb::Strategy) -> RResult<Rc<[Elem]>> {
         if let Some(g) = &self.known.borrow().groebner {
             return Ok(g.clone());
         }
-        let easy = self.easy()?;
+        let easy = self.easy_with(strategy)?;
         if let Some(g) = &self.known.borrow().groebner {
             return Ok(g.clone());
         }
@@ -240,7 +258,7 @@ impl MPolIdeal {
         if easy.kind == EasyKind::Ring {
             return Ok(elements(r, &easy.terms)?.into());
         }
-        let g: Rc<[Elem]> = super::groebner::groebner_from_easy(r, &easy)?.into();
+        let g: Rc<[Elem]> = super::groebner::groebner_from_easy(r, &easy, strategy)?.into();
         self.known.borrow_mut().groebner = Some(g.clone());
         Ok(g)
     }

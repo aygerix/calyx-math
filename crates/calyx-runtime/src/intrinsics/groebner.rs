@@ -83,14 +83,14 @@ pub fn groebner_basis(r: &Ring, gens: &[Elem]) -> RResult<Vec<Elem>> {
 
 /// The reduced Gröbner basis in the order of `r` of the ideal whose easy
 /// basis is `easy`: the easy basis in the ring's order, else by a change of
-/// order (FGLM for a zero-dimensional ideal over GF(p)), else computed
-/// again from the easy basis.
-pub fn groebner_from_easy(r: &Ring, easy: &Easy) -> RResult<Vec<Elem>> {
+/// order (FGLM for a zero-dimensional ideal), else computed again from the
+/// easy basis, as `strategy` says.
+pub fn groebner_from_easy(r: &Ring, easy: &Easy, strategy: gb::Strategy) -> RResult<Vec<Elem>> {
     let (base, n, order) = shape(r);
     if easy.order == *order {
         return from_terms(r, &easy.terms);
     }
-    from_terms(r, &engine(r, gb::change_order(base, n, &easy.order, &easy.terms, order))?)
+    from_terms(r, &engine(r, gb::change_order_with(base, n, &easy.order, &easy.terms, order, strategy))?)
 }
 
 /// The polynomials of `r` with the terms `ts`.
@@ -321,7 +321,7 @@ fn poly_seq(pst: &Rc<Struct>, xs: impl IntoIterator<Item = Elem>) -> Value {
 /// basis.
 fn ideal_groebner_basis(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let id = ideal_arg(a, 0)?;
-    let g = id.groebner()?;
+    let g = id.groebner_with(strategy(a)?)?;
     // The degrees of the steps of F4, left unassigned as for sequences.
     let mut out = vals![poly_seq(&id.ring, g.iter().cloned())];
     out.extend((1..a.nresults.min(2)).map(|_| Value::Undef));
@@ -330,7 +330,7 @@ fn ideal_groebner_basis(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 
 /// `Groebner(I)`: compute the Gröbner basis of I.
 fn groebner_of(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    ideal_arg(a, 0)?.groebner()?;
+    ideal_arg(a, 0)?.groebner_with(strategy(a)?)?;
     Ok(vals![])
 }
 
