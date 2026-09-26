@@ -116,14 +116,29 @@ fn arith_err(e: GrError, op: &str) -> RuntimeError {
     }
 }
 
+/// A quotient in a finite field, with the errors of `/` in `ring_binop`.
+fn field_div(x: &Elem, y: &Elem) -> RResult<Elem> {
+    if y.is_zero() == Truth::True {
+        return Err(div_by_zero().in_context("/"));
+    }
+    x.div(y).map_err(|e| match e {
+        GrError::Domain => RuntimeError::runtime("Argument 2 is not invertible").in_context("/"),
+        e => arith_err(e, "/"),
+    })
+}
+
 impl Interp {
     /// Binary operators with at least one ring element operand. Returns
     /// `None` when the operator does not apply (so user operators and the
     /// usual error can take over).
     pub fn ring_binop(&mut self, op: BinOp, a: &Value, b: &Value) -> RResult<Option<Value>> {
         use BinOp::*;
-        // Sums and products of two elements of the same ring.
+        // Sums and products of two elements of the same ring, and quotients
+        // in a finite field.
         if let (Value::Elt(x), Value::Elt(y)) = (a, b) {
+            if op == Div && x.ring().id == y.ring().id && matches!(x.ring().kind, RingKind::Finite(_)) {
+                return Ok(Some(make_elt(&x.parent, field_div(&x.x, &y.x)?)));
+            }
             if matches!(op, Add | Sub | Mul) && x.ring().id == y.ring().id {
                 let r = match op {
                     Add => x.x.add(&y.x),
@@ -139,6 +154,21 @@ impl Interp {
                     r = affine.reduce(r).map_err(|e| e.in_context("*"))?;
                 }
                 return Ok(Some(make_elt(&x.parent, r)));
+            }
+        }
+        // The same for a finite field element and an integer.
+        if let (Value::Elt(x), Value::Int(n)) | (Value::Int(n), Value::Elt(x)) = (a, b) {
+            if matches!(op, Add | Sub | Mul | Div) && matches!(x.ring().kind, RingKind::Finite(_)) {
+                if let Ok(c) = Elem::from_integer(&x.ring().ctx, n) {
+                    let (u, v) = if matches!(a, Value::Elt(_)) { (&x.x, &c) } else { (&c, &x.x) };
+                    let r = match op {
+                        Add => u.add(v),
+                        Sub => u.sub(v),
+                        Mul => u.mul(v),
+                        _ => return Ok(Some(make_elt(&x.parent, field_div(u, v)?))),
+                    };
+                    return Ok(Some(make_elt(&x.parent, r.map_err(|e| arith_err(e, op.intrinsic_name()))?)));
+                }
             }
         }
         let (a, b) = (&small::expand(a), &small::expand(b));
