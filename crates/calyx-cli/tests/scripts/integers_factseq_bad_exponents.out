@@ -1,0 +1,62 @@
+
+>> Facint(x);
+         ^
+Runtime error in 'Facint': Sequence not a factorization list (must be a sequence
+of ordered <prime, exponent> tuples)
+
+
+>> NumberOfDivisors(x);
+                   ^
+Runtime error in 'NumberOfDivisors': Sequence not a factorization list (must be 
+a sequence of ordered <prime, exponent> tuples)
+
+
+>> EulerPhi(x);
+           ^
+Runtime error in 'EulerPhi': Sequence not a factorization list (must be a 
+sequence of ordered <prime, exponent> tuples)
+
+
+>> x * x;
+     ^
+Runtime error in '*': Sequence not a factorization list (must be a sequence of 
+ordered <prime, exponent> tuples)
+
+
+>> x ^ 2;
+     ^
+Runtime error in '^': Sequence not a factorization list (must be a sequence of 
+ordered <prime, exponent> tuples)
+
+
+>> Gcd(x, x);
+      ^
+Runtime error in 'Gcd': Sequence not a factorization list (must be a sequence of
+ordered <prime, exponent> tuples)
+
+
+>> IsSquarefree(x);
+               ^
+Runtime error in 'IsSquarefree': Sequence not a factorization list (must be a 
+sequence of ordered <prime, exponent> tuples)
+
+
+>> EulerPhi(x);
+           ^
+Runtime error in 'EulerPhi': Exponent is too large
+
+
+>> Facint(x);
+         ^
+Runtime error in 'Facint': Exponent is too large
+
+
+>> (Factorization(2)^(2^62))^4;
+                            ^
+Runtime error in '^': Exponent is too large
+
+
+>> F := Factorization(2)^(2^62); F*F*F*F;
+                                      ^
+Runtime error in '*': Exponent is too large
+

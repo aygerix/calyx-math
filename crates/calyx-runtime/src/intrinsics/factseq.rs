@@ -60,11 +60,47 @@ pub fn pairs_of(v: &Value) -> Option<Vec<(Integer, Integer)>> {
     Some(out)
 }
 
-/// The factorization held by a sequence of pairs, pair by pair (a
-/// factorization sequence changed by assignment keeps its order and any
-/// repeated primes, as in Magma).
-pub fn fact_of(v: &Value) -> Fact {
-    pairs_of(v).unwrap_or_default().into_iter().filter_map(|(p, k)| Some((p, k.to_u64()?))).collect()
+/// Magma's error for a sequence that is not a factorization list.
+fn not_a_factorization() -> RuntimeError {
+    RuntimeError::runtime("Sequence not a factorization list (must be a sequence of ordered <prime, exponent> tuples)")
+}
+
+fn exponent_too_large() -> RuntimeError {
+    RuntimeError::runtime("Exponent is too large")
+}
+
+/// A factorization list, as SeqFact requires: increasing primes with
+/// exponents in [1, 2^30).
+fn fact_list(v: &Value) -> RResult<Fact> {
+    let pairs = pairs_of(v).ok_or_else(not_a_factorization)?;
+    let mut f = Fact::with_capacity(pairs.len());
+    for (p, k) in pairs {
+        match k.to_u64().filter(|k| (1..1 << 30).contains(k)) {
+            Some(k) if f.last().is_none_or(|(q, _): &(Integer, u64)| *q < p) && p.sign() > 0 && p.is_prime() => f.push((p, k)),
+            _ => return Err(not_a_factorization()),
+        }
+    }
+    Ok(f)
+}
+
+/// The factorization held by `v`: a factorization sequence pair by pair (one
+/// changed by assignment keeps its order and any repeated primes, as in
+/// Magma), or a sequence of tuples, which must be a factorization list. A
+/// negative exponent, for which Magma gives meaningless answers or crashes,
+/// is an error, and so is one of 2^64 or more.
+pub fn fact_of(v: &Value) -> RResult<Fact> {
+    if !is_fact(v) {
+        return fact_list(v);
+    }
+    let pairs = pairs_of(v).ok_or_else(not_a_factorization)?;
+    pairs
+        .into_iter()
+        .map(|(p, k)| match k.to_u64() {
+            _ if k.sign() < 0 => Err(not_a_factorization()),
+            Some(k) => Ok((p, k)),
+            None => Err(exponent_too_large()),
+        })
+        .collect()
 }
 
 /// The integer a factorization stands for.
@@ -83,7 +119,7 @@ pub fn factor(n: &Integer) -> Fact {
 
 /// `a * b` as factorizations: the two sequences are merged in order,
 /// adding exponents where their primes meet.
-pub fn fact_mul(a: &Fact, b: &Fact) -> Fact {
+pub fn fact_mul(a: &Fact, b: &Fact) -> RResult<Fact> {
     let (mut i, mut j) = (0, 0);
     let mut out = Fact::with_capacity(a.len() + b.len());
     while i < a.len() && j < b.len() {
@@ -97,7 +133,7 @@ pub fn fact_mul(a: &Fact, b: &Fact) -> Fact {
                 j += 1;
             }
             std::cmp::Ordering::Equal => {
-                out.push((a[i].0.clone(), a[i].1 + b[j].1));
+                out.push((a[i].0.clone(), a[i].1.checked_add(b[j].1).ok_or_else(exponent_too_large)?));
                 i += 1;
                 j += 1;
             }
@@ -105,7 +141,7 @@ pub fn fact_mul(a: &Fact, b: &Fact) -> Fact {
     }
     out.extend_from_slice(&a[i..]);
     out.extend_from_slice(&b[j..]);
-    out
+    Ok(out)
 }
 
 /// Combine exponents prime by prime (`max` for lcm, `min` for gcd).
@@ -132,15 +168,17 @@ impl Interp {
                 return Err(RuntimeError::runtime("Exponent must be non-negative").in_context("^"));
             }
             let k = k.to_u64().ok_or_else(|| RuntimeError::runtime("Exponent is too large").in_context("^"))?;
-            let f: Fact = if k == 0 { Vec::new() } else { fact_of(a).into_iter().map(|(p, e)| (p, e * k)).collect() };
-            return Ok(Some(fact_value(&f)));
+            let power = |f: Fact| f.into_iter().map(|(p, e)| e.checked_mul(k).map(|e| (p, e)).ok_or_else(exponent_too_large)).collect::<RResult<Fact>>();
+            let f = if k == 0 { Ok(Vec::new()) } else { fact_of(a).and_then(power) };
+            return Ok(Some(fact_value(&f.map_err(|e| e.in_context("^"))?)));
         }
         if !(is_fact(a) && is_fact(b)) {
             return Ok(None);
         }
-        let (f, g) = (fact_of(a), fact_of(b));
+        let context = |e: RuntimeError| e.in_context(op.intrinsic_name());
+        let (f, g) = (fact_of(a).map_err(context)?, fact_of(b).map_err(context)?);
         Ok(Some(match op {
-            BinOp::Mul => fact_value(&fact_mul(&f, &g)),
+            BinOp::Mul => fact_value(&fact_mul(&f, &g).map_err(context)?),
             BinOp::Div => {
                 let mut out = Fact::new();
                 for (p, k) in &f {
@@ -175,21 +213,11 @@ impl Interp {
 // ----- conversions -------------------------------------------------------------
 
 fn facint(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    intv(fact_int(&fact_of(&a.args[0])))
+    intv(fact_int(&fact_of(&a.args[0])?))
 }
 
 fn seqfact(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let bad = || RuntimeError::runtime("Sequence not a factorization list (must be a sequence of ordered <prime, exponent> tuples)");
-    let pairs = pairs_of(&a.args[0]).ok_or_else(bad)?;
-    let mut f = Fact::with_capacity(pairs.len());
-    for (p, k) in pairs {
-        let ok_prev = f.last().is_none_or(|(q, _): &(Integer, u64)| *q < p);
-        if !ok_prev || k.sign() <= 0 || !p.is_prime() || p.sign() < 0 {
-            return Err(bad());
-        }
-        f.push((p, k.to_u64().ok_or_else(bad)?));
-    }
-    one(fact_value(&f))
+    one(fact_value(&fact_list(&a.args[0])?))
 }
 
 // ----- divisors --------------------------------------------------------------
@@ -221,7 +249,7 @@ fn fact_arg(a: &CallArgs, i: usize, check: fn(usize, &Integer) -> RResult<()>) -
             check(i + 1, n)?;
             Ok(factor(n))
         }
-        v => Ok(fact_of(v)),
+        v => fact_of(v),
     }
 }
 
@@ -245,7 +273,7 @@ fn prime_divisors(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = match &a.args[0] {
         Value::Int(n) if n.is_zero() => return Err(arg_not(1, "non-zero")),
         Value::Int(n) => factor(n),
-        v => fact_of(v),
+        v => fact_of(v)?,
     };
     one(Value::int_seq(f.into_iter().map(|(p, _)| p)))
 }
@@ -280,7 +308,8 @@ fn divisor_sigma(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 
 pub fn phi(f: &Fact) -> Integer {
     let mut r = Integer::one();
-    for (p, e) in f {
+    // A prime with exponent 0 (left by an assignment) stands for 1.
+    for (p, e) in f.iter().filter(|(_, e)| *e > 0) {
         r = &(&r * &p.pow(e - 1)) * &(p - &Integer::one());
     }
     r
@@ -291,28 +320,28 @@ fn euler_phi(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 }
 
 /// The factorization of phi(n) from that of n.
-pub fn factored_phi(f: &Fact) -> Fact {
+pub fn factored_phi(f: &Fact) -> RResult<Fact> {
     let mut out = Fact::new();
-    for (p, e) in f {
+    for (p, e) in f.iter().filter(|(_, e)| *e > 0) {
         if *e > 1 {
             out.push((p.clone(), e - 1));
         }
-        out = fact_mul(&out, &factor(&(p - &Integer::one())));
+        out = fact_mul(&out, &factor(&(p - &Integer::one())))?;
     }
     out.retain(|(p, _)| !p.is_one());
-    out
+    Ok(out)
 }
 
 fn factored_euler_phi(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    one(fact_value(&factored_phi(&fact_arg(a, 0, positive)?)))
+    one(fact_value(&factored_phi(&fact_arg(a, 0, positive)?)?))
 }
 
 /// The factorization of the Carmichael function of the integer with
 /// factorization `f`.
-fn factored_lambda(f: &Fact) -> Fact {
+fn factored_lambda(f: &Fact) -> RResult<Fact> {
     let two = Integer::from_i64(2);
     let mut out = Fact::new();
-    for (p, e) in f {
+    for (p, e) in f.iter().filter(|(_, e)| *e > 0) {
         let l: Fact = if *p == two {
             match e {
                 1 => Vec::new(),
@@ -322,21 +351,21 @@ fn factored_lambda(f: &Fact) -> Fact {
         } else {
             let mut l = factor(&(p - &Integer::one()));
             if *e > 1 {
-                l = fact_mul(&l, &vec![(p.clone(), e - 1)]);
+                l = fact_mul(&l, &vec![(p.clone(), e - 1)])?;
             }
             l
         };
         out = fact_merge(&out, &l, u64::max);
     }
-    out
+    Ok(out)
 }
 
 fn carmichael_lambda(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    intv(fact_int(&factored_lambda(&fact_arg(a, 0, at_least_two)?)))
+    intv(fact_int(&factored_lambda(&fact_arg(a, 0, at_least_two)?)?))
 }
 
 fn factored_carmichael_lambda(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    one(fact_value(&factored_lambda(&fact_arg(a, 0, positive)?)))
+    one(fact_value(&factored_lambda(&fact_arg(a, 0, positive)?)?))
 }
 
 fn moebius_mu(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
@@ -395,7 +424,7 @@ fn euler_phi_inverse(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
             }
             n.clone()
         }
-        v => fact_int(&fact_of(v)),
+        v => fact_int(&fact_of(v)?),
     };
     one(Value::int_seq(phi_inverse(&m)))
 }
@@ -408,7 +437,7 @@ fn factored_euler_phi_inverse(_it: &mut Interp, a: &mut CallArgs) -> RResult<Val
             }
             n.clone()
         }
-        v => fact_int(&fact_of(v)),
+        v => fact_int(&fact_of(v)?),
     };
     if m.is_odd() && !m.is_one() {
         // Magma returns an empty set here, not a sequence.
@@ -432,11 +461,11 @@ fn cmp_fact(a: &Fact, b: &Fact) -> std::cmp::Ordering {
 }
 
 fn gcd_fact(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    one(fact_value(&fact_merge(&fact_of(&a.args[0]), &fact_of(&a.args[1]), u64::min)))
+    one(fact_value(&fact_merge(&fact_of(&a.args[0])?, &fact_of(&a.args[1])?, u64::min)))
 }
 
 fn lcm_fact(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    one(fact_value(&fact_merge(&fact_of(&a.args[0]), &fact_of(&a.args[1]), u64::max)))
+    one(fact_value(&fact_merge(&fact_of(&a.args[0])?, &fact_of(&a.args[1])?, u64::max)))
 }
 
 /// `n = x * y^2` with `x` squarefree.
@@ -447,37 +476,37 @@ pub fn squarefree_split(f: &Fact) -> (Fact, Fact) {
 }
 
 fn squarefree_factorization_fact(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let (x, y) = squarefree_split(&fact_of(&a.args[0]));
+    let (x, y) = squarefree_split(&fact_of(&a.args[0])?);
     Ok(vals![fact_value(&x), fact_value(&y)])
 }
 
 // ----- predicates --------------------------------------------------------------
 
 fn fact_is_one(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    boolv(fact_of(&a.args[0]).is_empty())
+    boolv(fact_of(&a.args[0])?.is_empty())
 }
 
 fn fact_is_even(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let two = Integer::from_i64(2);
-    boolv(fact_of(&a.args[0]).iter().any(|(p, _)| *p == two))
+    boolv(fact_of(&a.args[0])?.iter().any(|(p, _)| *p == two))
 }
 
 fn fact_is_odd(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let two = Integer::from_i64(2);
-    boolv(!fact_of(&a.args[0]).iter().any(|(p, _)| *p == two))
+    boolv(!fact_of(&a.args[0])?.iter().any(|(p, _)| *p == two))
 }
 
 fn fact_is_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let f = fact_of(&a.args[0]);
+    let f = fact_of(&a.args[0])?;
     boolv(f.len() == 1 && f[0].1 == 1)
 }
 
 fn fact_is_prime_power(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    boolv(fact_of(&a.args[0]).len() <= 1)
+    boolv(fact_of(&a.args[0])?.len() <= 1)
 }
 
 fn fact_is_square(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let f = fact_of(&a.args[0]);
+    let f = fact_of(&a.args[0])?;
     if f.iter().any(|(_, e)| e % 2 == 1) {
         return boolv(false);
     }
@@ -485,7 +514,7 @@ fn fact_is_square(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 }
 
 fn fact_is_squarefree(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    boolv(fact_of(&a.args[0]).iter().all(|(_, e)| *e == 1))
+    boolv(fact_of(&a.args[0])?.iter().all(|(_, e)| *e <= 1))
 }
 
 pub fn register(it: &mut Interp) {
@@ -548,13 +577,43 @@ mod tests {
         let mut f = Fact::new();
         for _ in 0..next(s) % 5 {
             let p = Integer::from_u64(next(s) >> (64 - bits)).next_prime();
-            f = fact_mul(&f, &vec![(p, 1 + next(s) % 3)]);
+            f = fact_mul(&f, &vec![(p, 1 + next(s) % 3)]).unwrap();
         }
         f
     }
 
     fn gcd(a: u64, b: u64) -> u64 {
         if b == 0 { a } else { gcd(b, a % b) }
+    }
+
+    /// A sequence of `<p, k>` tuples, a factorization sequence or not.
+    fn pairs(v: &[(i64, i128)], fact: bool) -> Value {
+        let parent = pair_parent();
+        let tuple = |p: i64, k: i128| Tuple { elems: vec![Value::Int(Integer::from_i64(p)), Value::Int(Integer::from_i128(k))], parent: Some(parent.clone()) };
+        let mut s = SeqEnum::new(Some(parent.clone()), v.iter().map(|&(p, k)| Value::Tuple(Rc::new(tuple(p, k)))).collect());
+        s.fact = fact;
+        Value::Seq(Rc::new(s))
+    }
+
+    #[test]
+    fn bad_exponents_are_errors() {
+        let int = Integer::from_i64;
+        // A factorization sequence changed by assignment is taken as it is,
+        // unless an exponent is negative or does not fit a word.
+        assert_eq!(fact_of(&pairs(&[(2, 0), (3, 1)], true)).unwrap(), vec![(int(2), 0), (int(3), 1)]);
+        assert!(fact_of(&pairs(&[(2, -3), (3, 1)], true)).is_err());
+        assert!(fact_of(&pairs(&[(2, 1 << 64), (3, 1)], true)).is_err());
+        // A plain sequence must be a factorization list.
+        assert_eq!(fact_of(&pairs(&[(2, 1), (3, (1 << 30) - 1)], false)).unwrap(), vec![(int(2), 1), (int(3), (1 << 30) - 1)]);
+        for bad in [&[(2, 0)][..], &[(4, 1)], &[(3, 1), (2, 1)], &[(2, 1 << 30)], &[(-2, 1)], &[(2, -1)]] {
+            assert!(fact_of(&pairs(bad, false)).is_err(), "{bad:?}");
+        }
+        // Sums of exponents that overflow a word are errors.
+        let big = vec![(int(2), 1 << 63)];
+        assert!(fact_mul(&big, &big).is_err());
+        // A prime with exponent 0 stands for 1.
+        let f = vec![(int(2), 0), (int(3), 1)];
+        assert_eq!((phi(&f), factored_phi(&f).unwrap(), factored_lambda(&f).unwrap()), (int(2), vec![(int(2), 1)], vec![(int(2), 1)]));
     }
 
     #[test]
@@ -580,7 +639,7 @@ mod tests {
             let bits = [4, 6, 16][i % 3];
             let (f, g) = (random_fact(&mut s, bits), random_fact(&mut s, bits));
             let (a, b) = (fact_int(&f), fact_int(&g));
-            assert_eq!(fact_mul(&f, &g), factor(&(&a * &b)), "{a} * {b}");
+            assert_eq!(fact_mul(&f, &g).unwrap(), factor(&(&a * &b)), "{a} * {b}");
             assert_eq!(fact_merge(&f, &g, u64::min), factor(&a.gcd(&b)), "Gcd({a}, {b})");
             assert_eq!(fact_merge(&f, &g, u64::max), factor(&a.lcm(&b)), "Lcm({a}, {b})");
             let (x, y) = squarefree_split(&f);
@@ -599,7 +658,7 @@ mod tests {
             }
             let units: Vec<u64> = (1..=n).filter(|&a| gcd(a, n) == 1).collect();
             assert_eq!(phi(&f), Integer::from_u64(units.len() as u64), "EulerPhi({n})");
-            assert_eq!(fact_int(&factored_phi(&f)), phi(&f), "FactoredEulerPhi({n})");
+            assert_eq!(fact_int(&factored_phi(&f).unwrap()), phi(&f), "FactoredEulerPhi({n})");
             if n <= 400 {
                 // The exponent of the unit group.
                 let order = |a: u64| {
@@ -611,7 +670,7 @@ mod tests {
                     k
                 };
                 let lambda = units.iter().fold(1, |l, &a| l / gcd(l, order(a)) * order(a));
-                assert_eq!(fact_int(&factored_lambda(&f)), Integer::from_u64(lambda), "CarmichaelLambda({n})");
+                assert_eq!(fact_int(&factored_lambda(&f).unwrap()), Integer::from_u64(lambda), "CarmichaelLambda({n})");
             }
         }
     }

@@ -1214,7 +1214,7 @@ fn cunningham(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     for d in ds {
         let v = cyclotomic_value(d, &b);
         if !v.is_one() {
-            f = fact_mul(&f, &factor(&v));
+            f = fact_mul(&f, &factor(&v))?;
         }
     }
     one(fact_value(&sorted_fact(f)))
@@ -1378,7 +1378,7 @@ mod tests {
         let mut f = Fact::new();
         for _ in 0..next(s) % 5 {
             let b = 2 + next(s) as u32 % (bits - 1);
-            f = fact_mul(&f, &vec![(Integer::from_u64(next(s) >> (64 - b)).next_prime(), 1 + next(s) % 3)]);
+            f = fact_mul(&f, &vec![(Integer::from_u64(next(s) >> (64 - b)).next_prime(), 1 + next(s) % 3)]).unwrap();
         }
         f
     }
