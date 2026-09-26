@@ -257,7 +257,7 @@ impl Coords {
     /// FLINT generator (the residue of a prime field element).
     pub fn of(x: &Elem) -> Coords {
         match x.ctx().kind() {
-            CtxKind::Nmod(_) | CtxKind::FqZech { .. } | CtxKind::FqNmod { .. } => Coords::W(x.fq_coords_u64()),
+            CtxKind::Nmod(_) | CtxKind::FqZech { .. } | CtxKind::FqNmod { .. } | CtxKind::FqPacked { .. } => Coords::W(x.fq_coords_u64()),
             CtxKind::FmpzMod(_) => Coords::B(vec![x.to_integer().unwrap_or_default()]),
             _ => Coords::B(x.fq_coords()),
         }
@@ -266,7 +266,7 @@ impl Coords {
     /// The zero vector of length `n` over the prime of `ctx`.
     pub fn zero(ctx: &Ctx, n: usize) -> Coords {
         match ctx.kind() {
-            CtxKind::Nmod(_) | CtxKind::FqZech { .. } | CtxKind::FqNmod { .. } => Coords::W(vec![0; n]),
+            CtxKind::Nmod(_) | CtxKind::FqZech { .. } | CtxKind::FqNmod { .. } | CtxKind::FqPacked { .. } => Coords::W(vec![0; n]),
             _ => Coords::B(vec![Integer::zero(); n]),
         }
     }

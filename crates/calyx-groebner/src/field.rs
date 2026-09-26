@@ -201,7 +201,9 @@ pub fn coefficients(ctx: &Rc<Ctx>) -> Option<Coefficients> {
         CtxKind::Nmod(p) if *p < 1 << 63 && Integer::from_u64(*p).is_prime() => Some(Coefficients::Zp(Zp::new(ctx))),
         CtxKind::Nmod(p) if Integer::from_u64(*p).is_prime() => Some(Coefficients::Gr(GrField::new(ctx))),
         CtxKind::FmpzMod(m) if m.is_probable_prime() => Some(Coefficients::Gr(GrField::new(ctx))),
-        CtxKind::Rationals | CtxKind::FqZech { .. } | CtxKind::FqNmod { .. } | CtxKind::Fq { .. } => Some(Coefficients::Gr(GrField::new(ctx))),
+        CtxKind::Rationals | CtxKind::FqZech { .. } | CtxKind::FqNmod { .. } | CtxKind::FqPacked { .. } | CtxKind::Fq { .. } => {
+            Some(Coefficients::Gr(GrField::new(ctx)))
+        }
         _ => None,
     }
 }

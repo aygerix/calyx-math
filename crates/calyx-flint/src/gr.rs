@@ -192,8 +192,21 @@ impl Ctx {
     /// The finite field `F_p[x]/(f)` for a monic irreducible `f` given by its
     /// coefficients (constant term first). With `zech`, a table of Zech
     /// logarithms is used if `f` is primitive; that fails with `Domain`
-    /// otherwise.
+    /// otherwise. Without, GF(2^n) packs its elements into words (see
+    /// `packed`) when it can.
     pub fn finite_field(p: &Integer, modulus: &[Integer], zech: bool) -> GrResult<Rc<Ctx>> {
+        if !zech && p.to_u64() == Some(2) && modulus.len() > 2 {
+            let cs: Vec<u64> = modulus.iter().map(|c| c.mod_u64(2)).collect();
+            match Ctx::packed_field(2, &cs) {
+                Err(GrError::Unable) => {}
+                r => return r,
+            }
+        }
+        Ctx::flint_field(p, modulus, zech)
+    }
+
+    /// `finite_field` with FLINT's own representations.
+    pub(crate) fn flint_field(p: &Integer, modulus: &[Integer], zech: bool) -> GrResult<Rc<Ctx>> {
         let degree = modulus.len().saturating_sub(1) as u64;
         let var = CString::new("a").unwrap();
         if let Some(pw) = p.to_u64() {

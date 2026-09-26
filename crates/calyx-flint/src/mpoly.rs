@@ -5,10 +5,10 @@
 //! factorization or resultants. For those, polynomials over the integers,
 //! the rationals, prime residue rings and finite fields of word-sized
 //! characteristic are converted to fmpz_mpoly, fmpq_mpoly, nmod_mpoly,
-//! fmpz_mod_mpoly or fq_nmod_mpoly (fields with Zech logarithms go through
-//! fq_nmod). These pack exponents as gr_mpoly does for the same number of
-//! variables and order, so only the coefficients need converting. Other
-//! coefficient rings report `Unable`.
+//! fmpz_mod_mpoly or fq_nmod_mpoly (fields with Zech logarithms or packed
+//! elements go through fq_nmod). These pack exponents as gr_mpoly does for
+//! the same number of variables and order, so only the coefficients need
+//! converting. Other coefficient rings report `Unable`.
 //!
 //! FLINT's algorithms over Z/nZ assume a prime modulus (and abort on
 //! non-invertible elements), so composite moduli are refused.
@@ -27,9 +27,18 @@ enum SCtx {
     Q(Box<sys::fmpq_mpoly_ctx_struct>),
     Nmod(Box<sys::nmod_mpoly_ctx_struct>),
     FmpzMod(Box<sys::fmpz_mod_mpoly_ctx_struct>),
-    /// A finite field, with the Zech logarithm context of the gr field if it
-    /// uses one.
-    Fq(Box<sys::fq_nmod_mpoly_ctx_struct>, Option<*const sys::fq_zech_ctx_struct>),
+    /// A finite field, with the way to its elements.
+    Fq(Box<sys::fq_nmod_mpoly_ctx_struct>, FqElts),
+}
+
+/// How the elements of a gr finite field become fq_nmod ones.
+#[derive(Clone, Copy)]
+enum FqElts {
+    Nmod,
+    /// Through the field's Zech logarithm context.
+    Zech(*const sys::fq_zech_ctx_struct),
+    /// From words (see `packed`), with the field's gr context.
+    Packed(*mut sys::gr_ctx_struct),
 }
 
 struct Spec {
@@ -127,13 +136,18 @@ impl Spec {
                 CtxKind::FqNmod { .. } => {
                     let mut c = Box::new(sys::fq_nmod_mpoly_ctx_struct::default());
                     sys::fq_nmod_mpoly_ctx_init(&mut *c, n, ord, *(data as *const *const sys::fq_nmod_ctx_struct));
-                    SCtx::Fq(c, None)
+                    SCtx::Fq(c, FqElts::Nmod)
                 }
                 CtxKind::FqZech { .. } => {
                     let z = *(data as *const *const sys::fq_zech_ctx_struct);
                     let mut c = Box::new(sys::fq_nmod_mpoly_ctx_struct::default());
                     sys::fq_nmod_mpoly_ctx_init(&mut *c, n, ord, (*z).fq_nmod_ctx);
-                    SCtx::Fq(c, Some(z))
+                    SCtx::Fq(c, FqElts::Zech(z))
+                }
+                CtxKind::FqPacked { .. } => {
+                    let mut c = Box::new(sys::fq_nmod_mpoly_ctx_struct::default());
+                    sys::fq_nmod_mpoly_ctx_init(&mut *c, n, ord, crate::packed::fq_nmod_ctx(base));
+                    SCtx::Fq(c, FqElts::Packed(base.ptr()))
                 }
                 _ => return Err(GrError::Unable),
             }
@@ -238,19 +252,19 @@ impl Spec {
                     }
                     p.length = n;
                 }
-                (Raw::Fq(p), SCtx::Fq(c, zech)) => {
+                (Raw::Fq(p), SCtx::Fq(c, elts)) => {
                     let fq = c.fqctx.as_ptr();
                     let d = sys::fq_nmod_ctx_degree(fq) as usize;
                     sys::fq_nmod_mpoly_fit_length_reset_bits(p, n, bits, &**c);
                     std::ptr::copy_nonoverlapping(g.exps, p.exps, w);
-                    match zech {
-                        None => {
+                    match elts {
+                        FqElts::Nmod => {
                             let cs = g.coeffs as *const sys::nmod_poly_struct;
                             for i in 0..len {
                                 sys::n_fq_set_fq_nmod(p.coeffs.add(d * i), cs.add(i), fq);
                             }
                         }
-                        Some(z) => {
+                        FqElts::Zech(z) => {
                             let cs = g.coeffs as *const sys::fq_zech_struct;
                             let mut t = sys::nmod_poly_struct::default();
                             sys::fq_nmod_init(&mut t, fq);
@@ -259,6 +273,12 @@ impl Spec {
                                 sys::n_fq_set_fq_nmod(p.coeffs.add(d * i), &t, fq);
                             }
                             sys::fq_nmod_clear(&mut t, fq);
+                        }
+                        FqElts::Packed(k) => {
+                            let size = (**k).sizeof_elem as usize;
+                            for i in 0..len {
+                                crate::packed::get_n_fq(p.coeffs.add(d * i), g.coeffs.cast::<u8>().add(i * size).cast(), *k);
+                            }
                         }
                     }
                     p.length = n;
@@ -313,18 +333,18 @@ impl Spec {
                     }
                     n
                 }
-                (Raw::Fq(p), SCtx::Fq(c, zech)) => {
+                (Raw::Fq(p), SCtx::Fq(c, elts)) => {
                     let fq = c.fqctx.as_ptr();
                     let d = sys::fq_nmod_ctx_degree(fq) as usize;
                     let n = fill(p.exps, p.length, p.bits);
-                    match zech {
-                        None => {
+                    match elts {
+                        FqElts::Nmod => {
                             let cs = (*g).coeffs as *mut sys::nmod_poly_struct;
                             for i in 0..n {
                                 sys::n_fq_get_fq_nmod(cs.add(i), p.coeffs.add(d * i), fq);
                             }
                         }
-                        Some(z) => {
+                        FqElts::Zech(z) => {
                             let cs = (*g).coeffs as *mut sys::fq_zech_struct;
                             let mut t = sys::nmod_poly_struct::default();
                             sys::fq_nmod_init(&mut t, fq);
@@ -333,6 +353,12 @@ impl Spec {
                                 sys::fq_zech_set_fq_nmod(cs.add(i), &t, *z);
                             }
                             sys::fq_nmod_clear(&mut t, fq);
+                        }
+                        FqElts::Packed(k) => {
+                            let size = (**k).sizeof_elem as usize;
+                            for i in 0..n {
+                                crate::packed::set_n_fq((*g).coeffs.cast::<u8>().add(i * size).cast(), p.coeffs.add(d * i), *k);
+                            }
                         }
                     }
                     n
@@ -354,8 +380,9 @@ impl Spec {
                 SCtx::Z(_) | SCtx::FmpzMod(_) => sys::fmpz_set(e.as_mut_ptr().cast(), c.cast()),
                 SCtx::Q(_) => sys::fmpq_set(e.as_mut_ptr().cast(), c.cast()),
                 SCtx::Nmod(_) => *(e.as_mut_ptr() as *mut sys::ulong) = *(c as *const sys::ulong),
-                SCtx::Fq(q, None) => sys::fq_nmod_set(e.as_mut_ptr().cast(), c.cast(), q.fqctx.as_ptr()),
-                SCtx::Fq(_, Some(z)) => sys::fq_zech_set_fq_nmod(e.as_mut_ptr().cast(), c.cast(), *z),
+                SCtx::Fq(q, FqElts::Nmod) => sys::fq_nmod_set(e.as_mut_ptr().cast(), c.cast(), q.fqctx.as_ptr()),
+                SCtx::Fq(_, FqElts::Zech(z)) => sys::fq_zech_set_fq_nmod(e.as_mut_ptr().cast(), c.cast(), *z),
+                SCtx::Fq(_, FqElts::Packed(k)) => crate::packed::set_fq_nmod(e.as_mut_ptr(), c, *k),
             }
         }
         e
