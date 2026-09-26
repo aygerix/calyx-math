@@ -255,6 +255,15 @@ impl Interp {
         Ok(Some(vec![q, map]))
     }
 
+    /// `hom< D -> C | images >` given by the images of the generators of D
+    /// (`vals` of a single sequence are its elements). `None` if D is not a
+    /// structure whose homomorphisms calyx builds that way; each chapter adds
+    /// the call for its structures here.
+    pub fn hom_images(&mut self, kind: MapKind, domain: &Value, codomain: &Value, images: &[Value]) -> RResult<Option<Value>> {
+        let _ = (kind, domain, codomain, images);
+        Ok(None)
+    }
+
     /// `ext<R | >`: the polynomial ring over R (a transcendental extension).
     pub fn ext_constructor(&mut self, left: &[Value], right: &[Value]) -> RResult<Option<Vec<Value>>> {
         if left.len() > 1 {

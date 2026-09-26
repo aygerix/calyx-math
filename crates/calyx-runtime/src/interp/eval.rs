@@ -735,6 +735,17 @@ impl Interp {
                 for x in es {
                     vals.push(self.eval(x, f)?);
                 }
+                // hom< D -> C | images >: the images of the generators of D, for
+                // the structures whose homomorphisms are given that way.
+                if matches!(kind, MapKind::Hom | MapKind::Iso) && !is_graph(&vals) {
+                    let images = match &vals[..] {
+                        [Value::Seq(s)] => s.elems.iter().cloned().collect(),
+                        _ => vals.clone(),
+                    };
+                    if let Some(m) = self.hom_images(kind, &domain, &codomain, &images)? {
+                        return Ok(m);
+                    }
+                }
                 self.map_from_values(kind, &domain, &codomain, vals)?
             }
         };
@@ -841,6 +852,17 @@ fn ctx_close(k: AggKind) -> &'static str {
         AggKind::Set => "}",
         AggKind::ISet => "@}",
         AggKind::MSet => "*}",
+    }
+}
+
+/// Whether the values of `hom< D -> C | ... >` give a map by its graph: pairs
+/// `<x, y>`, as values or in one aggregate.
+fn is_graph(vals: &[Value]) -> bool {
+    let pair = |v: &Value| matches!(v, Value::Tuple(t) if t.elems.len() == 2);
+    match vals {
+        [Value::Seq(s)] => s.elems.iter().all(pair),
+        [Value::Set(_) | Value::ISet(_) | Value::List(_)] => true,
+        _ => vals.iter().all(pair),
     }
 }
 
