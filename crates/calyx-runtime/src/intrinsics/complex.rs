@@ -149,8 +149,9 @@ fn ngens(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
 
 fn generator(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let bits = field_arg(a, 0)?;
-    if a.i64(1)? != 1 {
-        return Err(RuntimeError::runtime("Generator index must be in the range [1..1]"));
+    let n = a.int(1)?;
+    if n.to_i64() != Some(1) {
+        return Err(RuntimeError::runtime(format!("Value for generator index ({n}) should be in the range [1..1]")));
     }
     one(Value::complex(Real::zero(bits), Real::from_i64(1, bits)))
 }
