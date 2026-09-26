@@ -20,6 +20,7 @@ impl Interp {
             Value::Bool(_) => Value::booleans(),
             Value::Int(_) => Value::integers(),
             Value::Rat(_) => Value::rationals(),
+            Value::Real(r) if r.fixed.is_some() => Value::timing_reals(),
             Value::Real(r) => Value::reals(r.x.prec()),
             Value::Complex(c) => self.complex_field(c.prec()),
             Value::Str(_) => Value::strings(),
@@ -302,7 +303,7 @@ impl Interp {
                             None => return fail(),
                         },
                     };
-                    Ok(Ok(Value::real(r)))
+                    Ok(Ok(if is_timing_reals(st) { crate::intrinsics::reals::timing_real(r) } else { Value::real(r) }))
                 }
                 StructKind::Booleans => match x {
                     Value::Bool(_) => Ok(Ok(x.clone())),
@@ -533,7 +534,7 @@ impl Interp {
             (PowerStructure(t::INFTY) | ExtendedReals, k) | (k, PowerStructure(t::INFTY) | ExtendedReals) if extended(k) => Some(Value::extended_reals()),
             (Integers | Rationals, Reals(_)) => Some(b.clone()),
             (Reals(_), Integers | Rationals) => Some(a.clone()),
-            (Reals(p), Reals(q)) => Some(Value::reals(*p.min(q))),
+            (Reals(p), Reals(q)) => Some(if q < p { b.clone() } else { a.clone() }),
             (PowerSeq(p), PowerSeq(q)) => opt(p, q).map(|u| Value::structure(PowerSeq(u))),
             (PowerSet(p), PowerSet(q)) => opt(p, q).map(|u| Value::structure(PowerSet(u))),
             (PowerISet(p), PowerISet(q)) => opt(p, q).map(|u| Value::structure(PowerISet(u))),

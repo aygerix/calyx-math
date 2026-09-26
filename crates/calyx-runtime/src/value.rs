@@ -541,6 +541,19 @@ thread_local! {
     static EXTENDED_REALS: Rc<Struct> = Struct::new(StructKind::ExtendedReals);
     /// One real field per precision (in bits).
     static REALS: RefCell<FxHashMap<u64, Rc<Struct>>> = RefCell::default();
+    static TIMINGS: Rc<Struct> = Struct::new(StructKind::Reals(TIMING_BITS));
+}
+
+/// The precision in bits of the field of timings (Cputime, Realtime), a
+/// real field of its own that prints as of precision 15.
+pub const TIMING_BITS: u64 = 52;
+
+/// The decimals timings print with.
+pub const TIMING_DECIMALS: u32 = 3;
+
+/// Whether `s` is the field of timings.
+pub fn is_timing_reals(s: &Struct) -> bool {
+    TIMINGS.with(|t| std::ptr::eq(&**t, s))
 }
 
 pub fn next_object_id() -> u64 {
@@ -594,6 +607,12 @@ impl Value {
 
     pub fn extended_reals() -> Value {
         EXTENDED_REALS.with(|s| Value::Struct(s.clone()))
+    }
+
+    /// The field of timings: its elements print with `TIMING_DECIMALS`
+    /// decimals, and so do results in it.
+    pub fn timing_reals() -> Value {
+        TIMINGS.with(|s| Value::Struct(s.clone()))
     }
 
     /// The real field with the given precision in bits.
@@ -993,7 +1012,7 @@ pub fn struct_eq(a: &Rc<Struct>, b: &Rc<Struct>) -> bool {
     use StructKind::*;
     match (&a.kind, &b.kind) {
         (Integers, Integers) | (Rationals, Rationals) | (Booleans, Booleans) | (Strings, Strings) => true,
-        (Reals(a), Reals(b)) => a == b,
+        (Reals(x), Reals(y)) => x == y && is_timing_reals(a) == is_timing_reals(b),
         (PowerSet(x), PowerSet(y)) | (PowerSeq(x), PowerSeq(y)) | (PowerISet(x), PowerISet(y)) | (PowerMSet(x), PowerMSet(y)) => x == y,
         (Cartesian(x), Cartesian(y)) | (Coproduct(x), Coproduct(y)) => x == y,
         (RecFormat(_), RecFormat(_)) => false,

@@ -895,6 +895,10 @@ impl Interp {
             StructKind::Rationals => p.write("Rational Field"),
             // Real and complex fields print their name at the minimal level.
             StructKind::Reals(_) if p.level == Level::Minimal && s.name.borrow().is_some() => p.write(&group_name(s)),
+            StructKind::Reals(b) if is_timing_reals(s) => {
+                let digits = calyx_flint::digits_for_bits(*b);
+                p.write(&format!("Real field of precision {digits} printing with {TIMING_DECIMALS} digits after the decimal point"))
+            }
             StructKind::Reals(b) => p.write(&format!("Real field of precision {}", calyx_flint::digits_for_bits(*b))),
             StructKind::Booleans => p.write("Boolean Structure"),
             StructKind::Strings => p.write("String structure"),
