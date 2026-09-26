@@ -949,7 +949,7 @@ impl PartialEq for Value {
             (Small(r, x), Small(s, y)) => r == s && x == y,
             (Perm(a), Perm(b)) => a.images == b.images,
             (AbElt(a), AbElt(b)) => Rc::ptr_eq(&a.group, &b.group) && a.coords == b.coords,
-            (Nfd(a), Nfd(b)) => Rc::ptr_eq(&a.parent, &b.parent) && a.x.equal(&b.x) == calyx_flint::gr::Truth::True,
+            (Nfd(a), Nfd(b)) => crate::intrinsics::nearfields::nfd_equal(a, b).unwrap_or(false),
             (Infinity(a), Infinity(b)) => a == b,
             _ => false,
         }

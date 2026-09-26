@@ -226,8 +226,7 @@ fn needs_newline(v: &Value) -> bool {
     match v {
         Value::Seq(_) | Value::Set(_) | Value::ISet(_) | Value::MSet(_) | Value::Struct(_) | Value::Rec(_) => true,
         Value::Elt(e) => elt_is_compound(e),
-        Value::Perm(_) | Value::AbElt(_) | Value::Map(_) => true,
-        Value::Nfd(x) => needs_newline(&crate::intrinsics::nearfields::as_field_value(x)),
+        Value::Perm(_) | Value::AbElt(_) | Value::Map(_) | Value::Nfd(_) => true,
         Value::Tuple(t) => t.elems.iter().any(needs_newline),
         _ => false,
     }

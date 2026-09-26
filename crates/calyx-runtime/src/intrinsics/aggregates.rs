@@ -275,6 +275,11 @@ fn min_max(it: &mut Interp, a: &mut CallArgs, want: Ordering) -> RResult<Vals> {
     let Some((_, mut best)) = iter.next_item() else {
         return Err(super::arg_not(1, "non-empty"));
     };
+    // Magma asks the universe for an order before looking at the elements.
+    if it.compare_ord(&best, &best)?.is_none() {
+        let seq = matches!(v, Value::Seq(_)) && matches!(best, Value::Nfd(_));
+        return Err(RuntimeError::runtime(if seq { NO_ORDER } else { "Universe has no comparison algorithm" }));
+    }
     let mut best_i = 1;
     let mut i = 1;
     while let Some((_, x)) = iter.next_item() {
@@ -644,6 +649,9 @@ fn undefine_imp(_it: &mut Interp, a: &mut CallArgs) -> RResult<()> {
 }
 both_forms!(undefine_proc, undefine_func, undefine_imp);
 
+/// Magma's error for ordering nearfield elements.
+const NO_ORDER: &str = "No comparison algorithm for this sequence universe";
+
 /// Sort values, optionally with a comparison function; returns the
 /// original position of each sorted value.
 fn sort_with(it: &mut Interp, vals: &mut Vec<Value>, cmp: Option<&Value>) -> RResult<Vec<usize>> {
@@ -653,7 +661,7 @@ fn sort_with(it: &mut Interp, vals: &mut Vec<Value>, cmp: Option<&Value>) -> RRe
     if cmp.is_none() {
         if let Some(v) = vals.first() {
             if it.compare_ord(v, v)?.is_none() {
-                return Err(RuntimeError::runtime("No comparison algorithm for sequence elts"));
+                return Err(RuntimeError::runtime(if matches!(v, Value::Nfd(_)) { NO_ORDER } else { "No comparison algorithm for sequence elts" }));
             }
         }
     }

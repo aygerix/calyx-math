@@ -98,7 +98,7 @@ pub fn div_by_zero() -> RuntimeError {
 }
 
 impl Interp {
-    fn bad_types(&self, op: BinOp, a: &Value, b: &Value) -> RuntimeError {
+    pub(crate) fn bad_types(&self, op: BinOp, a: &Value, b: &Value) -> RuntimeError {
         let e = RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}, {}", self.type_name_ext(a), self.type_name_ext(b)));
         // Inside user functions Magma does not name the operator.
         if self.depth > 0 { e } else { e.in_context(op.intrinsic_name()) }
@@ -127,14 +127,15 @@ impl Interp {
                 return Ok(v);
             }
         }
-        let ring_result = if matches!(a, Value::Elt(_) | Value::Small(..)) || matches!(b, Value::Elt(_) | Value::Small(..)) {
+        // Nearfield elements first: they meet no ring elements.
+        let ring_result = if matches!(a, Value::Nfd(_)) || matches!(b, Value::Nfd(_)) {
+            self.nfd_binop(op, &a, &b)?
+        } else if matches!(a, Value::Elt(_) | Value::Small(..)) || matches!(b, Value::Elt(_) | Value::Small(..)) {
             self.ring_binop(op, &a, &b)?
         } else if matches!(a, Value::Perm(_)) || matches!(b, Value::Perm(_)) {
             self.perm_binop(op, &a, &b)?
         } else if matches!(a, Value::AbElt(_)) || matches!(b, Value::AbElt(_)) {
             self.ab_binop(op, &a, &b)?
-        } else if matches!(a, Value::Nfd(_)) || matches!(b, Value::Nfd(_)) {
-            self.nfd_binop(op, &a, &b)?
         } else if matches!((&a, &b), (Value::Struct(_), Value::Struct(_))) {
             self.ideal_binop(op, &a, &b)?
         } else if factseq::is_fact(&a) || factseq::is_fact(&b) {
@@ -573,10 +574,7 @@ impl Interp {
             return Ok(Some(x.coords == y.coords));
         }
         if let (Value::Nfd(x), Value::Nfd(y)) = (a, b) {
-            if !Rc::ptr_eq(&x.parent, &y.parent) {
-                return incompatible("Arguments are not compatible\nArgument types given: NfdElt, NfdElt");
-            }
-            return Ok(Some(x.x.equal(&y.x) == calyx_flint::gr::Truth::True));
+            return crate::intrinsics::nearfields::nfd_equal(x, y).map(Some);
         }
         if let Some(e) = crate::intrinsics::reals::num_eq(a, b) {
             return Ok(Some(e));
