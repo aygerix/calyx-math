@@ -8,6 +8,7 @@
 pub mod ball;
 mod complex;
 pub mod fq;
+pub mod gf2x;
 pub mod gr;
 pub mod mpoly;
 pub mod upoly;

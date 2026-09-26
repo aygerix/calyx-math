@@ -171,8 +171,9 @@ fn gf2_poly(it: &mut Interp, exps: &[u64]) -> RResult<Value> {
     int_poly_value(it, &Integer::from_u64(2), &cs)
 }
 
-/// Polynomials over GF(2) as bits (bit i is the coefficient of x^i), for
-/// the searches for sparse irreducible polynomials of large degree.
+/// Polynomials over GF(2) of small degree as bits (bit i is the
+/// coefficient of x^i): trial division for the search for sparse
+/// irreducible polynomials of large degree.
 mod gf2 {
     fn deg(a: u64) -> u32 {
         63 - a.leading_zeros()
@@ -237,105 +238,6 @@ mod gf2 {
             _ => matches!(n % 8, 1 | 7),
         }
     }
-
-    fn degree(a: &[u64]) -> Option<usize> {
-        a.iter().rposition(|&w| w != 0).map(|i| i * 64 + deg(a[i]) as usize)
-    }
-
-    /// dst ^= src * x^s, within the words of dst.
-    fn xor_shifted(dst: &mut [u64], src: &[u64], s: usize) {
-        let (ws, bs) = (s / 64, s % 64);
-        for (i, &w) in src.iter().enumerate().filter(|(_, w)| **w != 0) {
-            if let Some(d) = dst.get_mut(i + ws) {
-                *d ^= w << bs;
-            }
-            if bs > 0 {
-                if let Some(d) = dst.get_mut(i + ws + 1) {
-                    *d ^= w >> (64 - bs);
-                }
-            }
-        }
-    }
-
-    /// The bits of `a` from `n` up.
-    fn high(a: &[u64], n: usize) -> Vec<u64> {
-        let (ws, bs) = (n / 64, n % 64);
-        (ws..a.len()).map(|i| if bs == 0 { a[i] } else { a[i] >> bs | a.get(i + 1).map_or(0, |w| w << (64 - bs)) }).collect()
-    }
-
-    /// Clear the bits of `a` from `n` up.
-    fn truncate(a: &mut [u64], n: usize) {
-        let (ws, bs) = (n / 64, n % 64);
-        for (i, w) in a.iter_mut().enumerate().skip(ws) {
-            *w &= if i == ws && bs > 0 { (1 << bs) - 1 } else { 0 };
-        }
-    }
-
-    /// Interleave the bits of a 32-bit word with zeros.
-    fn spread(x: u64) -> u64 {
-        let x = (x | x << 16) & 0x0000_ffff_0000_ffff;
-        let x = (x | x << 8) & 0x00ff_00ff_00ff_00ff;
-        let x = (x | x << 4) & 0x0f0f_0f0f_0f0f_0f0f;
-        let x = (x | x << 2) & 0x3333_3333_3333_3333;
-        (x | x << 1) & 0x5555_5555_5555_5555
-    }
-
-    /// t^2 modulo x^n + (the sum of x^e over `low`, all below n).
-    fn sqr_mod(t: &[u64], n: usize, low: &[u64]) -> Vec<u64> {
-        let mut a: Vec<u64> = t.iter().flat_map(|&w| [spread(w & 0xffff_ffff), spread(w >> 32)]).collect();
-        loop {
-            let h = high(&a, n);
-            if h.iter().all(|&w| w == 0) {
-                break;
-            }
-            truncate(&mut a, n);
-            for &e in low {
-                xor_shifted(&mut a, &h, e as usize);
-            }
-        }
-        a.truncate(t.len());
-        a
-    }
-
-    fn gcd_is_one(mut a: Vec<u64>, mut b: Vec<u64>) -> bool {
-        loop {
-            let Some(db) = degree(&b) else { return degree(&a) == Some(0) };
-            while let Some(da) = degree(&a).filter(|&da| da >= db) {
-                let b2 = b.clone();
-                xor_shifted(&mut a, &b2, da - db);
-            }
-            std::mem::swap(&mut a, &mut b);
-        }
-    }
-
-    /// Rabin's test: whether x^n + (the sum of x^e over `low`, all below n)
-    /// is irreducible.
-    pub fn is_irreducible(n: u64, low: &[u64]) -> bool {
-        let n = n as usize;
-        if n < 2 {
-            return n == 1;
-        }
-        let mut f = vec![0u64; (n + 1).div_ceil(64)];
-        f[n / 64] |= 1 << (n % 64);
-        for &e in low {
-            f[e as usize / 64] ^= 1 << (e % 64);
-        }
-        let mut x = vec![0u64; n.div_ceil(64)];
-        x[0] = 2;
-        let qs: Vec<usize> = (2..=n).filter(|&q| n % q == 0 && (2..q).take_while(|r| r * r <= q).all(|r| q % r != 0)).collect();
-        let mut t = x.clone();
-        for i in 1..=n {
-            t = sqr_mod(&t, n, low);
-            if qs.iter().any(|&q| i == n / q) {
-                let mut u = t.clone();
-                u[0] ^= 2;
-                if !gcd_is_one(f.clone(), u) {
-                    return false;
-                }
-            }
-        }
-        t == x
-    }
 }
 
 /// `IrreducibleLowTermGF2Polynomial` and `IrreducibleSparseGF2Polynomial`
@@ -351,24 +253,19 @@ fn gf2_degree(a: &CallArgs, range: std::ops::RangeInclusive<u64>) -> RResult<u64
 
 pub(super) fn irreducible_low_term_gf2(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = gf2_degree(a, 1..=100_000)?;
-    let sieve = (n > 12).then(|| gf2::Sieve::new(n));
     // x^n + g with deg g minimal, then g least with its top coefficients
-    // compared first.
-    for d in 0..n.min(64) {
-        for bits in (1..1u64 << d).step_by(2).chain((d == 0).then_some(0)) {
-            let low: Vec<u64> = std::iter::once(d).chain((0..d).filter(|i| bits >> i & 1 == 1)).collect();
-            if sieve.as_ref().is_none_or(|s| !s.divides(&low)) && gf2::is_irreducible(n, &low) {
-                return one(gf2_poly(it, &[&[n][..], &low].concat())?);
-            }
-        }
-    }
-    Err(RuntimeError::runtime("No polynomial known for this degree"))
+    // compared first: g least as a number.
+    let g = calyx_flint::gf2x::least_low_term(n as usize).ok_or_else(|| RuntimeError::runtime("No polynomial known for this degree"))?;
+    let exps: Vec<u64> = std::iter::once(n).chain((0..64).filter(|i| g >> i & 1 == 1)).collect();
+    one(gf2_poly(it, &exps)?)
 }
 
 pub(super) fn irreducible_sparse_gf2(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = gf2_degree(a, 4..=12_800)?;
     let sieve = (n > 12).then(|| gf2::Sieve::new(n));
-    let found = |low: &[u64]| sieve.as_ref().is_none_or(|s| !s.divides(low)) && gf2::is_irreducible(n, low);
+    let found = |low: &[u64]| {
+        sieve.as_ref().is_none_or(|s| !s.divides(low)) && calyx_flint::gf2x::is_irreducible_sparse(n as usize, &low.iter().map(|&e| e as usize).collect::<Vec<_>>())
+    };
     for k in (1..n).filter(|&k| !gf2::swan_reducible(n, k)) {
         if found(&[k, 0]) {
             return one(gf2_poly(it, &[n, k, 0])?);
@@ -401,12 +298,16 @@ mod tests {
         Elem::poly_from_coeffs(&Ctx::poly(&fp), &cs).unwrap().poly_is_irreducible().unwrap()
     }
 
+    fn is_irreducible(n: u64, low: &[u64]) -> bool {
+        calyx_flint::gf2x::is_irreducible_sparse(n as usize, &low.iter().map(|&e| e as usize).collect::<Vec<_>>())
+    }
+
     #[test]
     fn gf2_irreducibility_agrees_with_flint() {
         for n in 1..=11u64 {
             for bits in 0..1u64 << n {
                 let low: Vec<u64> = (0..n).filter(|i| bits >> i & 1 == 1).collect();
-                assert_eq!(gf2::is_irreducible(n, &low), flint_irreducible(n, &low), "{n} {bits:b}");
+                assert_eq!(is_irreducible(n, &low), flint_irreducible(n, &low), "{n} {bits:b}");
             }
         }
         let mut seed = 12345u64;
@@ -415,7 +316,7 @@ mod tests {
             let n = 13 + seed % 300;
             let low: Vec<u64> = std::iter::once(0).chain((1..n).filter(|i| (seed >> (i % 61)) & 7 == 0 && i % 3 == 1)).collect();
             let sieve = gf2::Sieve::new(n);
-            let fast = !sieve.divides(&low) && gf2::is_irreducible(n, &low);
+            let fast = !sieve.divides(&low) && is_irreducible(n, &low);
             assert_eq!(fast, flint_irreducible(n, &low), "{n} {low:?}");
         }
     }
