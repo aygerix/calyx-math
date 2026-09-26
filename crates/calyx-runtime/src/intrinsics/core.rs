@@ -103,6 +103,60 @@ fn op_dot(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 
 // ----- types --------------------------------------------------------------
 
+/// The address of the object a value holds, for the values Magma keeps as
+/// objects of their own.
+fn object_addr(v: &Value) -> Option<*const ()> {
+    use Value::*;
+    Some(match v {
+        Rat(x) => Rc::as_ptr(x) as *const (),
+        Real(x) => Rc::as_ptr(x) as *const (),
+        Complex(x) => Rc::as_ptr(x) as *const (),
+        Str(x) => Rc::as_ptr(x) as *const (),
+        Seq(x) => Rc::as_ptr(x) as *const (),
+        Set(x) => Rc::as_ptr(x) as *const (),
+        ISet(x) => Rc::as_ptr(x) as *const (),
+        MSet(x) => Rc::as_ptr(x) as *const (),
+        Formal(x) => Rc::as_ptr(x) as *const (),
+        Tuple(x) => Rc::as_ptr(x) as *const (),
+        List(x) => Rc::as_ptr(x) as *const (),
+        Rec(x) => Rc::as_ptr(x) as *const (),
+        Assoc(x) => Rc::as_ptr(x) as *const (),
+        Func(x) => Rc::as_ptr(x) as *const (),
+        Map(x) => Rc::as_ptr(x) as *const (),
+        Struct(x) => Rc::as_ptr(x) as *const (),
+        ECat(x) => Rc::as_ptr(x) as *const (),
+        Err(x) => Rc::as_ptr(x) as *const (),
+        Obj(x) => Rc::as_ptr(x) as *const (),
+        CopElt(x) => Rc::as_ptr(x) as *const (),
+        Io(x) => Rc::as_ptr(x) as *const (),
+        Elt(x) => Rc::as_ptr(x) as *const (),
+        Perm(x) => Rc::as_ptr(x) as *const (),
+        AbElt(x) => Rc::as_ptr(x) as *const (),
+        Nfd(x) => Rc::as_ptr(x) as *const (),
+        _ => return None,
+    })
+}
+
+/// Whether x and y are the same object. Magma keeps small integers and
+/// rationals, and the elements of residue rings, prime fields and fields
+/// with Zech logarithms, in place, so equal ones are identical; any other
+/// object is identical only to itself (and its copies).
+fn is_identical(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let small = |i: &Integer, bits: u32| i.to_i64().is_some_and(|v| v.unsigned_abs() < 1 << bits);
+    let (x, y) = (&a.args[0], &a.args[1]);
+    let r = match (x, y) {
+        (Value::Int(i), Value::Int(_)) => small(i, 30) && x == y,
+        (Value::Rat(q), Value::Rat(_)) => small(&q.numerator(), 15) && small(&q.denominator(), 15) && x == y,
+        (Value::Elt(e), Value::Elt(_)) if matches!(&e.ring().kind, crate::rings::RingKind::Residue(_)) || e.x.zech_log().is_some() || matches!(&e.ring().kind, crate::rings::RingKind::Finite(f) if f.degree == 1) => x == y,
+        _ => match (object_addr(x), object_addr(y)) {
+            (Some(p), Some(q)) => p == q,
+            (None, None) => x == y,
+            _ => false,
+        },
+    };
+    one(Value::Bool(r))
+}
+
 fn type_of(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::Cat(a.args[0].type_id()))
 }
@@ -419,6 +473,7 @@ pub fn register(it: &mut Interp) {
     it.def_generic("[]", "x::., i::., ... -> .", "Indexing.", op_index);
     it.def_generic(".", "S::., i::. -> .", "The i-th generator of S.", op_dot);
 
+    it.def("IsIdentical", "x::., y::. -> BoolElt", "Whether x and y are the same object.", is_identical);
     it.def("Type", "x::. -> Cat", "The type (category) of x.", type_of);
     it.def("Category", "x::. -> Cat", "The type (category) of x.", type_of);
     it.def("ExtendedType", "x::. -> ECat", "The extended type of x.", extended_type_of);
