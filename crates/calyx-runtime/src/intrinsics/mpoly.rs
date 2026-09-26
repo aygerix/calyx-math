@@ -197,7 +197,7 @@ fn order_arg(v: &Value) -> OrderArg {
 
 /// The order named `name` with the arguments `args` on `n` variables; Magma
 /// numbers the arguments from `first` in its errors.
-fn parse_order(n: usize, name: &str, args: &[Value], first: usize) -> RResult<Order> {
+pub(super) fn parse_order(n: usize, name: &str, args: &[Value], first: usize) -> RResult<Order> {
     let args: Vec<OrderArg> = args.iter().map(order_arg).collect();
     Order::parse(n, name, &args).map_err(|e| RuntimeError::runtime(e.message(first)))
 }

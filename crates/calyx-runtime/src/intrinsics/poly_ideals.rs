@@ -124,6 +124,36 @@ impl MPolIdeal {
         self.known.borrow().groebner.is_some()
     }
 
+    /// Take the basis as it is (unsorted, not monic, unchecked) for the
+    /// Gröbner basis in the ring's order, as `MarkGroebner` does; it then
+    /// tells whether the ideal is homogeneous, and its dimension.
+    pub fn mark_groebner(&self) {
+        let r = self.poly_ring();
+        let basis = self.basis();
+        let lms: Vec<Vec<u64>> = basis.iter().filter_map(|f| leading(r, f)).map(|(_, e)| e).collect();
+        let mut k = self.known.borrow_mut();
+        k.homogeneous = Some(homogeneous_basis(r, &basis));
+        k.dimension = Some(dimension_class(r.ngens(), &lms.iter().map(Vec::as_slice).collect::<Vec<_>>()));
+        k.groebner = Some(basis.into());
+    }
+
+    /// Take what is known of `other`, an ideal of a ring of the same rank
+    /// whose image this ideal is: its dimension, and whether it is
+    /// homogeneous when the two rings have one grading.
+    pub fn learn_from(&self, other: &MPolIdeal) {
+        if std::ptr::eq(self, other) {
+            return;
+        }
+        let o = other.known.borrow();
+        let mut k = self.known.borrow_mut();
+        if o.homogeneous.is_some() && super::mpoly::weights(self.poly_ring()) == super::mpoly::weights(other.poly_ring()) {
+            k.homogeneous = o.homogeneous;
+        }
+        if o.dimension.is_some() {
+            k.dimension = o.dimension;
+        }
+    }
+
     /// The Gröbner basis in the easy order, computed once; it tells whether
     /// the ideal is homogeneous and whether it is zero-dimensional. The easy
     /// order is the ring's own when that is a weighted grevlex order or when
@@ -179,7 +209,8 @@ impl MPolIdeal {
         let mut k = self.known.borrow_mut();
         k.homogeneous = Some(homogeneous_terms(r, &easy.terms));
         k.dimension.get_or_insert(dimension_class(r.ngens(), &leading_monomials(&easy.terms)));
-        if groebner.is_some() {
+        // A basis marked as the Gröbner basis stays.
+        if k.groebner.is_none() {
             k.groebner = groebner;
         }
         k.easy = Some(easy.clone());
@@ -191,6 +222,9 @@ impl MPolIdeal {
     /// the ring's order that a colon ideal was made with is it, but does not
     /// replace the basis.
     pub fn groebner(&self) -> RResult<Rc<[Elem]>> {
+        if let Some(g) = &self.known.borrow().groebner {
+            return Ok(g.clone());
+        }
         let easy = self.easy()?;
         if let Some(g) = &self.known.borrow().groebner {
             return Ok(g.clone());
