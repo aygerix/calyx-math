@@ -697,7 +697,7 @@ fn gamma_function(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 }
 
 /// Magma's error for a parameter of the wrong type.
-fn bad_param(it: &Interp, a: &CallArgs, p: &str) -> RuntimeError {
+pub(super) fn bad_param(it: &Interp, a: &CallArgs, p: &str) -> RuntimeError {
     let types: Vec<String> = a.args.iter().map(|v| it.type_name_ext(v)).collect();
     RuntimeError::runtime(format!("Bad type for parameter '{p}'\nArgument types given: {}", types.join(", ")))
 }

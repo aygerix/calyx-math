@@ -8,6 +8,7 @@
 
 use std::rc::Rc;
 
+use calyx_flint::approx::{self, ApproxError};
 use calyx_flint::gr::CtxKind;
 use calyx_flint::polroots;
 use calyx_flint::{Elementary, Integer, ModifiedPolylog, Modular, Rational, Real, ThetaCost};
@@ -653,6 +654,44 @@ fn has_root(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     }
 }
 
+/// Argument i, a real number or a complex one that is real, as Magma's
+/// real intrinsics take it.
+fn real_valued(it: &Interp, a: &CallArgs, i: usize) -> RResult<Real> {
+    match &a.args[i] {
+        Value::Real(r) => Ok(r.x.clone()),
+        Value::Complex(c) if c.im.is_zero() => Ok(c.re.clone()),
+        _ => {
+            let types: Vec<String> = a.args.iter().map(|v| it.type_name_ext(v)).collect();
+            Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}", types.join(", "))))
+        }
+    }
+}
+
+/// `ContinuedFraction(x : Bound)`: the continued fraction of x up to its
+/// precision (see `calyx_flint::approx`).
+fn continued_fraction(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let bound = match a.param("Bound") {
+        None | Some(Value::Undef) => None,
+        Some(Value::Int(n)) if n.sign() < 0 => return Err(RuntimeError::runtime("Bad value for parameter 'Bound'")),
+        Some(Value::Int(n)) => Some(n.clone()),
+        Some(_) => return Err(reals::bad_param(it, a, "Bound")),
+    };
+    let x = real_valued(it, a, 0)?;
+    let terms = approx::continued_fraction(&x, bound.as_ref()).ok_or_else(|| RuntimeError::runtime("Undefined sequence element"))?;
+    one(Value::int_seq(terms))
+}
+
+/// `BestApproximation(x, k)`: PARI's best approximation of x by a rational
+/// of denominator at most k (see `calyx_flint::approx`).
+fn best_approximation(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let x = real_valued(it, a, 0)?;
+    match approx::best_approximation(&x, a.int(1)?) {
+        Ok(q) => one(Value::rat(q)),
+        Err(ApproxError::DivisionByZero) => Err(RuntimeError::runtime("Division by zero in (possibly) real or complex division. Maybe loss of precision?")),
+        Err(ApproxError::PrecisionLoss) => Err(RuntimeError::runtime("Overflow or precision loss in truncation")),
+    }
+}
+
 pub fn register(it: &mut Interp) {
     it.def_params("ComplexField", "-> FldCom", &[("Bits", Value::Bool(false))], "The default complex field.", complex_field);
     it.def_params("ComplexField", "p::RngIntElt -> FldCom", &[("Bits", Value::Bool(false))], "The complex field with p decimal digits of precision (or p bits with Bits).", complex_field);
@@ -736,6 +775,14 @@ pub fn register(it: &mut Interp) {
         it.def_params("Roots", &format!("p::RngUPolElt, S::{t} -> [Tup]"), &params, "The roots of p in S with their multiplicities, rounded correctly.", roots);
         it.def("HasRoot", &format!("p::RngUPolElt[{t}] -> BoolElt, {t}Elt"), "Whether p has a root in its coefficient field, and a root (0 if it is one, else the first of its roots).", has_root);
         it.def("HasRoot", &format!("p::RngUPolElt, S::{t} -> BoolElt, {t}Elt"), "Whether p has a root in S, and a root (0 if it is one, else the first of its roots).", has_root);
+    }
+    // Continued fractions, of real numbers and of complex numbers that are
+    // real.
+    for t in ["FldReElt", "FldComElt"] {
+        let doc = "The partial quotients of the continued fraction of x, as far as the precision of x determines them (at most Bound of them).";
+        it.def_params("ContinuedFraction", &format!("x::{t} -> [RngIntElt]"), &[("Bound", Value::Undef)], doc, continued_fraction);
+        let doc = "A rational approximation to x of denominator at most k, at least as close as the convergents of such denominators (PARI's bestappr).";
+        it.def("BestApproximation", &format!("x::{t}, k::RngIntElt -> FldRatElt"), doc, best_approximation);
     }
     for s in ["RngIntElt", "FldRatElt", "FldReElt", "FldComElt"] {
         it.def("JacobiThetaNullK", &format!("q::{s}, k::RngIntElt -> FldReElt"), "The k-th derivative at 0 of Jacobi's first theta function with nome q (real).", jacobi_theta_null);
