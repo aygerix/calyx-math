@@ -54,8 +54,9 @@ Roots(z^2 + 1 : Al := "Foo");
 Roots(t^2 - 2, C : Al := "Foo");
 HasRoot(z^2 + 1 : Digits := 5);
 
-// The handbook's example (H26E6). Its polynomial is ill-conditioned, and
-// calyx's (z-1.1)^6 differs from Magma's in the last bit (#73).
+// The handbook's example (H26E6). Its polynomial is ill-conditioned: 2.22's
+// Roots gives these roots to about 14 digits, while its RootsNonExact gives
+// the same roots as calyx to all 30 (reals_roots_non_exact.m).
 P<z> := PolynomialRing(ComplexField());
 p := (z-1.1)^6;
 p;

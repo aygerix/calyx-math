@@ -615,6 +615,74 @@ pub fn complex_roots(re: &[Integer], im: &[Integer], bits: u64) -> Option<Vec<(C
     Some(rs.into_iter().map(|(r, e)| (Complex::new(r.re, r.im), e)).collect())
 }
 
+// ----- error bounds of roots ----------------------------------------------
+
+/// Why `root_bounds` gives no bounds.
+#[derive(Debug, PartialEq, Eq)]
+pub enum BoundsError {
+    /// The perturbation is too large for the polynomial.
+    TooLarge,
+    /// The first estimate of the radii divides by zero (degree 1 only).
+    DivisionByZero,
+}
+
+/// Magma's bounds `e_k` for RootsNonExact: every polynomial within `2^-w
+/// |p|` of p (for the norm `|p|`, the sum of the absolute values of the
+/// coefficients) has a root within `e_k` of `roots[k]`, the roots of p
+/// repeated by multiplicity. `expo` is the largest exponent of a
+/// coefficient of p less that of its leading coefficient (the exponent of a
+/// complex number being the larger one of its parts).
+///
+/// This is the a posteriori error of Gourdon's splitting circle code, as
+/// Magma 2.22 computes it at 64 bits. With `err = expo - w + ⌊log2 n⌋ + 1`,
+/// a disc around v of radius `eps` holds the `m` roots within `1.25 eps`
+/// of v, where `eps` solves `eps^m = 4^(m-1) ρ^n 2^err / ∏ (|v_i - v| - eps)`
+/// over the other roots, `ρ = max(1, |v|)`. It starts from `ρ·2 /
+/// ((2^-err - 1)^(1/n) - 1)` and iterates twice, then at most three times
+/// more while the radius shrinks by a factor above 1.2. Magma gives no
+/// bounds when `expo - w + ⌊log2 n^2⌋ > -2`.
+pub fn root_bounds(roots: &[Complex], expo: i64, w: i64) -> Result<Vec<Real>, BoundsError> {
+    const LOW: u64 = 64;
+    let n = roots.len() as u64;
+    let log2 = |k: u64| 63 - k.leading_zeros() as i64;
+    if n == 0 || expo - w + log2(n * n) > -2 {
+        return Err(BoundsError::TooLarge);
+    }
+    let err = expo - w + log2(n) + 1;
+    let one = Real::from_i64(1, LOW);
+    // Powers 1/m are those of a double, as in Magma.
+    let root = |x: &Real, m: u64| if m == 1 { x.clone() } else { x.pow(&Real::from_f64(1.0 / m as f64, LOW)) };
+    let first = root(&one.mul_2exp(-err).add_i64(-1), n).add_i64(-1);
+    let shatzle = Real::from_i64(2, LOW).div(&first).ok_or(BoundsError::DivisionByZero)?;
+    let (widen, limit) = (Real::from_f64(1.25, LOW), Real::from_f64(1.2, LOW));
+    Ok(roots.iter().enumerate().map(|(k, v)| {
+        let d: Vec<Real> = roots.iter().enumerate().filter(|&(i, _)| i != k).map(|(_, u)| u.sub(v).abs().round_to(LOW)).collect();
+        let rho = v.abs().round_to(LOW);
+        let rho = if rho.cmp_abs(&one) == Ordering::Less { one.clone() } else { rho };
+        let aux = rho.pow_i64(n as i64).mul_2exp(err);
+        let mut eps = rho.mul(&shatzle);
+        let mut j = 1;
+        let mut rap = limit.clone();
+        while j <= 2 || (j <= 5 && rap.cmp_abs(&limit) == Ordering::Greater) {
+            let far = eps.mul(&widen);
+            let (mut m, mut prod) = (n, None::<Real>);
+            for di in d.iter().filter(|di| di.cmp_abs(&far) == Ordering::Greater) {
+                let dif = di.sub(&eps);
+                prod = Some(prod.map_or(dif.clone(), |p| p.mul(&dif)));
+                m -= 1;
+            }
+            let mut next = prod.map_or(aux.clone(), |p| aux.div(&p).expect("far roots lie beyond eps"));
+            if m > 1 {
+                next = root(&next.mul_2exp(2 * m as i64 - 2), m);
+            }
+            rap = eps.div(&next).expect("a positive radius");
+            eps = next;
+            j += 1;
+        }
+        eps
+    }).collect())
+}
+
 // ----- Newton's iteration --------------------------------------------------
 
 /// Why Newton's iteration gave no root.
@@ -726,6 +794,47 @@ mod tests {
         let rs = complex_roots(&ints(&[3, 1, 1]), &ints(&[-1, 2, 0]), 67).unwrap();
         let got: Vec<(String, String)> = rs.iter().map(|(z, _)| (show(&z.re), show(&z.im))).collect();
         assert_eq!(got, vec![(m.into(), "-3.0000000000000000000".into()), (z.into(), o.into())]);
+    }
+
+    /// Asserts that `x` is within a relative `tol` of `m·2^e`.
+    fn near(x: &Real, m: &str, e: i64, tol: f64) {
+        let y = Real::from_integer(&Integer::parse(m).unwrap(), 200).mul_2exp(e);
+        let rel = x.round_to(200).sub(&y).div(&y).unwrap().abs().to_f64();
+        assert!(rel < tol, "{} vs {m}*2^{e}: {rel:e}", x.format(25));
+    }
+
+    #[test]
+    fn root_bounds_as_magma() {
+        let bounds = |f: &[i64], expo, w| {
+            let roots: Vec<Complex> = complex_roots(&ints(f), &[], 67).unwrap().into_iter().flat_map(|(z, e)| std::iter::repeat_n(z, e as usize)).collect();
+            root_bounds(&roots, expo, w)
+        };
+        // Magma 2.22 at 20 digits (w = 64), where its roots are good to 64 bits.
+        let e = bounds(&[1, 0, 1], 0, 64).unwrap();
+        near(&e[0], "73786976294838206488", -129, 1e-18);
+        let e = bounds(&[-6, 11, -6, 1], 3, 64).unwrap();
+        for (x, (m, s)) in e.iter().zip([("73786976294838206736", -126), ("73786976294838208592", -122), ("124515522497539477944", -122)]) {
+            near(x, m, s, 1e-17);
+        }
+        // Large roots: the radius shrinks over three iterations.
+        near(&bounds(&[-(1 << 58), 0, 1], 58, 64).unwrap()[0], "74987426386686591992", -42, 1e-17);
+        near(&bounds(&[-(1 << 57), 0, 1], 57, 64).unwrap()[0], "105180567907245489040", -44, 1e-17);
+        near(&bounds(&[-(1 << 60), 0, 1], 60, 64).unwrap()[0], "79462897548287299128", -39, 1e-17);
+        // Clusters: a double root at 1 beside -1, and a triple root.
+        let e = bounds(&[1, -1, -1, 1], 0, 64).unwrap();
+        near(&e[0], "73786976294838206664", -130, 1e-17);
+        near(&e[1], "104350542619842132160", -97, 1e-9);
+        near(&bounds(&[-1, 3, -3, 1], 1, 64).unwrap()[0], "73786976294838260544", -85, 1e-17);
+        near(&bounds(&[0, 0, 0, 1], 0, 64).unwrap()[0], "117129523791978853736", -86, 1e-17);
+        // At 30 digits (w = 128).
+        near(&bounds(&[-2, 0, 0, 1], 1, 128).unwrap()[0], "1064759783426277956105462087680", -226, 1e-17);
+        // No bounds when the perturbation is too large, and a division by
+        // zero for a linear polynomial just below that.
+        assert_eq!(bounds(&[-(1 << 60), 0, 0, 1], 60, 64), Err(BoundsError::TooLarge));
+        assert!(bounds(&[-(1 << 59), 0, 0, 1], 59, 64).is_ok());
+        assert_eq!(bounds(&[-(1 << 62), 1], 62, 64), Err(BoundsError::DivisionByZero));
+        near(&bounds(&[-(1 << 61), 1], 61, 64).unwrap()[0], "1", 59, 1e-18);
+        assert_eq!(bounds(&[-2, 0, 1], 1, 0), Err(BoundsError::TooLarge));
     }
 
     /// Real coefficients as complex numbers of `prec` bits.
