@@ -11,8 +11,8 @@ use std::rc::Rc;
 
 use calyx_flint::approx::{self, ApproxError};
 use calyx_flint::gr::CtxKind;
-use calyx_flint::polroots::{self, NewtonError};
-use calyx_flint::{Elementary, Integer, ModifiedPolylog, Modular, Rational, Real, ThetaCost, bits_for_digits};
+use calyx_flint::polroots::{self, BoundsError, NewtonError};
+use calyx_flint::{Elementary, Integer, ModifiedPolylog, Modular, Rational, Real, ThetaCost, bits_for_digits, digits_for_bits};
 use calyx_syntax::ast::BinOp;
 
 use super::reals::{self, default_bits, field_bits, to_real};
@@ -655,6 +655,43 @@ fn has_root(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     }
 }
 
+/// `RootsNonExact(p)`: the roots of p, each as often as its multiplicity,
+/// rounded correctly in the order of Roots, and Magma's bounds on how far a
+/// change of `10^-d |p|` in p moves them (`polroots::root_bounds`). The
+/// relative change is `2^-w`, `w = 64 (⌊d log2(10) / 32⌋ - 1)` as in Magma
+/// 2.22. The bounds are unassigned when there are none, and both sequences
+/// lie in the real field of p if p and its roots are real, else in the
+/// complex field of its precision.
+fn roots_non_exact(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let Value::Elt(f) = &a.args[0] else { unreachable!("a polynomial argument") };
+    let s = f.ring().base().expect("a polynomial").clone();
+    let (bits, complex) = root_field(&s);
+    let (re, im) = exact_coefficients(f).ok_or_else(|| RuntimeError::runtime("Roots could not be computed"))?;
+    if re.iter().chain(&im).all(Integer::is_zero) {
+        return Err(arg_not(1, "non-zero"));
+    }
+    if re.len() < 2 {
+        return Ok(vals![Value::seq(None, vec![]), Value::Undef]);
+    }
+    let rs = polroots::complex_roots(&re, &im, bits).ok_or_else(|| RuntimeError::runtime("Roots could not be computed"))?;
+    let roots: Vec<ComplexV> = rs.into_iter().flat_map(|(z, e)| std::iter::repeat_n(z, e as usize)).collect();
+    let expo = |k: usize| [&re[k], &im[k]].iter().filter(|x| !x.is_zero()).map(|x| x.bits() as i64 - 1).max().unwrap_or(i64::MIN);
+    let top = (0..re.len()).map(expo).max().expect("a nonzero coefficient");
+    let w = 64 * ((digits_for_bits(bits) as f64 * std::f64::consts::LOG2_10 / 32.0).floor() as i64 - 1);
+    let bounds = match polroots::root_bounds(&roots, top - expo(re.len() - 1), w) {
+        Ok(es) => Some(es),
+        Err(BoundsError::TooLarge) => None,
+        Err(BoundsError::DivisionByZero) => return Err(RuntimeError::runtime("Division by zero in (possibly) real or complex division. Maybe loss of precision?")),
+    };
+    let real = !complex && roots.iter().all(|z| z.im.is_zero());
+    let field = if real || complex { s } else { it.complex_field(bits) };
+    let value = |z: ComplexV| if real { Value::real(z.re) } else { cv(z) };
+    let bounds = bounds.map_or(Value::Undef, |es| {
+        Value::seq(Some(field.clone()), es.into_iter().map(|e| value(ComplexV::new(e.round_to(bits), Real::zero(bits)))).collect())
+    });
+    Ok(vals![Value::seq(Some(field), roots.into_iter().map(value).collect()), bounds])
+}
+
 /// Argument i, a real number or a complex one that is real, as Magma's
 /// real intrinsics take it.
 fn real_valued(it: &Interp, a: &CallArgs, i: usize) -> RResult<Real> {
@@ -878,6 +915,8 @@ pub fn register(it: &mut Interp) {
         it.def_params("Roots", &format!("p::RngUPolElt, S::{t} -> [Tup]"), &params, "The roots of p in S with their multiplicities, rounded correctly.", roots);
         it.def("HasRoot", &format!("p::RngUPolElt[{t}] -> BoolElt, {t}Elt"), "Whether p has a root in its coefficient field, and a root (0 if it is one, else the first of its roots).", has_root);
         it.def("HasRoot", &format!("p::RngUPolElt, S::{t} -> BoolElt, {t}Elt"), "Whether p has a root in S, and a root (0 if it is one, else the first of its roots).", has_root);
+        let doc = "The roots of p repeated by multiplicity, and bounds on how far a change of 10^-d |p| moves them (unassigned if Magma derives none).";
+        it.def("RootsNonExact", &format!("p::RngUPolElt[{t}] -> [FldComElt], [FldComElt]"), doc, roots_non_exact);
     }
     // Continued fractions, of real numbers and of complex numbers that are
     // real.
