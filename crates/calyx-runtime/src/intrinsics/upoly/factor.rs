@@ -43,8 +43,10 @@ fn has_factorization(r: &Value) -> bool {
 /// Constant polynomials `<p, e>` for the prime powers of an integer.
 fn prime_factors(f: &Elt, c: &Integer) -> RResult<Vec<(Elem, u64)>> {
     let zz = bctx(f);
-    let Some(fz) = c.abs().factor() else { return Ok(Vec::new()) };
-    fz.factors.iter().map(|(p, e)| Ok((Elem::poly_from_coeffs(f.x.ctx(), &[Elem::from_integer(&zz, p)?])?, *e))).collect()
+    if c.is_zero() {
+        return Ok(Vec::new());
+    }
+    crate::intrinsics::factseq::factor(&c.abs()).iter().map(|(p, e)| Ok((Elem::poly_from_coeffs(f.x.ctx(), &[Elem::from_integer(&zz, p)?])?, *e))).collect()
 }
 
 /// A factorization sequence `[<q, k>, ...]` of polynomials in the ring of

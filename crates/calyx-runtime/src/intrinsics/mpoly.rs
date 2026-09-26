@@ -1240,8 +1240,10 @@ fn is_integers(f: &Elt) -> bool {
 /// Constant polynomials `<p, e>` for the prime powers of an integer.
 fn prime_factors(f: &Elt, c: &Integer) -> RResult<Vec<(Elem, u64)>> {
     let zz = f.x.ctx().base().expect("a polynomial ring").clone();
-    let Some(fz) = c.abs().factor() else { return Ok(Vec::new()) };
-    fz.factors.iter().map(|(p, e)| Ok((like_const(f, &Elem::from_integer(&zz, p)?)?, *e))).collect()
+    if c.is_zero() {
+        return Ok(Vec::new());
+    }
+    super::factseq::factor(&c.abs()).iter().map(|(p, e)| Ok((like_const(f, &Elem::from_integer(&zz, p)?)?, *e))).collect()
 }
 
 /// A factorization sequence `[<q, k>, ...]` in Magma's order: by
