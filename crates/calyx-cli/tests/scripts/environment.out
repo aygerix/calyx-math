@@ -59,6 +59,7 @@ Argsech(<FldRatElt> x) -> FldReElt
 Argsinh(<FldRatElt> x) -> FldReElt
 Argtanh(<FldRatElt> x) -> FldReElt
 Argument(<FldRatElt> x) -> FldReElt
+BaseExtend(<GrpDrch> G, <Rng> R, <RngElt> z) -> GrpDrch
 BesselFunction(<RngIntElt> n, <FldRatElt> x) -> FldReElt
 BesselFunctionSecondKind(<RngIntElt> n, <FldRatElt> x) -> FldReElt
 Ceiling(<FldRatElt> x) -> RngIntElt
@@ -78,6 +79,7 @@ DickmanRho(<FldRatElt> u) -> FldReElt
 DicksonFirst(<RngIntElt> n, <RngElt> a) -> RngUPolElt
 DicksonSecond(<RngIntElt> n, <RngElt> a) -> RngUPolElt
 Dilog(<FldRatElt> x) -> FldComElt
+DirichletGroup(<RngIntElt> N, <Rng> R, <RngElt> z, <RngIntElt> r) -> GrpDrch
 ElementToSequence(<FldRatElt> q) -> [FldRatElt]
 Eltseq(<FldRatElt> q) -> [FldRatElt]
 Erf(<FldRatElt> x) -> FldReElt
@@ -175,6 +177,7 @@ MinimalPolynomial(<FldRatElt> q) -> RngUPolElt
 Modulus(<FldRatElt> x) -> FldReElt
 Norm(<FldRatElt> q) -> FldRatElt
 Numerator(<FldRatElt> x) -> RngIntElt
+OrderOfRootOfUnity(<RngElt> r, <RngIntElt> n) -> RngIntElt
 PolarToComplex(<RngIntElt> m, <FldRatElt> a) -> FldComElt
 PolarToComplex(<FldRatElt> m, <RngIntElt> a) -> FldComElt
 PolarToComplex(<FldRatElt> m, <FldRatElt> a) -> FldComElt

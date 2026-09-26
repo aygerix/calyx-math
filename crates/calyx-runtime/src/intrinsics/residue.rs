@@ -1,6 +1,8 @@
 //! The functions of residue class rings `Z/mZ` and their elements: square
 //! roots, linear congruences, gcds and lcms, normalisation, primitivity and
-//! the factored modulus.
+//! the factored modulus. Dirichlet characters are in `dirichlet`.
+
+pub mod dirichlet;
 
 use std::rc::Rc;
 
@@ -295,4 +297,5 @@ pub fn register(it: &mut Interp) {
     it.def("Identity", "R::RngIntRes -> RngIntResElt", "The identity 1 of R.", identity);
     it.def("Generator", "I::RngIntRes -> RngIntResElt", "The generator of the ideal I of a residue class ring.", ideal_generator);
     it.def("IsPrincipal", "I::RngIntRes -> BoolElt", "True: ideals of residue class rings are principal.", ideal_is_principal);
+    dirichlet::register(it);
 }

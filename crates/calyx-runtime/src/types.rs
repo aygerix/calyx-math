@@ -105,6 +105,9 @@ builtin_types! {
 
     // Rational field (#38).
     POW_MAP_AUT = "PowMapAut": [POW_MAP],
+    // Dirichlet characters (#48).
+    GRP_DRCH = "GrpDrch": [STR],
+    GRP_DRCH_ELT = "GrpDrchElt": [ELT],
 
     // Finite fields and nearfields (#39, #43).
     NFD = "Nfd": [STR],
@@ -178,6 +181,7 @@ impl TypeRegistry {
             (t::EXT_RE, t::EXT_RE_ELT),
             (t::GRP_AB, t::GRP_AB_ELT),
             // Rational field (#38).
+            (t::GRP_DRCH, t::GRP_DRCH_ELT),
 
             // Finite fields and nearfields (#39, #43).
             (t::NFD, t::NFD_ELT),

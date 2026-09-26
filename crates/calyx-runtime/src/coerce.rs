@@ -47,6 +47,7 @@ impl Interp {
             Value::Perm(p) => Value::Struct(p.group.clone()),
             Value::AbElt(e) => Value::Struct(e.group.clone()),
             Value::Nfd(e) => Value::Struct(e.parent.clone()),
+            Value::Drch(e) => Value::Struct(e.group.clone()),
             Value::Obj(o) => {
                 let sym = Sym::new("Parent");
                 if self.select_signature(sym, std::slice::from_ref(v), &[false], false).is_some_and(|s| !s.generic) {
@@ -203,6 +204,7 @@ impl Interp {
                 StructKind::SymGroup(n) => self.coerce_into_sym(*n as usize, x),
                 StructKind::AbGroup(_) => self.coerce_into_abgroup(st, x, false),
                 StructKind::Nearfield(_) => self.coerce_into_nearfield(st, x, false),
+                StructKind::DrchGroup(_) => crate::intrinsics::residue::dirichlet::coerce(self, st, x),
                 StructKind::IntIdeal(n) => match x {
                     Value::Int(_) | Value::Rat(_) => {
                         let v = match self.try_coerce(&Value::integers(), x)? {
@@ -975,6 +977,7 @@ impl Interp {
                 StructKind::AbGroup(_) => TypeVal::Cat(t::GRP_AB_ELT),
                 StructKind::Nearfield(_) => TypeVal::Cat(t::NFD_ELT),
                 StructKind::Automorphisms(_) => TypeVal::Cat(t::MAP),
+                StructKind::DrchGroup(_) => TypeVal::Cat(t::GRP_DRCH_ELT),
             },
             Value::Seq(s) => match s.universe.clone() {
                 Some(u) => self.element_type_of(&u),
@@ -1085,6 +1088,7 @@ impl Interp {
                 StructKind::AbGroup(_) => TypeVal::Cat(t::GRP_AB_ELT),
                 StructKind::Nearfield(_) => TypeVal::Cat(t::NFD_ELT),
                 StructKind::Automorphisms(_) => TypeVal::Cat(t::MAP),
+                StructKind::DrchGroup(_) => TypeVal::Cat(t::GRP_DRCH_ELT),
             },
             Value::Seq(s) => s.universe.as_ref().map(|u| self.static_element_type(u)).unwrap_or(TypeVal::Cat(t::ANY)),
             Value::Set(s) => s.universe.as_ref().map(|u| self.static_element_type(u)).unwrap_or(TypeVal::Cat(t::ANY)),
