@@ -260,7 +260,10 @@ impl Interp {
     /// structure whose homomorphisms calyx builds that way; each chapter adds
     /// the call for its structures here.
     pub fn hom_images(&mut self, kind: MapKind, domain: &Value, codomain: &Value, images: &[Value]) -> RResult<Option<Value>> {
-        let _ = (kind, domain, codomain, images);
+        let _ = kind;
+        if let Some(m) = crate::intrinsics::mpoly::polynomial_hom(self, domain, codomain, images)? {
+            return Ok(Some(m));
+        }
         Ok(None)
     }
 

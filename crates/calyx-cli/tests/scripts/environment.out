@@ -77,6 +77,8 @@ Dilog(<FldRatElt> x) -> FldComElt
 ElementToSequence(<FldRatElt> q) -> [FldRatElt]
 Eltseq(<FldRatElt> q) -> [FldRatElt]
 Evaluate(<RngUPolElt> f, <RngElt> r) -> RngElt
+Evaluate(<RngMPolElt> f, <RngIntElt> i, <RngElt> r) -> RngElt
+Evaluate(<RngMPolElt> f, <RngMPolElt> v, <RngElt> r) -> RngElt
 Exp(<FldRatElt> x) -> FldReElt
 Floor(<FldRatElt> x) -> RngIntElt
 GCD(<FldRatElt> x, <FldRatElt> y) -> FldRatElt

@@ -939,7 +939,7 @@ fn lcm(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 /// sign over the integers, the inverse over a field, the unit of
 /// `Normalize` over a residue class ring, and recursively that of the
 /// leading coefficient over a polynomial ring.
-fn norm_unit(it: &mut Interp, base: &Value, c: &Elem) -> RResult<Elem> {
+pub(crate) fn norm_unit(it: &mut Interp, base: &Value, c: &Elem) -> RResult<Elem> {
     let ctx = c.ctx().clone();
     if c.is_zero() == Truth::True {
         return Ok(Elem::one(&ctx)?);
@@ -950,6 +950,13 @@ fn norm_unit(it: &mut Interp, base: &Value, c: &Elem) -> RResult<Elem> {
                 let b2 = b2.clone();
                 let u = norm_unit(it, &b2, &fu::lead(c))?;
                 return Ok(Elem::poly_from_coeffs(&ctx, &[u])?);
+            }
+            RingKind::MPoly { base: b2, .. } => {
+                let b2 = b2.clone();
+                let u = norm_unit(it, &b2, &c.mpoly_term(0).0)?;
+                let mut e = Elem::zero(&ctx);
+                e.mpoly_set_scalar(&u)?;
+                return Ok(e);
             }
             RingKind::Residue(_) => {
                 let v = it.elem_to_value(base, c.clone());

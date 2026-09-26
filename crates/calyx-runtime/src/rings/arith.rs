@@ -214,6 +214,16 @@ impl Interp {
                 if y.is_zero() == Truth::True {
                     return Err(div_by_zero().in_context(name));
                 }
+                // Multivariate polynomials divide only exactly.
+                if let RingKind::MPoly { .. } = &ring.kind {
+                    if op == Mod {
+                        return Ok(None);
+                    }
+                    return match crate::intrinsics::mpoly::exact_div(&x, &y).map_err(|e| e.in_context(name))? {
+                        Some(q) => Ok(Some(make_elt(st, q))),
+                        None => Err(RuntimeError::runtime("Argument 1 is not exactly divisible by argument 2").in_context(name)),
+                    };
+                }
                 let (q, rem) = match &ring.kind {
                     RingKind::UPoly { .. } => crate::intrinsics::upoly::quotrem(self, ring, &x, &y).map_err(|e| e.in_context(name))?,
                     _ => x.euclidean_divrem(&y).map_err(|e| arith_err(e, name))?,

@@ -188,7 +188,7 @@ fn base_of(ctx: &Rc<Ctx>) -> &Rc<Ctx> {
 
 /// Whether the context of integers modulo a large n is a field, deciding it
 /// (and remembering it in the context) the first time.
-fn fmpz_mod_is_field(base: &Ctx) -> bool {
+pub(crate) fn fmpz_mod_is_field(base: &Ctx) -> bool {
     match base.is_field() {
         Truth::True => true,
         Truth::False => false,
