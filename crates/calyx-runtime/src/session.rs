@@ -344,17 +344,17 @@ impl Interp {
 
     /// `Name< ... | ... >` constructors other than the built-in ones.
     pub fn constructor(&mut self, name: Sym, left: Vec<Value>, right: Option<Vec<Value>>) -> RResult<Value> {
-        let mut vals = self.constructor_multi(name, left, right)?;
+        let mut vals = self.constructor_multi(name, left, right, 1)?;
         Ok(vals.swap_remove(0))
     }
 
     /// A constructor with all its return values (`ideal< >` and `quo< >`
-    /// also return a map).
-    pub fn constructor_multi(&mut self, name: Sym, left: Vec<Value>, right: Option<Vec<Value>>) -> RResult<Vec<Value>> {
+    /// also return a map); `nres` values are wanted (0 for all).
+    pub fn constructor_multi(&mut self, name: Sym, left: Vec<Value>, right: Option<Vec<Value>>, nres: usize) -> RResult<Vec<Value>> {
         let rhs = right.clone().unwrap_or_default();
         let built_in = match (&*name.as_rc(), left.first()) {
             ("ideal", Some(base)) => self.ideal_constructor(base, &rhs)?,
-            ("quo", Some(base)) => self.quo_constructor(base, &rhs)?,
+            ("quo", Some(base)) => self.quo_constructor(base, &rhs, nres != 1)?,
             ("sub", Some(base)) => self.sub_constructor(base, &rhs)?,
             ("ext", Some(_)) => self.ext_constructor(&left, &rhs)?,
             ("ExtensionField", Some(_)) if left.len() == 1 => self.ext_constructor(&left, &rhs).map_err(|mut e| {

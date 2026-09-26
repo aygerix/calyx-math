@@ -65,7 +65,7 @@ impl Interp {
                     }
                     None => None,
                 };
-                self.constructor_multi(*name, l, r).map_err(|err| err.at(e.span))
+                self.constructor_multi(*name, l, r, nres).map_err(|err| err.at(e.span))
             }
             Ex::Cop(_) => {
                 let c = self.eval(e, f)?;

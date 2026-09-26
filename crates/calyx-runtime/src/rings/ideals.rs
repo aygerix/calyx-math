@@ -248,12 +248,13 @@ impl Interp {
         Ok(Some(vec![ideal, incl]))
     }
 
-    /// `quo<R | ...>`: the quotient ring and the quotient map.
-    pub fn quo_constructor(&mut self, base: &Value, right: &[Value]) -> RResult<Option<Vec<Value>>> {
+    /// `quo<R | ...>`: the quotient ring and the quotient map (`map`: the
+    /// map is wanted too).
+    pub fn quo_constructor(&mut self, base: &Value, right: &[Value], map: bool) -> RResult<Option<Vec<Value>>> {
         if let Some(v) = crate::intrinsics::upoly::quo_constructor(self, base, right)? {
             return Ok(Some(v));
         }
-        if let Some(v) = crate::intrinsics::poly_ideals::quo_constructor(self, base, right)? {
+        if let Some(v) = crate::intrinsics::poly_ideals::quo_constructor(self, base, right, map)? {
             return Ok(Some(v));
         }
         if !matches!(base.as_struct(), Some(StructKind::Integers)) {

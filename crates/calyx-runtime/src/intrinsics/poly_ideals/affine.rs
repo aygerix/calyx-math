@@ -302,7 +302,7 @@ pub fn quotient(it: &mut Interp, p: &Rc<Struct>, gens: Vec<Elem>) -> Value {
 /// ideal generated as by `ideal<P | ...>`, and the quotient map. For an
 /// affine algebra P/J, the quotient of P by J and the relations (ideals of
 /// P/J bring their preimages), with the names of P, as Magma makes it.
-pub fn quo_constructor(it: &mut Interp, base: &Value, right: &[Value]) -> RResult<Option<Vec<Value>>> {
+pub fn quo_constructor(it: &mut Interp, base: &Value, right: &[Value], _map: bool) -> RResult<Option<Vec<Value>>> {
     if let Some((q, None)) = aff_operand(base) {
         let affine = algebra_affine(&q).clone();
         let mut gens = affine.divisor().basis();
