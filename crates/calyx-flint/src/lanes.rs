@@ -404,10 +404,25 @@ impl<T: Lane, const N: usize> FpLanes<T, N> {
         }
     }
 
+    /// u_i + t v_(i-j) + s v_(i-j+1) modulo p for i from j - 1 to top, as
+    /// `shift_axpy` for two terms (j >= 1). The sums stay below 2p^2.
+    #[inline(always)]
+    fn shift_axpy2<A: Acc>(&self, u: &mut [A], t: u32, s: u32, v: &[A], j: usize, top: usize) {
+        let (t, s, lo, hi) = (A::of(t), A::of(s), (j - 1) & !7, (top + 8) & !7);
+        let (v1, v0) = (&v[PAD + lo - j..PAD + hi - j], &v[PAD + lo + 1 - j..PAD + hi + 1 - j]);
+        for ((x, &y), &z) in u[PAD + lo..PAD + hi].iter_mut().zip(v1).zip(v0) {
+            *x = (*x + t * y + s * z).modp(self.b);
+        }
+    }
+
     /// The inverse of a unit, by the extended Euclidean algorithm on a and
-    /// f, one leading term at a time, in 16-bit lanes if p^2 fits.
+    /// f, two leading terms at a time, in the narrowest lanes 2p^2 fits.
     pub fn inv(&self, a: &[T; N]) -> Option<[T; N]> {
-        if self.b.p < 256 { self.inv_with::<u16>(a) } else { self.inv_with::<u32>(a) }
+        match self.b.p {
+            ..=181 => self.inv_with::<u16>(a),
+            ..=46340 => self.inv_with::<u32>(a),
+            _ => self.inv_with::<u64>(a),
+        }
     }
 
     #[inline(always)]
@@ -438,14 +453,28 @@ impl<T: Lane, const N: usize> FpLanes<T, N> {
             if dv < 0 {
                 return None;
             }
-            let j = (du - dv) as usize;
-            let t = p - self.b.half(u[PAD + du as usize].get() * inv[v[PAD + dv as usize].get() as usize].get());
-            self.shift_axpy(u, t, v, j, du as usize);
+            let (j, c) = ((du - dv) as usize, inv[v[PAD + dv as usize].get() as usize].get());
+            let t = p - self.b.half(u[PAD + du as usize].get() * c);
+            if j == 0 {
+                self.shift_axpy(u, t, v, j, du as usize);
+                if ev >= 0 {
+                    self.shift_axpy(gu, t, gv, j, j + ev as usize);
+                    eu = eu.max(ev + j as isize);
+                }
+                du = degree_of(&u[PAD..], du - 1);
+                continue;
+            }
+            // The next term of the quotient too, from the coefficient of
+            // x^(du-1) that the first leaves (v_(dv-1) is a leading zero if
+            // dv = 0).
+            let r = self.b.half(u[PAD + du as usize - 1].get() + t * v[PAD + dv as usize - 1].get());
+            let s = if r == 0 { 0 } else { p - self.b.half(r * c) };
+            self.shift_axpy2(u, t, s, v, j, du as usize);
             if ev >= 0 {
-                self.shift_axpy(gu, t, gv, j, j + ev as usize);
+                self.shift_axpy2(gu, t, s, gv, j, j + ev as usize);
                 eu = eu.max(ev + j as isize);
             }
-            du = degree_of(&u[PAD..], du - 1);
+            du = degree_of(&u[PAD..], du - 2);
         }
         // gu/u, and x^n replaced by its remainder if gu reached degree n.
         let s = A::of(inv[u[PAD].get() as usize].get());
