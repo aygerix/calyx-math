@@ -39,7 +39,7 @@ use crate::value::*;
 mod affine;
 mod elimination;
 
-pub use affine::{Affine, affine_algebra, cardinality as affine_cardinality, coerce_into, fmt_affine, format_affine, quo_constructor};
+pub use affine::{AffIdeal, Affine, aff_ideal_contains, affine_algebra, algebras_equal, cardinality as affine_cardinality, coerce_into, fmt_aff_ideal, fmt_affine, quo_constructor};
 
 /// An ideal of a multivariate polynomial ring.
 pub struct MPolIdeal {
@@ -741,6 +741,9 @@ fn generators(it: &mut Interp, pst: &Rc<Struct>, right: &[Value], ctx: &str) -> 
 /// `ideal<P | ...>` for a multivariate polynomial ring P: the ideal and its
 /// inclusion into P.
 pub fn ideal_constructor(it: &mut Interp, base: &Value, right: &[Value]) -> RResult<Option<Vec<Value>>> {
+    if let Some(v) = affine::ideal_constructor(it, base, right)? {
+        return Ok(Some(v));
+    }
     let Some((pst, _)) = ring_of(base).filter(|(_, r)| matches!(r.kind, RingKind::MPoly { .. })) else { return Ok(None) };
     let pst = pst.clone();
     let gens = generators(it, &pst, right, "ideal< ... >")?;
@@ -863,23 +866,14 @@ fn ideal_subset(pst: &Rc<Struct>, a: &Operand, b: &Operand) -> RResult<bool> {
 /// among the operands, or on the rings themselves as ideals).
 pub fn ideal_binop(it: &mut Interp, op: BinOp, a: &Value, b: &Value) -> RResult<Option<Value>> {
     let is_ideal = |v: &Value| matches!(v.as_struct(), Some(StructKind::MPolIdeal(_)));
-    // An affine algebra is its own unit ideal, which Magma compares only with
-    // ideals of the same algebra: a quotient of the same ring by an equal
-    // ideal.
-    let algebra = |v: &Value| ring_of(v).and_then(|(_, r)| affine::affine_of(r).cloned());
-    match (op, algebra(a), algebra(b)) {
-        (BinOp::Eq | BinOp::Ne | BinOp::Subset | BinOp::Notsubset | BinOp::Cmpeq | BinOp::Cmpne, Some(x), Some(y)) => {
-            let same = affine::algebras_equal(&x, &y).map_err(|e| e.in_context(op.intrinsic_name()))?;
-            if !same && !matches!(op, BinOp::Cmpeq | BinOp::Cmpne) {
-                // Magma's subset reports it as a failed requirement.
-                let e = RuntimeError::runtime("Ideals are not in the same quotient ring");
-                return Err(if matches!(op, BinOp::Eq | BinOp::Ne) { super::bare(e) } else { super::require(e) });
-            }
-            return Ok(Some(Value::Bool(same == matches!(op, BinOp::Eq | BinOp::Subset | BinOp::Cmpeq))));
-        }
-        (BinOp::Eq | BinOp::Ne, Some(_), None) if is_ideal(b) => return Err(it.bad_types(op, a, b)),
-        (BinOp::Eq | BinOp::Ne, None, Some(_)) if is_ideal(a) => return Err(it.bad_types(op, a, b)),
-        _ => {}
+    if let Some(v) = affine::ideal_binop(it, op, a, b)? {
+        return Ok(Some(v));
+    }
+    // Ideals of affine algebras (and the algebras) and ideals of polynomial
+    // rings do not compare.
+    let algebra = |v: &Value| affine::aff_operand(v).is_some();
+    if matches!(op, BinOp::Eq | BinOp::Ne) && (algebra(a) && is_ideal(b) || is_ideal(a) && algebra(b)) {
+        return Err(it.bad_types(op, a, b));
     }
     // P / J: the quotient ring.
     if op == BinOp::Div {
@@ -889,6 +883,11 @@ pub fn ideal_binop(it: &mut Interp, op: BinOp, a: &Value, b: &Value) -> RResult<
         };
     }
     if op == BinOp::Pow {
+        if let Value::Int(k) = b {
+            if let Some(v) = affine::ideal_power(it, a, k)? {
+                return Ok(Some(v));
+            }
+        }
         return match (operand(a), b) {
             (Some(_), Value::Int(k)) => Ok(Some(ideal_pow(it, a, k)?)),
             _ => Ok(None),

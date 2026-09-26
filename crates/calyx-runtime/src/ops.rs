@@ -481,6 +481,8 @@ impl Interp {
                 StructKind::SymGroup(n) => return Ok(Value::Int(Integer::factorial(*n as u64))),
                 StructKind::AbGroup(g) => return Ok(g.order().map_or(Value::Infinity(true), Value::Int)),
                 StructKind::Nearfield(n) => return Ok(Value::Int(n.order())),
+                // An ideal of an affine algebra counts as the algebra, as in Magma.
+                StructKind::AffIdeal(id) => return self.cardinality(&Value::Struct(id.algebra.clone())),
                 StructKind::Ring(r) if matches!(r.kind, crate::rings::RingKind::MPolyRes { .. }) => {
                     let crate::rings::RingKind::MPolyRes { affine, .. } = &r.kind else { unreachable!() };
                     return match crate::intrinsics::poly_ideals::affine_cardinality(affine).map_err(|e| e.in_context("#"))? {

@@ -273,7 +273,9 @@ impl Interp {
                     }
                 }
                 RingKind::Complex(b) => format!("ComplexField({})", calyx_flint::digits_for_bits(*b)),
-                RingKind::MPolyRes { .. } => return crate::intrinsics::poly_ideals::format_affine(self, r, level),
+                // Affine algebras print through `poly_ideals::fmt_affine`, which
+                // has their structure; this is their first line.
+                RingKind::MPolyRes { base, rank, .. } => format!("Affine Algebra of rank {rank} over {}", self.format_flat(&base.clone(), Level::Minimal)?),
             }]);
         }
         let minimal = level == Level::Minimal;
@@ -308,7 +310,7 @@ impl Interp {
                 vec![format!("Univariate Quotient Polynomial Algebra in {} over {b}", r.gen_name(1)), format!("with modulus {m}")]
             }
             RingKind::Complex(b) => vec![format!("Complex field of precision {}", calyx_flint::digits_for_bits(*b))],
-            RingKind::MPolyRes { .. } => crate::intrinsics::poly_ideals::format_affine(self, r, level)?,
+            RingKind::MPolyRes { base, rank, .. } => vec![format!("Affine Algebra of rank {rank} over {}", self.format_flat(&base.clone(), Level::Minimal)?)],
         })
     }
 

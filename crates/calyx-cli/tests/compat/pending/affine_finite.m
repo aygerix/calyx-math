@@ -1,12 +1,10 @@
 // Affine algebras (handbook, Affine Algebras: Creation of Affine Algebras
 // and Finite Dimensional Affine Algebras): inverses, division, dimensions,
-// monomial bases, minimal polynomials. The handbook examples make their
-// algebras with AffineAlgebra; here they are made with quo.
+// monomial bases, minimal polynomials.
 
-// H118E1
+// H118E1 (the part over the rationals)
 Q := RationalField();
-P<x, y> := PolynomialRing(Q, 2);
-A<x, y> := quo<P | x^2 - y^2 + 2, y^3 - 5>;
+A<x, y> := AffineAlgebra<Q, x, y | x^2 - y^2 + 2, y^3 - 5>;
 A;
 x^2;
 x^-1;
@@ -17,8 +15,7 @@ MinimalPolynomial(y);
 
 // H118E3
 Q := RationalField();
-P<x, y> := PolynomialRing(Q, 2);
-A<x, y> := quo<P | x^2 - 2, y^3 - 5>;
+A<x, y> := AffineAlgebra<Q, x, y | x^2 - 2, y^3 - 5>;
 UP<z> := PolynomialRing(Q);
 MinimalPolynomial(x + y);
 

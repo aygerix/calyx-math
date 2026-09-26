@@ -10,20 +10,25 @@
 //! given, whose basis Magma prints as the "quotient relations": as given
 //! until an element needs the Gröbner basis, which then replaces it (so
 //! naming the generators, which makes them, computes it).
+//!
+//! The ideals of an affine algebra Q have Q's type, RngMPolRes, as in Magma,
+//! where Q is its own unit ideal. They keep their generating basis as given
+//! and answer the rest through their preimages in P.
 
-use std::cell::OnceCell;
+use std::cell::{OnceCell, RefCell};
 use std::rc::Rc;
 
 use calyx_flint::Integer;
 use calyx_flint::gr::{Elem, Truth};
 use calyx_flint::mpoly as fm;
 use calyx_groebner::{self as gb, Order, Terms};
+use calyx_syntax::ast::BinOp;
 
 use crate::intrinsics::groebner::{engine, shape, terms};
-use super::{MPolIdeal, coercion_map, fmt_basis, generators, ideals_equal};
+use super::{MPolIdeal, coercion_map, fmt_basis, generators, ideal_parts, ideal_subset, ideals_equal};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
-use crate::intrinsics::{boolv, intv, none, one};
+use crate::intrinsics::{arg_ge, bare, boolv, intv, none, one, require};
 use crate::print::{Level, Printer};
 use crate::rings::{Ring, RingKind, make_elt, ring_of};
 use crate::value::*;
@@ -269,10 +274,12 @@ pub fn affine_of(r: &Ring) -> Option<&Rc<Affine>> {
     }
 }
 
+/// Argument `i`, an affine algebra or an ideal of one (which answers for the
+/// algebra): the algebra and its data.
 fn affine_arg(a: &CallArgs, i: usize) -> (Rc<Struct>, Rc<Affine>) {
-    let Value::Struct(st) = &a.args[i] else { unreachable!("an affine algebra") };
-    let StructKind::Ring(r) = &st.kind else { unreachable!("an affine algebra") };
-    (st.clone(), affine_of(r).expect("an affine algebra").clone())
+    let (q, _) = aff_operand(&a.args[i]).expect("an affine algebra or ideal");
+    let affine = algebra_affine(&q).clone();
+    (q, affine)
 }
 
 fn elt_arg(a: &CallArgs, i: usize) -> Rc<crate::rings::Elt> {
@@ -292,8 +299,24 @@ pub fn quotient(it: &mut Interp, p: &Rc<Struct>, gens: Vec<Elem>) -> Value {
 }
 
 /// `quo<P | ...>` for a multivariate polynomial ring P: the quotient by the
-/// ideal generated as by `ideal<P | ...>`, and the quotient map.
+/// ideal generated as by `ideal<P | ...>`, and the quotient map. For an
+/// affine algebra P/J, the quotient of P by J and the relations (ideals of
+/// P/J bring their preimages), with the names of P, as Magma makes it.
 pub fn quo_constructor(it: &mut Interp, base: &Value, right: &[Value]) -> RResult<Option<Vec<Value>>> {
+    if let Some((q, None)) = aff_operand(base) {
+        let affine = algebra_affine(&q).clone();
+        let mut gens = affine.divisor().basis();
+        for item in aff_items(it, &q, right, "quo< ... >")? {
+            match item {
+                Item::Elt(f) => gens.push(f),
+                Item::Ideal(Some(id)) => gens.extend(id.preimage_ideal().basis()),
+                Item::Ideal(None) => gens.push(Elem::one(&affine.poly_ring().ctx)?),
+            }
+        }
+        let x = quotient(it, &affine.preimage, gens);
+        let map = MapObj { kind: MapKind::Map, domain: base.clone(), codomain: x.clone(), imp: MapImpl::Native(Rc::new(QuoMap)) };
+        return Ok(Some(vec![x, Value::Map(Rc::new(map))]));
+    }
     let Some((pst, _)) = ring_of(base).filter(|(_, r)| matches!(r.kind, RingKind::MPoly { .. })) else { return Ok(None) };
     let pst = pst.clone();
     let gens = generators(it, &pst, right, "quo< ... >")?;
@@ -342,12 +365,294 @@ pub fn algebras_equal(a: &Affine, b: &Affine) -> RResult<bool> {
     ideals_equal(&Some(a.divisor().clone()), &Some(b.divisor().clone()))
 }
 
+/// The map from an affine algebra onto a quotient of it.
+struct QuoMap;
+
+impl NativeMap for QuoMap {
+    fn apply(&self, it: &mut Interp, m: &MapObj, x: &Value) -> RResult<Value> {
+        let x = it.coerce(&m.domain, x).map_err(|_| RuntimeError::runtime("Element is not in the domain of the map").in_context("map application"))?;
+        let (Value::Elt(e), Value::Struct(c)) = (&x, &m.codomain) else { unreachable!("an element and an affine algebra") };
+        Ok(make_elt(c, algebra_affine(c).reduce(e.x.clone())?))
+    }
+
+    fn preimage(&self, it: &mut Interp, m: &MapObj, y: &Value) -> RResult<Value> {
+        let y = it.coerce(&m.codomain, y).map_err(|_| RuntimeError::runtime("Element is not in the codomain of the map").in_context("map application"))?;
+        let (Value::Elt(e), Value::Struct(d)) = (&y, &m.domain) else { unreachable!("an element and an affine algebra") };
+        Ok(make_elt(d, algebra_affine(d).reduce(e.x.clone())?))
+    }
+}
+
+// ----- ideals ----------------------------------------------------------------------
+
+/// An ideal of an affine algebra Q = P/J, of type RngMPolRes like Q, which
+/// is its own unit ideal (as in Magma, where the ideal is an algebra too).
+pub struct AffIdeal {
+    /// Q.
+    pub algebra: Rc<Struct>,
+    /// The generating basis: normal forms modulo J, none zero.
+    pub gens: Vec<Elem>,
+    /// A copy of Q naming the variables of the ideal, once they are renamed
+    /// (until then they are those of Q).
+    view: RefCell<Option<Rc<Struct>>>,
+    /// The preimage in P, once needed: the ideal (a structure of kind
+    /// `MPolIdeal`) of the representatives of the generators and the basis
+    /// of J.
+    preimage: OnceCell<Rc<Struct>>,
+}
+
+impl AffIdeal {
+    fn affine(&self) -> &Rc<Affine> {
+        algebra_affine(&self.algebra)
+    }
+
+    /// The algebra that names the variables of the ideal in printing.
+    fn view(&self) -> Rc<Struct> {
+        self.view.borrow().clone().unwrap_or_else(|| self.algebra.clone())
+    }
+
+    /// The preimage of the ideal in P.
+    pub fn preimage(&self) -> &Rc<Struct> {
+        self.preimage.get_or_init(|| {
+            let affine = self.affine();
+            let gens = self.gens.iter().cloned().chain(affine.divisor().basis()).collect();
+            Struct::new(StructKind::MPolIdeal(Rc::new(MPolIdeal::new(affine.preimage.clone(), gens, false))))
+        })
+    }
+
+    fn preimage_ideal(&self) -> Rc<MPolIdeal> {
+        match &self.preimage().kind {
+            StructKind::MPolIdeal(id) => id.clone(),
+            _ => unreachable!("an ideal"),
+        }
+    }
+
+    /// The basis the ideal brings to an ideal it generates: the images of
+    /// the Gröbner basis of its preimage once that is known, else the
+    /// generating basis.
+    fn basis(&self) -> RResult<Vec<Elem>> {
+        match self.preimage.get() {
+            Some(_) if self.preimage_ideal().has_groebner() => reduced(self.affine(), self.preimage_ideal().basis()),
+            _ => Ok(self.gens.clone()),
+        }
+    }
+
+    /// Whether both are ideals of one algebra with one generating basis.
+    pub fn same_as(&self, other: &AffIdeal) -> bool {
+        Rc::ptr_eq(&self.algebra, &other.algebra) && self.gens.len() == other.gens.len() && self.gens.iter().zip(&other.gens).all(|(f, g)| f.equal(g) == Truth::True)
+    }
+}
+
+/// The affine algebra of a structure that is one.
+fn algebra_affine(st: &Struct) -> &Rc<Affine> {
+    match &st.kind {
+        StructKind::Ring(r) => affine_of(r).expect("an affine algebra"),
+        _ => unreachable!("an affine algebra"),
+    }
+}
+
+/// An affine algebra, or an ideal of one: the algebra and the ideal (`None`
+/// for the algebra, its own unit ideal).
+pub fn aff_operand(v: &Value) -> Option<(Rc<Struct>, Option<Rc<AffIdeal>>)> {
+    match v.as_struct()? {
+        StructKind::AffIdeal(id) => Some((id.algebra.clone(), Some(id.clone()))),
+        StructKind::Ring(r) if matches!(r.kind, RingKind::MPolyRes { .. }) => {
+            let Value::Struct(st) = v else { unreachable!() };
+            Some((st.clone(), None))
+        }
+        _ => None,
+    }
+}
+
+/// Whether two affine algebras are one quotient ring, whose ideals compare.
+fn same_algebra(a: &Rc<Struct>, b: &Rc<Struct>) -> RResult<bool> {
+    Ok(Rc::ptr_eq(a, b) || algebras_equal(algebra_affine(a), algebra_affine(b))?)
+}
+
+/// The normal forms of the polynomials `fs` modulo J, but zeros.
+fn reduced(affine: &Affine, fs: Vec<Elem>) -> RResult<Vec<Elem>> {
+    let mut out = Vec::with_capacity(fs.len());
+    for f in fs {
+        let g = affine.reduce(f)?;
+        if g.mpoly_len() > 0 {
+            out.push(g);
+        }
+    }
+    Ok(out)
+}
+
+/// The generating basis of an ideal, [1] for the algebra.
+fn generating(affine: &Affine, x: &Option<Rc<AffIdeal>>) -> RResult<Vec<Elem>> {
+    match x {
+        Some(id) => Ok(id.gens.clone()),
+        None => reduced(affine, vec![Elem::one(&affine.poly_ring().ctx)?]),
+    }
+}
+
+/// The preimage of an ideal in P (`None`, P itself, for the algebra).
+fn preimage_of(x: &Option<Rc<AffIdeal>>) -> Option<Rc<MPolIdeal>> {
+    x.as_ref().map(|id| id.preimage_ideal())
+}
+
+/// The ideal of the affine algebra `q` with the generating basis `gens`
+/// (normal forms), zeros left out.
+fn aff_ideal_value(q: &Rc<Struct>, gens: Vec<Elem>) -> Value {
+    let gens = gens.into_iter().filter(|g| g.mpoly_len() > 0).collect();
+    Value::structure(StructKind::AffIdeal(Rc::new(AffIdeal { algebra: q.clone(), gens, view: RefCell::new(None), preimage: OnceCell::new() })))
+}
+
+/// What the right-hand side of `ideal<Q | ...>` or `quo<Q | ...>` lists.
+enum Item {
+    /// An element of Q (a normal form).
+    Elt(Elem),
+    /// An ideal of Q (`None` for Q itself).
+    Ideal(Option<Rc<AffIdeal>>),
+}
+
+/// The elements and ideals given for an ideal or quotient of the affine
+/// algebra `q`, alone or in sets and sequences: elements of `q`, what
+/// coerces into it (polynomials of P by force), and ideals of `q`.
+fn aff_items(it: &mut Interp, q: &Rc<Struct>, right: &[Value], ctx: &str) -> RResult<Vec<Item>> {
+    let invalid = |i: usize| RuntimeError::runtime(format!("Rhs argument {} is invalid for this constructor", i + 1)).in_context(ctx);
+    let mut out = Vec::new();
+    for (i, v) in right.iter().enumerate() {
+        let items: Vec<Value> = match v {
+            Value::Seq(s) => s.elems.clone(),
+            Value::Set(s) => s.iter().collect(),
+            _ => vec![v.clone()],
+        };
+        for x in &items {
+            if let Some((r, id)) = aff_operand(x) {
+                if !same_algebra(&r, q)? {
+                    return Err(invalid(i));
+                }
+                out.push(Item::Ideal(id));
+                continue;
+            }
+            let forced = matches!(x, Value::Elt(e) if matches!(e.ring().kind, RingKind::MPoly { .. } | RingKind::MPolyRes { .. }));
+            out.push(Item::Elt(it.to_ring_elem(q, x, forced)?.ok_or_else(|| invalid(i))?));
+        }
+    }
+    Ok(out)
+}
+
+/// `ideal<Q | ...>` for an affine algebra Q: the ideal with the generating
+/// basis given (ideals bringing their bases, Q the unit), but zeros, and
+/// its inclusion into Q.
+pub fn ideal_constructor(it: &mut Interp, base: &Value, right: &[Value]) -> RResult<Option<Vec<Value>>> {
+    let Some((q, None)) = aff_operand(base) else { return Ok(None) };
+    let affine = algebra_affine(&q).clone();
+    let mut gens = Vec::new();
+    for item in aff_items(it, &q, right, "ideal< ... >")? {
+        match item {
+            Item::Elt(f) => gens.push(f),
+            Item::Ideal(Some(id)) => gens.extend(id.basis()?),
+            Item::Ideal(None) => gens.extend(generating(&affine, &None)?),
+        }
+    }
+    let ideal = aff_ideal_value(&q, gens);
+    Ok(Some(vec![ideal.clone(), coercion_map(ideal, base.clone())]))
+}
+
+/// Operators on the ideals of an affine algebra (the algebra itself among
+/// them), as Magma computes them: comparisons through the preimages in P;
+/// sums joining the generating bases (Magma lists them in the order of its
+/// set of them); products of the representatives in P, as for ideals of
+/// P, reduced; intersections of the preimages, reduced.
+pub fn ideal_binop(it: &mut Interp, op: BinOp, a: &Value, b: &Value) -> RResult<Option<Value>> {
+    use BinOp::*;
+    let (Some((qa, x)), Some((qb, y))) = (aff_operand(a), aff_operand(b)) else { return Ok(None) };
+    if !matches!(op, Eq | Ne | Cmpeq | Cmpne | Subset | Notsubset | Add | Mul | Meet) {
+        return Ok(None);
+    }
+    let ctx = |e: RuntimeError| e.in_context(op.intrinsic_name());
+    if !same_algebra(&qa, &qb).map_err(ctx)? {
+        if matches!(op, Cmpeq | Cmpne) {
+            return Ok(Some(Value::Bool(op == Cmpne)));
+        }
+        // Magma's eq reports it bare, other operators as a failed requirement.
+        let e = RuntimeError::runtime("Ideals are not in the same quotient ring");
+        return Err(if matches!(op, Eq | Ne) { bare(e) } else { require(e) });
+    }
+    let affine = algebra_affine(&qa).clone();
+    Ok(Some(match op {
+        Eq | Ne | Cmpeq | Cmpne => Value::Bool(ideals_equal(&preimage_of(&x), &preimage_of(&y)).map_err(ctx)? == matches!(op, Eq | Cmpeq)),
+        Subset | Notsubset => Value::Bool(ideal_subset(&affine.preimage, &preimage_of(&x), &preimage_of(&y)).map_err(ctx)? == (op == Subset)),
+        Add => {
+            let mut gens: Vec<Elem> = Vec::new();
+            for g in generating(&affine, &x)?.into_iter().chain(generating(&affine, &y)?) {
+                if !gens.iter().any(|f| f.equal(&g) == Truth::True) {
+                    gens.push(g);
+                }
+            }
+            aff_ideal_value(&qa, gens)
+        }
+        Mul => {
+            let ps = super::products(it, &affine.preimage, &generating(&affine, &x)?, &generating(&affine, &y)?)?;
+            aff_ideal_value(&qa, reduced(&affine, ps)?)
+        }
+        _ => match (&x, &y) {
+            (_, None) => a.clone(),
+            (None, _) => b.clone(),
+            (Some(i), Some(j)) => {
+                let m = super::meet(&Value::Struct(i.preimage().clone()), &Value::Struct(j.preimage().clone())).map_err(ctx)?;
+                let (_, basis) = ideal_parts(&m).expect("an ideal");
+                aff_ideal_value(&qa, reduced(&affine, basis)?)
+            }
+        },
+    }))
+}
+
+/// `I^k` for an ideal I of an affine algebra (or the algebra): the algebra
+/// for k = 0, I for k = 1, else the power of the representatives of the
+/// generators in P, as for ideals of P, reduced.
+pub fn ideal_power(it: &mut Interp, a: &Value, k: &Integer) -> RResult<Option<Value>> {
+    let Some((q, x)) = aff_operand(a) else { return Ok(None) };
+    if k.sign() < 0 {
+        return Err(arg_ge(2, k, 0).in_context("^"));
+    }
+    match k.to_u64() {
+        Some(0) => return Ok(Some(Value::Struct(q))),
+        Some(1) => return Ok(Some(a.clone())),
+        _ => {}
+    }
+    let affine = algebra_affine(&q).clone();
+    let p = super::ideal_pow(it, &super::ideal_value(&affine.preimage, generating(&affine, &x)?, false), k)?;
+    let (_, basis) = ideal_parts(&p).expect("an ideal");
+    Ok(Some(aff_ideal_value(&q, reduced(&affine, basis)?)))
+}
+
+/// `x in I` for an ideal I of an affine algebra: for elements of the
+/// algebra, and constants such as rationals. Magma takes integers only when
+/// I is the whole algebra.
+pub fn aff_ideal_contains(it: &mut Interp, id: &AffIdeal, x: &Value) -> RResult<bool> {
+    let fail = |msg: &str| Err(RuntimeError::runtime(msg).in_context("in"));
+    let StructKind::Ring(q) = &id.algebra.kind else { unreachable!("an affine algebra") };
+    let f = match x {
+        Value::Elt(e) if e.ring().id == q.id => e.x.clone(),
+        Value::Elt(e) if matches!(e.ring().kind, RingKind::MPolyRes { .. }) => return fail("Arguments have no covering structure"),
+        Value::Elt(e) if matches!(e.ring().kind, RingKind::MPoly { .. }) => return fail("Bad argument types"),
+        Value::Int(_) => {
+            let unit = Elem::one(&id.affine().poly_ring().ctx)?;
+            return match id.preimage_ideal().contains_all(&[unit]).map_err(|e| e.in_context("in"))? {
+                true => Ok(true),
+                false => fail("Bad argument types"),
+            };
+        }
+        _ => match it.to_ring_elem(&id.algebra, x, false)? {
+            Some(f) => f,
+            None => return fail("Bad argument types"),
+        },
+    };
+    id.preimage_ideal().contains_all(&[f]).map_err(|e| e.in_context("in"))
+}
+
 // ----- coercion --------------------------------------------------------------------
 
 /// `x` as an element of the affine algebra `st`: elements of the coefficient
 /// ring (and those coercing into it) as constants, and by force elements of
-/// P (and what else `P ! x` accepts but polynomials of other rings and
-/// elements of other quotients), reduced.
+/// P and of quotients of P by the same ideal (and what else `P ! x` accepts
+/// but polynomials of other rings and elements of other quotients),
+/// reduced.
 pub fn coerce_into(it: &mut Interp, st: &Rc<Struct>, x: &Value, forced: bool) -> RResult<Option<Elem>> {
     let StructKind::Ring(r) = &st.kind else { return Ok(None) };
     let (Some(affine), Some(base)) = (affine_of(r).cloned(), r.base().cloned()) else { return Ok(None) };
@@ -362,8 +667,9 @@ pub fn coerce_into(it: &mut Interp, st: &Rc<Struct>, x: &Value, forced: bool) ->
         }
     } else {
         if let Value::Elt(e) = x {
-            let other = match e.ring().kind {
-                RingKind::MPolyRes { .. } => true,
+            let other = match &e.ring().kind {
+                // Only a quotient of P by the same ideal passes its elements.
+                RingKind::MPolyRes { affine: a, .. } => !algebras_equal(a, &affine)?,
                 RingKind::MPoly { .. } => e.ring().id != affine.poly_ring().id,
                 _ => false,
             };
@@ -413,31 +719,18 @@ pub fn fmt_affine(it: &mut Interp, p: &mut Printer, s: &Rc<Struct>, indent: usiz
     fmt_basis(it, p, s, &affine.divisor().basis(), indent)
 }
 
-/// An affine algebra as lines of text, for `format_ring` (its relations
-/// flat, one per line).
-pub fn format_affine(it: &mut Interp, r: &Ring, level: Level) -> RResult<Vec<String>> {
-    let RingKind::MPolyRes { base, rank, affine } = &r.kind else { unreachable!("an affine algebra") };
-    let (base, rank, affine) = (base.clone(), *rank, affine.clone());
-    let b = it.format_flat(&base, Level::Minimal)?;
-    let mut lines = vec![format!("Affine Algebra of rank {rank} over {b}")];
-    if level == Level::Minimal {
-        return Ok(lines);
+/// Print an ideal of an affine algebra: `Ideal of` and the algebra (only
+/// its first line at the minimal level), then the generating basis.
+pub fn fmt_aff_ideal(it: &mut Interp, p: &mut Printer, id: &AffIdeal, indent: usize) -> RResult<()> {
+    let view = id.view();
+    p.write("Ideal of ");
+    fmt_affine(it, p, &view, indent)?;
+    if p.level == Level::Minimal {
+        return Ok(());
     }
-    lines.push(order_line(&affine));
-    let vars: Vec<String> = (1..=rank).map(|i| r.gen_name(i)).collect();
-    lines.push(format!("Variables: {}", vars.join(", ")));
-    if let RingKind::MPoly { grading: Some(w), .. } = &affine.poly_ring().kind {
-        lines.push(format!("Variable weights: {}", w.iter().map(|k| k.to_string()).collect::<Vec<_>>().join(" ")));
-    }
-    lines.push("Quotient relations:".into());
-    lines.push("[".into());
-    let basis = affine.divisor().basis();
-    for (i, g) in basis.iter().enumerate() {
-        let text = it.format_flat(&make_elt(&affine.preimage, g.clone()), Level::Default)?;
-        lines.push(format!("    {text}{}", if i + 1 < basis.len() { "," } else { "" }));
-    }
-    lines.push("]".into());
-    Ok(lines)
+    p.newline(indent);
+    p.write("Generating basis:");
+    fmt_basis(it, p, &view, &id.gens, indent)
 }
 
 // ----- finite dimension ------------------------------------------------------------
@@ -519,9 +812,18 @@ fn generator(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(make_elt(&st, affine.reduce(x)?))
 }
 
-/// `AssignNames(~Q, N)`: the names given, and `$.i` for the others.
-fn assign_names(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let Value::Struct(st) = &a.args[0] else { unreachable!("an affine algebra") };
+/// `AssignNames(~Q, N)`: the names given, and `$.i` for the others. An
+/// ideal of an algebra has names of its own, as in Magma.
+fn assign_names(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let st = match a.args[0].as_struct() {
+        Some(StructKind::AffIdeal(id)) => {
+            let affine = id.affine().clone();
+            let Value::Struct(view) = it.mpoly_res(&affine.preimage.clone(), affine) else { unreachable!("an affine algebra") };
+            *id.view.borrow_mut() = Some(view.clone());
+            view
+        }
+        _ => affine_arg(a, 0).0,
+    };
     let StructKind::Ring(r) = &st.kind else { unreachable!("an affine algebra") };
     let names = a.seq(1)?;
     let n = r.ngens();
@@ -547,9 +849,58 @@ fn ngens(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     intv(Integer::from_u64(shape(affine.poly_ring()).1 as u64))
 }
 
-fn preimage_ring(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+/// `Generators(Q)`: the set of the variables of Q, also for an ideal of Q
+/// (as in Magma, which gives no generators of an ideal of an algebra).
+fn algebra_generators(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let (st, affine) = affine_arg(a, 0);
+    let ctx = &affine.poly_ring().ctx;
+    let gens = (0..shape(affine.poly_ring()).1).map(|i| Ok(make_elt(&st, affine.reduce(ctx.mpoly_gen(i)?)?))).collect::<RResult<_>>()?;
+    one(Value::Set(Rc::new(SetEnum::new(Some(Value::Struct(st)), gens))))
+}
+
+fn original_ring(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (_, affine) = affine_arg(a, 0);
     one(Value::Struct(affine.preimage.clone()))
+}
+
+fn preimage_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    if let Some(StructKind::AffIdeal(_)) = a.args[0].as_struct() {
+        return Err(RuntimeError::runtime("Preimage is not a full polynomial ring"));
+    }
+    original_ring(it, a)
+}
+
+/// `PreimageIdeal(I)`: the ideal of P mapping onto I (P itself for the
+/// algebra).
+fn preimage_ideal(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    match aff_operand(&a.args[0]).expect("an affine algebra or ideal") {
+        (_, Some(id)) => one(Value::Struct(id.preimage().clone())),
+        (_, None) => original_ring(it, a),
+    }
+}
+
+fn generic(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    one(Value::Struct(affine_arg(a, 0).0))
+}
+
+/// `IsZero(I)`: whether the ideal is zero (the algebra, only when it is the
+/// zero ring).
+fn is_zero_ideal(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    match aff_operand(&a.args[0]).expect("an affine algebra or ideal") {
+        (_, Some(id)) => boolv(id.gens.is_empty()),
+        (q, None) => boolv(algebra_affine(&q).is_zero_ring()?),
+    }
+}
+
+/// `IsProper(I)`: whether the ideal is not the whole algebra.
+fn is_proper(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    match aff_operand(&a.args[0]).expect("an affine algebra or ideal") {
+        (_, Some(id)) => {
+            let unit = Elem::one(&id.affine().poly_ring().ctx)?;
+            boolv(!id.preimage_ideal().contains_all(&[unit])?)
+        }
+        (_, None) => boolv(false),
+    }
 }
 
 fn divisor_ideal(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
@@ -649,11 +1000,14 @@ pub fn register(it: &mut Interp) {
     for name in ["Ngens", "Rank"] {
         it.def(name, "Q::RngMPolRes -> RngIntElt", "The number of variables of Q.", ngens);
     }
-    for name in ["PreimageRing", "OriginalRing"] {
-        it.def(name, "Q::RngMPolRes -> RngMPol", "The polynomial ring P of which Q is the quotient P/J.", preimage_ring);
-    }
-    it.def("DivisorIdeal", "Q::RngMPolRes -> RngMPol", "The ideal J of P with Q = P/J.", divisor_ideal);
-    it.def("PreimageIdeal", "Q::RngMPolRes -> RngMPol", "The preimage in P of Q as an ideal of itself: P.", preimage_ring);
+    it.def("Generators", "Q::RngMPolRes -> SetEnum", "The set of the variables of Q (or of the algebra of the ideal Q).", algebra_generators);
+    it.def("PreimageRing", "Q::RngMPolRes -> RngMPol", "The polynomial ring P of which Q is the quotient P/J.", preimage_ring);
+    it.def("OriginalRing", "Q::RngMPolRes -> RngMPol", "The polynomial ring P of which Q (or the algebra of the ideal Q) is the quotient P/J.", original_ring);
+    it.def("DivisorIdeal", "Q::RngMPolRes -> RngMPol", "The ideal J of P with Q = P/J (for an ideal Q, of its algebra).", divisor_ideal);
+    it.def("PreimageIdeal", "I::RngMPolRes -> RngMPol", "The ideal of P mapping onto the ideal I of P/J (P for P/J itself).", preimage_ideal);
+    it.def("Generic", "I::RngMPolRes -> RngMPolRes", "The affine algebra of the ideal I.", generic);
+    it.def("IsZero", "I::RngMPolRes -> BoolElt", "Whether I is the zero ideal.", is_zero_ideal);
+    it.def("IsProper", "I::RngMPolRes -> BoolElt", "Whether the ideal I is not the whole algebra.", is_proper);
     it.def("IsFinite", "Q::RngMPolRes -> BoolElt, RngIntElt", "Whether Q is finite, and if so its cardinality.", is_finite);
     it.def("HasFiniteDimension", "Q::RngMPolRes -> BoolElt", "Whether Q has finite dimension over its coefficient field.", has_finite_dimension);
     it.def("Dimension", "Q::RngMPolRes -> RngIntElt", "The dimension of Q over its coefficient field.", dimension);
