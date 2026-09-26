@@ -525,7 +525,6 @@ impl Elem {
     binary_ops! {
         add => gr_add,
         sub => gr_sub,
-        mul => gr_mul,
         div => gr_div,
         divexact => gr_divexact,
         euclidean_div => gr_euclidean_div,
@@ -557,6 +556,16 @@ impl Elem {
         is_square => gr_is_square,
     }
 
+    pub fn mul(&self, other: &Elem) -> GrResult<Elem> {
+        if let Some(r) = crate::floatpoly::mul(self, other) {
+            return r;
+        }
+        debug_assert!(Rc::ptr_eq(&self.ctx, &other.ctx));
+        let mut r = Elem::new(&self.ctx);
+        check(unsafe { sys::gr_mul(r.as_mut_ptr(), self.as_ptr(), other.as_ptr(), self.ctx.ptr()) })?;
+        Ok(r)
+    }
+
     pub fn equal(&self, other: &Elem) -> Truth {
         Truth::from_raw(unsafe { sys::gr_equal(self.as_ptr(), other.as_ptr(), self.ctx.ptr()) })
     }
@@ -580,6 +589,9 @@ impl Elem {
     }
 
     pub fn pow(&self, e: &Integer) -> GrResult<Elem> {
+        if let Some(r) = crate::floatpoly::pow(self, e) {
+            return r;
+        }
         let mut r = Elem::new(&self.ctx);
         check(unsafe { sys::gr_pow_fmpz(r.as_mut_ptr(), self.as_ptr(), e.raw_ptr(), self.ctx.ptr()) })?;
         Ok(r)
