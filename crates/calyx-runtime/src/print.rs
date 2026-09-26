@@ -584,10 +584,19 @@ impl Interp {
             Value::Io(io) => p.write(&format!("File \"{}\" (mode \"{}\")", io.name, io.mode)),
             Value::Small(_, x) => p.write(&x.to_string()),
             Value::AbElt(x) => p.write(&x.format()),
-            Value::Nfd(x) => {
-                let v = crate::intrinsics::nearfields::as_field_value(x);
-                self.fmt(p, &v, indent)?;
-            }
+            // Magma prints nearfield elements as text: unlike field elements,
+            // their continuation lines are not indented further, and the
+            // field's generator goes by a name given with < > only, not by
+            // the identifier the field is assigned to.
+            Value::Nfd(x) => match crate::intrinsics::nearfields::as_field_value(x) {
+                Value::Elt(e) => {
+                    let name = e.parent.name.take();
+                    let s = crate::rings::format_ring_elt(self, &e, p.level);
+                    *e.parent.name.borrow_mut() = name;
+                    p.write(&s?);
+                }
+                v => self.fmt(p, &v, indent)?,
+            },
             Value::Elt(e) => {
                 let s = crate::rings::format_ring_elt(self, e, p.level)?;
                 // Continuation lines of a sum are indented further.

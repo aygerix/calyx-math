@@ -507,6 +507,9 @@ impl Interp {
             if matches!(x.kind, StructKind::RecFormat(_)) && matches!(y.kind, StructKind::RecFormat(_)) {
                 return Ok(None);
             }
+            if crate::intrinsics::nearfields::different_kinds(x, y) {
+                return incompatible(&format!("Bad argument types\nArgument types given: {}, {}", self.type_name(a), self.type_name(b)));
+            }
             if let (StructKind::SymGroup(m), StructKind::SymGroup(n)) = (&x.kind, &y.kind) {
                 if m != n {
                     return incompatible("Could not find a covering group");
