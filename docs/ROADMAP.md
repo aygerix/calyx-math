@@ -96,8 +96,8 @@ forced coercion, and caching (one `Integers(n)` per modulus, one default
 | Rational field | In progress ([#38](https://github.com/aygerix/calyx-math/issues/38)). |
 | Finite fields | In progress ([#39](https://github.com/aygerix/calyx-math/issues/39)). |
 | Nearfields | Not yet ([#43](https://github.com/aygerix/calyx-math/issues/43)). |
-| Univariate polynomial rings | In progress ([#40](https://github.com/aygerix/calyx-math/issues/40)). |
-| Multivariate polynomial rings | Not yet ([#41](https://github.com/aygerix/calyx-math/issues/41)); after the univariate chapter. |
+| Univariate polynomial rings | Done, pending validation against 2.29 ([#24](https://github.com/aygerix/calyx-math/issues/24)): creation and print options, structure operations, coefficients and terms, roots (`Roots`, `HasRoot` and `Roots(f : Max := m)` with Magma's choice of roots), derivatives, evaluation and interpolation, division, `Modexp` and `CRT`, gcds, content, resultants and discriminants, integer polynomial norms and `DedekindTest`, polynomials over finite fields (`PrimePolynomials` in Magma's order, `JacobiSymbol`), factorization (irreducible, squarefree, distinct- and equal-degree, Hensel lifting, `IsIrreducible`, `IsPrime`), ideals and quotient rings (`ideal< >`, `quo< >`), the special families (Chebyshev, Legendre, Laguerre, Hermite, Bernoulli, Gegenbauer, Dickson, Swinnerton-Dyer) and Magma-level printing. **Pending:** roots over the reals and complexes, `Decomposition`, `SmallRoots`, the matrix functions, rational functions and the rest of [#57](https://github.com/aygerix/calyx-math/issues/57). |
+| Multivariate polynomial rings | In progress ([#41](https://github.com/aygerix/calyx-math/issues/41)). |
 | Real and complex fields | In progress ([#42](https://github.com/aygerix/calyx-math/issues/42)). |
 
 ## Open work
