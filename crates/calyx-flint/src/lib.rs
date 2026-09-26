@@ -10,6 +10,7 @@ mod complex;
 pub mod gr;
 pub mod upoly;
 mod integer;
+mod modular;
 pub mod mpfr;
 mod nmod;
 mod rational;
@@ -17,6 +18,7 @@ mod real;
 
 pub use complex::{Complex, Elementary, ModifiedPolylog};
 pub use integer::{Factorization, Integer};
+pub use modular::{Modular, ThetaCost};
 pub use nmod::{Nmod, gcd as gcd_u64};
 pub use rational::Rational;
 pub use real::{Real, bits_for_digits, digits_for_bits, parse_decimal};

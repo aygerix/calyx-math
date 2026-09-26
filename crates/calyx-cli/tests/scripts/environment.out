@@ -106,6 +106,14 @@ IsSquare(<FldRatElt> x) -> BoolElt, FldRatElt
 IsUnit(<FldRatElt> x) -> BoolElt
 IsZero(<FldRatElt> x) -> BoolElt
 IsZeroDivisor(<RngElt> x) -> BoolElt
+JacobiTheta(<RngIntElt> q, <FldRatElt> z) -> FldReElt
+JacobiTheta(<FldRatElt> q, <RngIntElt> z) -> FldReElt
+JacobiTheta(<FldRatElt> q, <FldRatElt> z) -> FldReElt
+JacobiTheta(<FldRatElt> q, <FldReElt> z) -> FldReElt
+JacobiTheta(<FldRatElt> q, <FldComElt> z) -> FldComElt
+JacobiTheta(<FldReElt> q, <FldRatElt> z) -> FldReElt
+JacobiTheta(<FldComElt> q, <FldRatElt> z) -> FldComElt
+JacobiThetaNullK(<FldRatElt> q, <RngIntElt> k) -> FldReElt
 LaguerrePolynomial(<RngIntElt> n, <RngElt> m) -> RngUPolElt
 Log(<FldRatElt> x) -> FldReElt
 Log(<RngIntElt> b, <FldRatElt> x) -> FldReElt

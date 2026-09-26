@@ -11,3 +11,6 @@ Precision(ComplexField(64 : Bits)); BitPrecision(ComplexField(64 : Bits));
 Type(R); Type(C); Type(R!1); Type(C!1);
 ExtendedType(R); ExtendedType(C!1);
 print R : Magma; print C : Magma;
+// The generator of a complex field.
+C.1; Ngens(C);
+C.2;
