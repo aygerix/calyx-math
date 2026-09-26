@@ -13,6 +13,8 @@ use crate::error::{RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
 use crate::value::*;
 
+mod siqs;
+
 fn int(v: i64) -> Integer {
     Integer::from_i64(v)
 }
@@ -641,7 +643,17 @@ fn mpqs(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     if n <= Integer::one() {
         return Err(RuntimeError::runtime("Argument 1 must be greater than 1"));
     }
-    Ok(fact_and_rest(&factor(&n), Vec::new()))
+    let (f, r) = split_with(&n, &mut qs_split);
+    Ok(fact_and_rest(&f, r))
+}
+
+/// A proper divisor of the composite m by the quadratic sieve (FLINT's word
+/// methods below 64 bits, where the sieve has no room).
+fn qs_split(m: &Integer) -> Option<Integer> {
+    if m.bits() <= 64 {
+        return factor(m).first().map(|(p, _)| p.clone());
+    }
+    siqs::siqs(m)
 }
 
 // ----- ECM curve orders ---------------------------------------------------------------------------------
