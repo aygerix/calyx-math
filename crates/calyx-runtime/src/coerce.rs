@@ -657,8 +657,10 @@ impl Interp {
         let u = if trusted { universe } else { self.unify_universe(&mut vals, universe)? };
         Ok(match kind {
             AggKind::Seq => Value::seq(u, vals),
+            // The sets grow as they fill: sized for all the values, a set of
+            // few distinct ones would spread over a table far too large.
             AggKind::Set => {
-                let mut set: VSet = VSet::with_capacity_and_hasher(vals.len(), Default::default());
+                let mut set = VSet::default();
                 for v in vals {
                     set.insert(v);
                 }
@@ -666,7 +668,7 @@ impl Interp {
                 Value::Set(Rc::new(SetEnum::new(u, set)))
             }
             AggKind::ISet => {
-                let mut set: VSet = VSet::with_capacity_and_hasher(vals.len(), Default::default());
+                let mut set = VSet::default();
                 for v in vals {
                     set.insert(v);
                 }
