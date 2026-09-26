@@ -168,6 +168,7 @@ impl Interp {
                 StructKind::Ring(_) => self.enumerate_ring(st),
                 StructKind::ResIdeal(..) => self.enumerate_res_ideal(st),
                 StructKind::AbGroup(_) => self.enumerate_abgroup(st),
+                StructKind::Nearfield(_) => self.enumerate_nearfield(st),
                 _ => Err(RuntimeError::runtime(NOT_ITERABLE)),
             },
             _ => Err(RuntimeError::runtime(NOT_ITERABLE)),

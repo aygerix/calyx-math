@@ -133,6 +133,8 @@ impl Interp {
             self.perm_binop(op, &a, &b)?
         } else if matches!(a, Value::AbElt(_)) || matches!(b, Value::AbElt(_)) {
             self.ab_binop(op, &a, &b)?
+        } else if matches!(a, Value::Nfd(_)) || matches!(b, Value::Nfd(_)) {
+            self.nfd_binop(op, &a, &b)?
         } else if matches!((&a, &b), (Value::Struct(_), Value::Struct(_))) {
             self.ideal_binop(op, &a, &b)?
         } else if factseq::is_fact(&a) || factseq::is_fact(&b) {
@@ -414,6 +416,7 @@ impl Interp {
             Value::Elt(e) => self.ring_negate(&e),
             Value::Small(r, x) => Ok(Value::Small(r, r.modulus().neg(x))),
             Value::AbElt(x) => Ok(x.neg()),
+            Value::Nfd(x) => crate::intrinsics::nearfields::negate(&x),
             other => self.unary_intrinsic("-", other),
         }
     }
@@ -455,6 +458,7 @@ impl Interp {
                 StructKind::RecFormat(r) => r.names.len(),
                 StructKind::SymGroup(n) => return Ok(Value::Int(Integer::factorial(*n as u64))),
                 StructKind::AbGroup(g) => return Ok(g.order().map_or(Value::Infinity(true), Value::Int)),
+                StructKind::Nearfield(n) => return Ok(Value::Int(n.order())),
                 _ if crate::rings::props::ring_props(v).is_some() => {
                     return Ok(match crate::rings::props::ring_props(v).unwrap().cardinality {
                         Some(n) => Value::Int(n),
@@ -567,6 +571,12 @@ impl Interp {
                 return incompatible("Arguments are not compatible\nArgument types given: GrpAbElt, GrpAbElt");
             }
             return Ok(Some(x.coords == y.coords));
+        }
+        if let (Value::Nfd(x), Value::Nfd(y)) = (a, b) {
+            if !Rc::ptr_eq(&x.parent, &y.parent) {
+                return incompatible("Arguments are not compatible\nArgument types given: NfdElt, NfdElt");
+            }
+            return Ok(Some(x.x.equal(&y.x) == calyx_flint::gr::Truth::True));
         }
         if let Some(e) = crate::intrinsics::reals::num_eq(a, b) {
             return Ok(Some(e));

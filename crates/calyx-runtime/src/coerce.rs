@@ -45,6 +45,7 @@ impl Interp {
             Value::Small(r, _) => r.parent_value(),
             Value::Perm(p) => Value::Struct(p.group.clone()),
             Value::AbElt(e) => Value::Struct(e.group.clone()),
+            Value::Nfd(e) => Value::Struct(e.parent.clone()),
             Value::Obj(o) => {
                 let sym = Sym::new("Parent");
                 if self.select_signature(sym, std::slice::from_ref(v), &[false], false).is_some_and(|s| !s.generic) {
@@ -65,6 +66,10 @@ impl Interp {
             Value::Struct(st) if matches!(st.kind, StructKind::AbGroup(_)) => {
                 let st = st.clone();
                 self.coerce_into_abgroup(&st, x, true)?
+            }
+            Value::Struct(st) if matches!(st.kind, StructKind::Nearfield(_)) => {
+                let st = st.clone();
+                self.coerce_into_nearfield(&st, x, true)?
             }
             _ => self.try_coerce(s, x)?,
         };
@@ -169,6 +174,7 @@ impl Interp {
                 StructKind::Ring(_) => self.coerce_into_ring(st, x),
                 StructKind::SymGroup(n) => self.coerce_into_sym(*n as usize, x),
                 StructKind::AbGroup(_) => self.coerce_into_abgroup(st, x, false),
+                StructKind::Nearfield(_) => self.coerce_into_nearfield(st, x, false),
                 StructKind::IntIdeal(n) => match x {
                     Value::Int(_) | Value::Rat(_) => {
                         let v = match self.try_coerce(&Value::integers(), x)? {
@@ -835,6 +841,10 @@ impl Interp {
                 let st = st.clone();
                 self.ab_contains(&st, x)
             }
+            Value::Struct(st) if matches!(st.kind, StructKind::Nearfield(_)) => {
+                let st = st.clone();
+                self.nfd_contains(&st, x)
+            }
             // Finite fields contain elements of rings and integers only.
             Value::Struct(st) if crate::rings::finite::field_of(st).is_some() && !matches!(x, Value::Int(_)) => {
                 Err(RuntimeError::runtime("Bad argument types").in_context("in"))
@@ -915,6 +925,7 @@ impl Interp {
                 StructKind::ResIdeal(..) => TypeVal::Cat(t::RNG_INT_RES_ELT),
                 StructKind::UPolIdeal(_) => TypeVal::Cat(t::RNG_UPOL_ELT),
                 StructKind::AbGroup(_) => TypeVal::Cat(t::GRP_AB_ELT),
+                StructKind::Nearfield(_) => TypeVal::Cat(t::NFD_ELT),
                 StructKind::Automorphisms(_) => TypeVal::Cat(t::MAP),
             },
             Value::Seq(s) => match s.universe.clone() {
@@ -1022,6 +1033,7 @@ impl Interp {
                 StructKind::ResIdeal(..) => TypeVal::Cat(t::RNG_INT_RES_ELT),
                 StructKind::UPolIdeal(_) => TypeVal::Cat(t::RNG_UPOL_ELT),
                 StructKind::AbGroup(_) => TypeVal::Cat(t::GRP_AB_ELT),
+                StructKind::Nearfield(_) => TypeVal::Cat(t::NFD_ELT),
                 StructKind::Automorphisms(_) => TypeVal::Cat(t::MAP),
             },
             Value::Seq(s) => s.universe.as_ref().map(|u| self.static_element_type(u)).unwrap_or(TypeVal::Cat(t::ANY)),
