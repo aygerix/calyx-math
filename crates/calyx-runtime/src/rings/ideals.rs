@@ -118,6 +118,9 @@ impl Interp {
         if let Some(v) = crate::intrinsics::upoly::ideal_binop(self, op, a, b)? {
             return Ok(Some(v));
         }
+        if let Some(v) = crate::intrinsics::poly_ideals::ideal_binop(self, op, a, b)? {
+            return Ok(Some(v));
+        }
         let is_ideal = |v: &Value| matches!(v.as_struct(), Some(StructKind::ResIdeal(..)));
         if is_ideal(a) || is_ideal(b) {
             return match (res_ideal_parts(a), res_ideal_parts(b)) {
@@ -203,6 +206,9 @@ impl Interp {
     /// not a ring calyx builds ideals of.
     pub fn ideal_constructor(&mut self, base: &Value, right: &[Value]) -> RResult<Option<Vec<Value>>> {
         if let Some(v) = crate::intrinsics::upoly::ideal_constructor(self, base, right)? {
+            return Ok(Some(v));
+        }
+        if let Some(v) = crate::intrinsics::poly_ideals::ideal_constructor(self, base, right)? {
             return Ok(Some(v));
         }
         if let Some((ring, 1)) = res_ideal_parts(base).map(|(r, d)| (r, d.to_u64().unwrap_or(0))) {

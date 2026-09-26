@@ -20,6 +20,7 @@ pub mod mpoly;
 pub mod nearfields;
 pub mod numtheory;
 pub mod perms;
+pub mod poly_ideals;
 pub mod rationals;
 pub mod ring_elts;
 pub mod reals;
@@ -492,6 +493,7 @@ pub fn register_all(it: &mut Interp) {
     upoly::register(it);
     mpoly::register(it);
     groebner::register(it);
+    poly_ideals::register(it);
     complex::register(it);
     io::register(it);
     env::register(it);

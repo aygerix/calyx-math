@@ -392,6 +392,8 @@ impl Interp {
                     Value::Map(m) if &m.domain == a && &m.codomain == a => Ok(Ok(x.clone())),
                     _ => fail(),
                 },
+                // Deciding membership of an ideal needs a Gröbner basis.
+                StructKind::MPolIdeal(_) => fail(),
             },
             // An aggregate used as a universe: coerce into its universe and
             // check membership.
@@ -845,6 +847,10 @@ impl Interp {
                 let st = st.clone();
                 self.ab_contains(&st, x)
             }
+            Value::Struct(st) if matches!(st.kind, StructKind::MPolIdeal(_)) => {
+                let StructKind::MPolIdeal(id) = &st.kind else { unreachable!() };
+                crate::intrinsics::poly_ideals::ideal_contains(self, id, x)
+            }
             Value::Struct(st) if matches!(st.kind, StructKind::Nearfield(_)) => {
                 let st = st.clone();
                 self.nfd_contains(&st, x)
@@ -928,6 +934,7 @@ impl Interp {
                 StructKind::IntIdeal(_) => TypeVal::Cat(t::RNG_INT_ELT),
                 StructKind::ResIdeal(..) => TypeVal::Cat(t::RNG_INT_RES_ELT),
                 StructKind::UPolIdeal(_) => TypeVal::Cat(t::RNG_UPOL_ELT),
+                StructKind::MPolIdeal(_) => TypeVal::Cat(t::RNG_MPOL_ELT),
                 StructKind::AbGroup(_) => TypeVal::Cat(t::GRP_AB_ELT),
                 StructKind::Nearfield(_) => TypeVal::Cat(t::NFD_ELT),
                 StructKind::Automorphisms(_) => TypeVal::Cat(t::MAP),
@@ -1036,6 +1043,7 @@ impl Interp {
                 StructKind::IntIdeal(_) => TypeVal::Cat(t::RNG_INT_ELT),
                 StructKind::ResIdeal(..) => TypeVal::Cat(t::RNG_INT_RES_ELT),
                 StructKind::UPolIdeal(_) => TypeVal::Cat(t::RNG_UPOL_ELT),
+                StructKind::MPolIdeal(_) => TypeVal::Cat(t::RNG_MPOL_ELT),
                 StructKind::AbGroup(_) => TypeVal::Cat(t::GRP_AB_ELT),
                 StructKind::Nearfield(_) => TypeVal::Cat(t::NFD_ELT),
                 StructKind::Automorphisms(_) => TypeVal::Cat(t::MAP),

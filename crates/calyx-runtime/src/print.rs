@@ -876,6 +876,7 @@ impl Interp {
                 p.write(&text);
                 p.cont = saved;
             }
+            StructKind::MPolIdeal(id) => crate::intrinsics::poly_ideals::fmt_ideal(self, p, id, indent)?,
             StructKind::ExtendedReals => p.write(if p.level == Level::Magma { "ExtendedReals()" } else { "Extended Reals" }),
             StructKind::Automorphisms(x) => {
                 p.write("Set of all automorphisms of ");
