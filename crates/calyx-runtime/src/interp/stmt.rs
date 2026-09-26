@@ -43,6 +43,16 @@ impl Interp {
                             let (x, y) = (self.eval(a, f)?, self.eval(b, f)?);
                             vec![self.binop(*op, x, y).map_err(|err| crate::ops::op_error(*op, err, true).at(e.span))?]
                         }
+                        // So is a failed requirement of `.`, as in `G.2;`.
+                        Ex::Dot(a, b) if *lone => {
+                            let (x, y) = (self.eval(a, f)?, self.eval(b, f)?);
+                            vec![self.call_intrinsic_named(Sym::new("."), vec![x, y]).map_err(|mut err| {
+                                if err.span.is_none() && err.require {
+                                    err.context = Some(String::new());
+                                }
+                                err.at(e.span)
+                            })?]
+                        }
                         Ex::Reduce(op, a) if *lone => {
                             let v = self.eval(a, f)?;
                             let ctx = format!("&{}", op.intrinsic_name());
