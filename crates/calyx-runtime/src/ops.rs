@@ -136,7 +136,7 @@ impl Interp {
             self.perm_binop(op, &a, &b)?
         } else if matches!(a, Value::AbElt(_)) || matches!(b, Value::AbElt(_)) {
             self.ab_binop(op, &a, &b)?
-        } else if matches!((&a, &b), (Value::Struct(_), Value::Struct(_))) {
+        } else if matches!((&a, &b), (Value::Struct(_), Value::Struct(_) | Value::Int(_))) {
             self.ideal_binop(op, &a, &b)?
         } else if factseq::is_fact(&a) || factseq::is_fact(&b) {
             // Factorization sequences compare only with sequences.

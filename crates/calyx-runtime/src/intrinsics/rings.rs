@@ -19,6 +19,8 @@ fn ring_arg(a: &CallArgs, i: usize) -> RResult<(Rc<Struct>, Rc<Ring>)> {
     match &a.args[i] {
         Value::Struct(s) => match &s.kind {
             StructKind::Ring(r) => Ok((s.clone(), r.clone())),
+            // An ideal of a polynomial ring answers for the ring.
+            StructKind::MPolIdeal(id) => Ok((id.ring.clone(), id.poly_ring().clone())),
             _ => Err(RuntimeError::runtime("Bad argument types")),
         },
         _ => Err(RuntimeError::runtime("Bad argument types")),
@@ -174,8 +176,16 @@ fn assign_names(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     none()
 }
 
+/// A ring argument, an ideal of a polynomial ring standing for the ring.
+fn ring_of_arg(v: &Value) -> Value {
+    match v.as_struct() {
+        Some(StructKind::MPolIdeal(id)) => Value::Struct(id.ring.clone()),
+        _ => v.clone(),
+    }
+}
+
 fn props(a: &CallArgs) -> RResult<RingProps> {
-    ring_props(&a.args[0]).ok_or_else(|| RuntimeError::runtime("Bad argument types"))
+    ring_props(&ring_of_arg(&a.args[0])).ok_or_else(|| RuntimeError::runtime("Bad argument types"))
 }
 
 fn characteristic(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
@@ -192,6 +202,10 @@ fn is_finite(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 
 fn is_true(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     boolv(true)
+}
+
+fn is_unitary(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    boolv(!matches!(a.args[0].as_struct(), Some(StructKind::MPolIdeal(_))))
 }
 
 fn is_field(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
@@ -269,7 +283,7 @@ fn prime_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
             _ => return Err(RuntimeError::runtime("Bad argument types")),
         })
     }
-    let r = of(it, &a.args[0])?;
+    let r = of(it, &ring_of_arg(&a.args[0]))?;
     one(r)
 }
 
@@ -394,9 +408,8 @@ pub fn register(it: &mut Interp) {
     // Properties of any ring.
     it.def("Characteristic", "R::Rng -> RngIntElt", "The characteristic of R.", characteristic);
     it.def("IsFinite", "R::Rng -> BoolElt, RngIntElt", "Whether R is finite, and if so its cardinality.", is_finite);
-    for name in ["IsCommutative", "IsUnitary"] {
-        it.def(name, "R::Rng -> BoolElt", "True for the rings of this kind.", is_true);
-    }
+    it.def("IsCommutative", "R::Rng -> BoolElt", "True for the rings of this kind.", is_true);
+    it.def("IsUnitary", "R::Rng -> BoolElt", "Whether R has an identity: true but for ideals of polynomial rings.", is_unitary);
     it.def("IsOrdered", "R::Rng -> BoolElt", "Whether R is ordered.", is_ordered);
     for name in ["IsField", "IsDivisionRing"] {
         it.def(name, "R::Rng -> BoolElt", "Whether R is a field.", is_field);

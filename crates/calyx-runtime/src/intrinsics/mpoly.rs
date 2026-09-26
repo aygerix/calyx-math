@@ -34,11 +34,13 @@ fn mpol(a: &CallArgs, i: usize) -> Rc<Elt> {
     }
 }
 
-/// Argument `i`, a multivariate polynomial ring.
+/// Argument `i`, a multivariate polynomial ring (or an ideal, which
+/// answers for its ring).
 fn ring_arg(a: &CallArgs, i: usize) -> (Rc<Struct>, Rc<Ring>) {
     match &a.args[i] {
         Value::Struct(s) => match &s.kind {
             StructKind::Ring(r) => (s.clone(), r.clone()),
+            StructKind::MPolIdeal(id) => (id.ring.clone(), id.poly_ring().clone()),
             _ => unreachable!("a polynomial ring argument"),
         },
         _ => unreachable!("a polynomial ring argument"),
@@ -269,6 +271,10 @@ fn monomial_order_weight_vectors(it: &mut Interp, a: &mut CallArgs) -> RResult<V
 }
 
 fn identity(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    // Ideals have no identity.
+    if let Some(StructKind::MPolIdeal(_)) = a.args[0].as_struct() {
+        return Err(RuntimeError::runtime("Bad argument types"));
+    }
     let (st, r) = ring_arg(a, 0);
     one(make_elt(&st, Elem::one(&r.ctx)?))
 }
@@ -605,13 +611,17 @@ fn leading_weighted_degree(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> 
     intv(Integer::from_i128(leading(f.ring(), &f.x).map_or(-1, |(_, e)| wdeg(&w, &e))))
 }
 
-/// Whether the terms of `f` have one weighted degree.
+/// Whether the terms of `x`, an element of `r`, have one weighted degree.
+pub(super) fn homogeneous(r: &Ring, x: &Elem) -> bool {
+    let w = weights(r);
+    let mut ds = terms(x).into_iter().map(|(_, e)| wdeg(&w, &e));
+    let d = ds.next();
+    ds.all(|x| Some(x) == d)
+}
+
 fn is_homogeneous(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = mpol(a, 0);
-    let w = weights(f.ring());
-    let mut ds = terms(&f.x).into_iter().map(|(_, e)| wdeg(&w, &e));
-    let d = ds.next();
-    boolv(ds.all(|x| Some(x) == d))
+    boolv(homogeneous(f.ring(), &f.x))
 }
 
 /// The terms of `f` of weighted degree `d`.
@@ -1092,7 +1102,7 @@ fn same_ring(a: &CallArgs) -> RResult<(Rc<Elt>, Rc<Elt>)> {
 
 /// The associate of `f` whose leading coefficient is normalized (monic over
 /// a field, positive over the integers).
-fn normalized(it: &mut Interp, f: &Elt) -> RResult<Elem> {
+pub(super) fn normalized(it: &mut Interp, f: &Elt) -> RResult<Elem> {
     let Some((lc, _)) = leading(f.ring(), &f.x) else { return Ok(f.x.clone()) };
     let u = super::upoly::norm_unit(it, &base_of(f), &lc)?;
     Ok(f.x.mpoly_mul_scalar(&u)?)
@@ -1467,6 +1477,9 @@ fn change_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let q = it.mpoly_ring(&a.args[1], *rank, order.clone(), grading.clone(), false)?;
     if let Some((_, qr)) = ring_of(&q) {
         *qr.names.borrow_mut() = r.names.borrow().clone();
+    }
+    if let Some(StructKind::MPolIdeal(id)) = a.args[0].as_struct() {
+        return one(super::poly_ideals::change_ring(it, id, &q)?);
     }
     one(q)
 }
