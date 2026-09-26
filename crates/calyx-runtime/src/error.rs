@@ -226,7 +226,8 @@ pub fn context_style(ctx: &str) -> (&str, bool, bool) {
         "{* *}" => ("{* ... *}", false, true),
         "sequence construction" => ("sequence construction", false, false),
         "for" => ("for", false, false),
-        "ideal< ... >" | "quo< ... >" | "ext< ... >" | "ExtensionField< ... >" | "sub< ... >" | "elt< ... >" | "hom< ... >" | "iso< ... >" => (ctx, false, true),
+        // Constructors: ideal< ... >, quo< ... >, AffineAlgebra< ... >, ...
+        _ if ctx.ends_with("< ... >") => (ctx, false, true),
         "[]:=" => (":=", false, false),
         _ => (ctx, true, true),
     }

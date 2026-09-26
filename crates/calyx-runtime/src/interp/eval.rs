@@ -82,15 +82,22 @@ impl Interp {
                 self.eval_multi(body, f, nres)
             }
             // I / J for ideals of Z also returns the inclusion of the
-            // quotient in Z; its errors are in '/' when both values are
-            // assigned (2.22).
+            // quotient in Z, and P / J for a polynomial ring the map onto
+            // the quotient; the errors of the former are in '/' when both
+            // values are assigned (2.22).
             Ex::Bin(calyx_syntax::ast::BinOp::Div, a, b) if nres != 1 => {
                 use crate::rings::ideals::{coercion_map, int_ideal_gen};
                 let x = self.eval(a, f)?;
                 let y = self.eval(b, f)?;
                 let ideals = int_ideal_gen(&x).is_some() && int_ideal_gen(&y).is_some();
+                let p = x.clone();
                 let q = self.binop(calyx_syntax::ast::BinOp::Div, x, y).map_err(|err| if ideals && nres > 1 { err.in_context("/") } else { err }.at(e.span))?;
-                Ok(if ideals { vec![q.clone(), coercion_map(q, Value::integers())] } else { vec![q] })
+                let affine = matches!(q.as_struct(), Some(StructKind::Ring(r)) if matches!(r.kind, crate::rings::RingKind::MPolyRes { .. }));
+                Ok(match () {
+                    _ if ideals => vec![q.clone(), coercion_map(q, Value::integers())],
+                    _ if affine => vec![q.clone(), coercion_map(p, q)],
+                    _ => vec![q],
+                })
             }
             _ => Ok(vec![self.eval(e, f)?]),
         }
@@ -153,8 +160,7 @@ impl Interp {
             Ex::Bin(op, a, b) => {
                 let x = self.eval(a, f)?;
                 let y = self.eval(b, f)?;
-                let r = self.binop(*op, x, y);
-                if crate::ops::unnamed_op(*op) { r.map_err(|e| crate::ops::unname_op(*op, e)) } else { r }
+                self.binop(*op, x, y).map_err(|e| crate::ops::op_error(*op, e, false))
             }
             Ex::And(a, b) => {
                 if !self.bool_operand(a, f, "and")? {

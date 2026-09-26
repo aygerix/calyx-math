@@ -39,9 +39,9 @@ impl Interp {
                     let mut vs = match &e.kind {
                         // As a statement of its own, an operation names its
                         // operator in errors, and a reduction does not.
-                        Ex::Bin(op, a, b) if *lone && crate::ops::unnamed_op(*op) => {
+                        Ex::Bin(op, a, b) if *lone && *op != calyx_syntax::ast::BinOp::Div => {
                             let (x, y) = (self.eval(a, f)?, self.eval(b, f)?);
-                            vec![self.binop(*op, x, y).map_err(|err| err.at(e.span))?]
+                            vec![self.binop(*op, x, y).map_err(|err| crate::ops::op_error(*op, err, true).at(e.span))?]
                         }
                         Ex::Reduce(op, a) if *lone => {
                             let v = self.eval(a, f)?;

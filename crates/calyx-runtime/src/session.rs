@@ -373,6 +373,8 @@ impl Interp {
                 let Some(Value::Str(s)) = left.first() else { unreachable!() };
                 Ok(vec![crate::intrinsics::reals::real_literal(s)?])
             }
+            "__affine_ring" => Ok(vec![self.call_intrinsic_named(Sym::new("PolynomialRing"), left)?]),
+            "AffineAlgebra" if left.len() == 1 => Ok(vec![crate::intrinsics::poly_ideals::affine_algebra(self, &left[0], &rhs)?]),
             "__poly_var" => {
                 let base = left.into_iter().next().unwrap_or_default();
                 let p = self.call_intrinsic_named(Sym::new("PolynomialRing"), vec![base])?;

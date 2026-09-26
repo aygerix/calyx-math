@@ -299,6 +299,10 @@ impl Interp {
     }
 
     pub fn unassigned_error(&self, name: Sym) -> RuntimeError {
+        // $ outside a constructor.
+        if &*name.as_rc() == "$" {
+            return RuntimeError::runtime("Bad dollar structure");
+        }
         let declared = self.package_stack.last().map_or(false, |p| p.contains_key(&name)) || self.globals.contains_key(&name);
         if declared {
             RuntimeError::user(format!("Identifier '{name}' has not been assigned"))

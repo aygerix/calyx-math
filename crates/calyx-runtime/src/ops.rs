@@ -105,10 +105,16 @@ pub fn unnamed_op(op: BinOp) -> bool {
     matches!(op, Add | Sub | Mul | IntDiv | Eq | Ne | Lt | Le | Gt | Ge)
 }
 
-/// An error of the operator `op` itself, without its name.
-pub fn unname_op(op: BinOp, mut e: RuntimeError) -> RuntimeError {
-    if e.span.is_none() && e.context.as_deref() == Some(op.intrinsic_name()) {
-        e.context = None;
+/// An error of the operator `op` itself as Magma reports it: + - * div and
+/// the comparisons are named only in a statement of their own (`stmt`),
+/// and failed requirements everywhere but there.
+pub fn op_error(op: BinOp, mut e: RuntimeError, stmt: bool) -> RuntimeError {
+    if e.span.is_none() && !stmt {
+        if e.require {
+            e.context = Some(op.intrinsic_name().into());
+        } else if unnamed_op(op) && e.context.as_deref() == Some(op.intrinsic_name()) {
+            e.context = None;
+        }
     }
     e
 }

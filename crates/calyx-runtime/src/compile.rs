@@ -867,6 +867,40 @@ impl<'a> Compiler<'a> {
                 let p = E { kind: Ex::Let(slot, Box::new(var), Box::new(p?)), span };
                 Ex::Constructor(Sym::new("ExtensionField"), vec![self.expr(&l[0])?], Some(vec![p]))
             }
+            ExprKind::Constructor(n, l, r) if n == "AffineAlgebra" && l.len() > 1 && l[1..].iter().all(|v| matches!(v.kind, ExprKind::Ident(_))) => {
+                // AffineAlgebra< R, x, y | L > is quo< P | L > for a new
+                // polynomial ring P over R, whose generators x and y name
+                // in L only.
+                let ring = self.expr(&l[0])?;
+                let rank = E { kind: Ex::Const(Value::int(l.len() as i64 - 1)), span };
+                let ring = E { kind: Ex::Constructor(Sym::new("__affine_ring"), vec![ring, rank], None), span };
+                let p = self.bind(Sym::new("$"));
+                let mut gens = Vec::new();
+                for v in &l[1..] {
+                    let ExprKind::Ident(x) = &v.kind else { unreachable!() };
+                    gens.push((self.bind(Sym::new(x)), v.span));
+                }
+                let rels = r.as_ref().map(|r| self.expr_list(r)).transpose();
+                self.unbind(gens.len() + 1);
+                let local = |span| E { kind: Ex::Local(p, Sym::new("$")), span };
+                let mut body = E { kind: Ex::Constructor(Sym::new("AffineAlgebra"), vec![local(span)], Some(rels?.unwrap_or_default())), span };
+                for (i, (slot, at)) in gens.into_iter().enumerate().rev() {
+                    let g = E { kind: Ex::Dot(Box::new(local(at)), Box::new(E { kind: Ex::Const(Value::int(i as i64 + 1)), span: at })), span: at };
+                    body = E { kind: Ex::Let(slot, Box::new(g), Box::new(body)), span };
+                }
+                Ex::Let(p, Box::new(ring), Box::new(body))
+            }
+            ExprKind::Constructor(n, l, Some(r)) if !l.is_empty() => {
+                // On the right, $ is the structure on the left.
+                let base = self.expr(&l[0])?;
+                let rest = self.expr_list(&l[1..])?;
+                let slot = self.bind(Sym::new("$"));
+                let r = self.expr_list(r);
+                self.unbind(1);
+                let mut left = vec![E { kind: Ex::Local(slot, Sym::new("$")), span: base.span }];
+                left.extend(rest);
+                Ex::Let(slot, Box::new(base), Box::new(E { kind: Ex::Constructor(Sym::new(n), left, Some(r?)), span }))
+            }
             ExprKind::Constructor(n, l, r) => {
                 let l = self.expr_list(l)?;
                 let r = r.as_ref().map(|r| self.expr_list(r)).transpose()?;

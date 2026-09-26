@@ -338,7 +338,8 @@ impl<'a> Lexer<'a> {
                         Err(_) => Tok::Error("bad $ reference".into()),
                     };
                 } else {
-                    (Tok::Error("unexpected '$'".into()), 1)
+                    // The structure of a constructor, as in quo< P | $.1 >.
+                    (Tok::Ident("$".into()), 1)
                 }
             }
             '`' => match n1 {
