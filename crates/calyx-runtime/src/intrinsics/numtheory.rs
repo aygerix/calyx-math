@@ -764,27 +764,26 @@ pub fn norm_equation(d: &Integer, m: &Integer) -> Option<(Integer, Integer)> {
     if m.is_one() {
         return Some(if d.is_one() { (Integer::zero(), Integer::one()) } else { (Integer::one(), Integer::zero()) });
     }
+    // When gcd(d, m) is a square h^2, h divides x: solve x'^2 + (d/h^2) y^2 = m/h^2.
+    let c = d.gcd(m);
+    if !c.is_one() && c.is_square() {
+        let (x, y) = norm_equation(&d.divexact(&c), &m.divexact(&c))?;
+        return Some((&x * &c.isqrt()?, y));
+    }
     if m.is_square() {
         return Some((m.isqrt()?, Integer::zero()));
     }
-    // With h^2 dividing both d and m, h divides x: solve
-    // x'^2 + (d/h^2) y^2 = m/h^2 for the largest such h.
-    let h: Integer = d.gcd(m).factor()?.factors.iter().map(|(p, e)| p.pow(e / 2)).fold(Integer::one(), |a, b| &a * &b);
-    if !h.is_one() {
-        let hh = &h * &h;
-        let (x, y) = norm_equation(&d.divexact(&hh), &m.divexact(&hh))?;
-        return Some((&x * &h, y));
-    }
-    // Primitive solutions first, then those with a common factor g.
+    // Cornacchia modulo m / g^2 for g^2 | m, from g = 1 up, over the square
+    // roots of -d in increasing order (r and m - r lead to the same solution).
     let f = m.factor()?;
     let mut gs = super::factseq::divisors_of(&f.factors.iter().filter(|(_, e)| *e >= 2).map(|(p, e)| (p.clone(), e / 2)).collect());
     gs.sort();
     for g in gs {
         let mm = m.divexact(&(&g * &g));
-        // Magma's square root of -d first, then the others.
-        let roots = if mm.is_one() { vec![Integer::zero()] } else { sqrts_mod(&-d, &mm, 4096) };
+        let mut roots = sqrts_mod(&-d, &mm, 1 << 20);
+        roots.sort();
         for r0 in roots {
-            if let Some((x, y)) = cornacchia(d, &mm, &r0).filter(|(x, y)| x.gcd(y).is_one()) {
+            if let Some((x, y)) = cornacchia(d, &mm, &r0) {
                 return Some((&x * &g, &y * &g));
             }
         }
@@ -963,6 +962,16 @@ mod tests {
         for (n, k, r) in cases.into_iter().chain([(9876537, 40, 1016796945493)]) {
             let m = Integer::one().mul_2exp(k);
             assert_eq!(modsqrt(&Integer::from_u64(n), &m), Some(Integer::from_u64(r)), "Modsqrt({n}, 2^{k})");
+        }
+    }
+
+    #[test]
+    fn norm_equations_are_magmas() {
+        // Magma's first solutions, where other orders of roots or common factors find another one.
+        let cases = [(2, 57, 5, 4), (7, 224, 14, 2), (18, 486, 18, 3), (20, 180, 0, 3), (4, 4, 0, 1), (1, 25, 5, 0), (1, 50, 7, 1), (4, 520, 22, 3)];
+        for (d, m, x, y) in cases {
+            let want = Some((Integer::from_u64(x), Integer::from_u64(y)));
+            assert_eq!(norm_equation(&Integer::from_u64(d), &Integer::from_u64(m)), want, "NormEquation({d}, {m})");
         }
     }
 }
