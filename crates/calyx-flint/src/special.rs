@@ -1,16 +1,17 @@
 //! Special functions beyond MPFR and MPC (most of which Magma computes with
 //! PARI): Bessel functions of real and complex order, the incomplete gamma
-//! function, the complex gamma function and the confluent hypergeometric
-//! function U, correctly rounded with FLINT's `arb_hypgeom` and
-//! `acb_hypgeom` (see `ball`).
+//! function, Dawson's integral, the exponential integral E1, the
+//! logarithmic integral, the confluent hypergeometric function U, Gauss's
+//! hypergeometric function and the complex AGM, correctly rounded with
+//! FLINT's `arb_hypgeom` and `acb_hypgeom` (see `ball`).
 
-use std::os::raw::c_long;
+use std::os::raw::{c_int, c_long};
 
 use flint3_sys as sys;
 
 use crate::ball::{self, Arb};
 use crate::mpfr as m;
-use crate::{Complex, Real};
+use crate::{Complex, Rational, Real};
 
 /// FLINT's `ARF_PREC_EXACT`: exact arithmetic.
 const EXACT: sys::slong = sys::slong::MAX;
@@ -36,7 +37,35 @@ fn eval_acb<const N: usize>(bits: u64, args: [&Complex; N], f: impl Fn(*mut sys:
     Complex { re, im }
 }
 
+/// The Bernoulli number `B_n`.
+pub fn bernoulli(n: u64) -> Rational {
+    let mut q = Rational::zero();
+    unsafe { sys::bernoulli_fmpq_ui(q.raw_mut_ptr(), n) };
+    q
+}
+
 impl Real {
+    /// The Bernoulli number `B_n` rounded to `bits`.
+    pub fn bernoulli(n: u64, bits: u64) -> Real {
+        ball::eval_real(bits, |out, wp| unsafe { sys::arb_bernoulli_ui(out, n, wp) })
+    }
+
+    /// `ζ(n)` for an integer n ≠ 1, |n| < 2^63, rounded to `bits` (MPFR).
+    pub fn zeta_int(n: i64, bits: u64) -> Real {
+        let s = Real::from_i64(n, 64);
+        let mut r = Real::zero(bits);
+        unsafe { m::mpfr_zeta(r.raw_mut(), s.raw(), m::RNDN) };
+        r
+    }
+
+    /// `log|Γ(x)|` and the sign of `Γ(x)` (MPFR).
+    pub fn lgamma(&self) -> (Real, i32) {
+        let mut r = Real::zero(self.prec());
+        let mut sign: c_int = 0;
+        unsafe { m::mpfr_lgamma(r.raw_mut(), &mut sign, self.raw(), m::RNDN) };
+        (r, sign)
+    }
+
     /// The Bessel function of the first kind J_n(x) of integer order (MPFR).
     pub fn bessel_jn(n: i64, x: &Real) -> Real {
         let mut r = Real::zero(x.prec());
@@ -141,6 +170,33 @@ impl Real {
         })
     }
 
+    /// Dawson's integral `F(x) = e^(-x²) ∫_0^x e^(u²) du`, as
+    /// `(√π/2) e^(-x²) erfi(x)`.
+    pub fn dawson(&self) -> Real {
+        if self.is_inf() {
+            return Real::signed_zero(self.prec(), self.is_sign_negative());
+        }
+        eval_arb(self.prec(), [self], |out, [x], wp| unsafe {
+            let (mut t, mut u) = (Arb::new(), Arb::new());
+            sys::arb_hypgeom_erfi(t.mut_ptr(), x, wp);
+            sys::arb_mul(u.mut_ptr(), x, x, wp);
+            sys::arb_neg(u.mut_ptr(), u.ptr());
+            sys::arb_exp(u.mut_ptr(), u.ptr(), wp);
+            sys::arb_mul(t.mut_ptr(), t.ptr(), u.ptr(), wp);
+            sys::arb_const_sqrt_pi(u.mut_ptr(), wp);
+            sys::arb_mul(t.mut_ptr(), t.ptr(), u.ptr(), wp);
+            sys::arb_mul_2exp_si(out, t.ptr(), -1);
+        })
+    }
+
+    /// The logarithmic integral `li(x) = ∫_0^x du/log u` (principal value).
+    pub fn log_integral(&self) -> Real {
+        if self.is_inf() && !self.is_sign_negative() {
+            return self.clone();
+        }
+        eval_arb(self.prec(), [self], |out, [x], wp| unsafe { sys::arb_hypgeom_li(out, x, 0 as c_int, wp) })
+    }
+
     /// The confluent hypergeometric function U(a, b, x), at the given
     /// precision.
     pub fn hypergeometric_u(a: &Real, b: &Real, x: &Real, bits: u64) -> Real {
@@ -169,10 +225,27 @@ impl Complex {
         self.unary(sys::acb_digamma)
     }
 
+    /// The Riemann zeta function (not at 1).
+    pub fn zeta(&self) -> Complex {
+        self.unary(sys::acb_zeta)
+    }
+
     /// The modified Bessel function of the second kind K_ν(z) of complex
     /// order ν, at the given precision.
     pub fn bessel_k(nu: &Complex, z: &Complex, bits: u64) -> Complex {
         eval_acb(bits, [nu, z], |out, [nu, z], wp| unsafe { sys::acb_hypgeom_bessel_k(out, nu, z, wp) })
+    }
+
+    /// Gauss's hypergeometric function `2F1(a, b; c; z)` (analytically
+    /// continued beyond |z| < 1), at the given precision.
+    pub fn hypergeometric_2f1(a: &Complex, b: &Complex, c: &Complex, z: &Complex, bits: u64) -> Complex {
+        eval_acb(bits, [a, b, c, z], |out, [a, b, c, z], wp| unsafe { sys::acb_hypgeom_2f1(out, a, b, c, z, 0, wp) })
+    }
+
+    /// The arithmetic-geometric mean of two complex numbers (FLINT's
+    /// optimal AGM).
+    pub fn agm(&self, o: &Complex) -> Complex {
+        eval_acb(self.prec(), [self, o], |out, [x, y], wp| unsafe { sys::acb_agm(out, x, y, wp) })
     }
 }
 
@@ -212,6 +285,10 @@ mod tests {
             (Real::incomplete_gamma(&q(100, 1), &q(90, 1), true, BITS), "135105709652976039305"),
             (x.gamma_half(), "136907208957645599622"),
             (y.gamma_half(), "134417986976597497817"),
+            (x.dawson(), "73816531932618372999"),
+            (q(-100, 1).dawson(), "-94452052732407897102"),
+            (w.log_integral(), "123024632107799274662"),
+            (t.log_integral(), "-110037866552788182039"),
             (Real::hypergeometric_u(&x, &w, &t, BITS), "92543722146555011335"),
         ];
         for (i, (v, s)) in cases.iter().enumerate() {
@@ -239,6 +316,8 @@ mod tests {
         let (x, w) = (q(2, 3), q(5, 2));
         let cases = [
             (Complex::bessel_k(&c(q(1, 3), q(1, 2)), &r(w.clone()), BITS), "143539975133749528030", "131290557004311676703"),
+            (Complex::hypergeometric_2f1(&r(x.clone()), &r(w.clone()), &r(q(3, 1)), &c(q(1, 4), q(1, 5)), BITS), "84107421646535898583", "95608380894960949870"),
+            (c(q(1, 1), q(1, 1)).agm(&c(q(2, 1), q(-1, 1))), "120110844724910007676", "80768728560619689650"),
             // The principal branch of log Γ.
             (c(q(-5, 2), q(1, 100)).log_gamma(), "-133927724748359366348", "-115497317699434653640"),
             (c(q(3, 2), q(1000000, 1)).log_gamma(), "-110533928030765684019", "96011714591178577713"),
