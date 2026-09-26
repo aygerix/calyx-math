@@ -438,11 +438,11 @@ impl Interp {
         true
     }
 
-    /// `\nArgument types given: ...` for an intrinsic's error, or nothing
-    /// when there are no arguments.
+    /// `\nArgument types given: ...` for an intrinsic's error (with nothing
+    /// after the colon when there are no arguments).
     fn arg_types_line(&self, args: &[Value], refmask: &[bool]) -> String {
         if args.is_empty() {
-            return String::new();
+            return "\nArgument types given:".to_string();
         }
         let types: Vec<String> = args.iter().zip(refmask).map(|(a, r)| if a.is_undef() { "<unassigned>".to_string() } else if *r { format!("{} ~", self.type_name_ext(a)) } else { self.type_name_ext(a) }).collect();
         format!("\nArgument types given: {}", types.join(", "))

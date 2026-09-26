@@ -429,11 +429,18 @@ impl Interp {
     }
 
     /// The `Err` object bound by `catch e`. A runtime error's object is its
-    /// report line (`Runtime error in 'F': ...`), wrapped as Magma prints it.
+    /// report line (`Runtime error in 'F': ...`), wrapped as Magma prints it,
+    /// with the report's closing blank line if it has one.
     pub fn error_object(&mut self, e: &RuntimeError) -> Value {
         let object = match &e.object {
             Some(o) => o.clone(),
-            None => Value::str(&crate::print::wrap_text_output(&e.headline(), 0, 80)),
+            None => {
+                let mut s = crate::print::wrap_text_output(&e.headline(), 0, 80);
+                if e.trailing_blank() {
+                    s.push('\n');
+                }
+                Value::str(&s)
+            }
         };
         let kind = if e.kind == ErrKind::User { "ErrUser" } else { "Err" };
         let position = e.span.map(|s| Rc::from(self.describe_position(s).as_str()));

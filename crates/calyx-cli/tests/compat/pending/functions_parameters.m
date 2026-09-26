@@ -15,4 +15,11 @@ p(1 : C := 2);
 procedure q(x : D := 1) end procedure;
 q(1 : C := 2);
 Sort([3, 1, 2] : Foo := 1);
+// Intrinsics without arguments.
+Cputime(: Foo := 1);
+Integers(: Foo := 1);
+IsSquare();
+Gcd(: Foo := 1);
+h := func< | 1 >;
+h(: Foo := 1);
 print "done";
