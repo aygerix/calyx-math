@@ -94,6 +94,52 @@ fn coeff_text(it: &mut Interp, base: &Value, c: Elem, monomial: bool, level: Lev
     it.format_flat(&cv, level)
 }
 
+/// A univariate polynomial over `base` as text in the variable `name`.
+pub fn upoly_text(it: &mut Interp, base: &Value, f: &Elem, name: &str, level: Level) -> RResult<String> {
+    let mut terms = Vec::new();
+    for k in (0..f.poly_len()).rev() {
+        let c = f.poly_coeff(k);
+        if c.is_zero() == Truth::True {
+            continue;
+        }
+        terms.push(term(&coeff_text(it, base, c, k > 0, level)?, &power(name, k as u64)));
+    }
+    Ok(join_terms(&terms))
+}
+
+/// A univariate polynomial at the Magma level: its coefficients (constant
+/// term first) as a sequence, in Magma's compact integer form `\[...]` over
+/// the integers, prime fields and residue rings, with coefficients that
+/// are polynomials given by their own coefficients.
+fn upoly_magma(it: &mut Interp, base: &Value, f: &Elem) -> RResult<String> {
+    let base_ring = super::ring_of(base).map(|(_, r)| r);
+    let int_coeffs = |f: &Elem| -> Vec<String> { (0..f.poly_len()).map(|k| f.poly_coeff(k).to_integer().unwrap_or_default().to_string()).collect() };
+    if matches!(base.as_struct(), Some(crate::value::StructKind::Integers)) {
+        return Ok(format!("Polynomial(\\[{}])", int_coeffs(f).join(", ")));
+    }
+    let b = it.format_flat(base, Level::Magma)?;
+    if base_ring.is_some_and(|r| matches!(&r.kind, RingKind::Residue(_)) || r.finite_field().is_some_and(|g| g.degree == 1)) {
+        let cs: Vec<String> = (0..f.poly_len()).map(|k| it.format_structure_elem(base, f.poly_coeff(k))).collect::<RResult<_>>()?;
+        return Ok(format!("Polynomial({b}, \\[{}])", cs.join(", ")));
+    }
+    let mut cs = Vec::with_capacity(f.poly_len());
+    for k in 0..f.poly_len() {
+        let c = f.poly_coeff(k);
+        cs.push(match base_ring.map(|r| &r.kind) {
+            Some(RingKind::UPoly { base: b2, .. }) => {
+                let b2 = b2.clone();
+                let inner: Vec<String> = (0..c.poly_len()).map(|j| it.format_structure_elem(&b2, c.poly_coeff(j))).collect::<RResult<_>>()?;
+                format!("[{}]", inner.join(", "))
+            }
+            _ => {
+                let v = it.elem_to_value(base, c);
+                it.format_flat(&v, Level::Magma)?
+            }
+        });
+    }
+    Ok(if cs.is_empty() { format!("Polynomial([{b} |])") } else { format!("Polynomial([{b} | {}])", cs.join(", ")) })
+}
+
 /// Format an element of a ring.
 pub fn format_ring_elt(it: &mut Interp, e: &Elt, level: Level) -> RResult<String> {
     let ring = e.ring();
@@ -121,16 +167,10 @@ pub fn format_ring_elt(it: &mut Interp, e: &Elt, level: Level) -> RResult<String
         }
         RingKind::UPoly { base, .. } | RingKind::UPolyRes { base, .. } => {
             let base = base.clone();
-            let name = gen_name(e, 1);
-            let mut terms = Vec::new();
-            for k in (0..e.x.poly_len()).rev() {
-                let c = e.x.poly_coeff(k);
-                if c.is_zero() == Truth::True {
-                    continue;
-                }
-                terms.push(term(&coeff_text(it, &base, c, k > 0, level)?, &power(&name, k as u64)));
+            if level == Level::Magma {
+                return upoly_magma(it, &base, &e.x);
             }
-            join_terms(&terms)
+            upoly_text(it, &base, &e.x, &gen_name(e, 1), level)?
         }
         RingKind::MPoly { base, rank, .. } => {
             let base = base.clone();
@@ -237,17 +277,7 @@ impl Interp {
     /// generator.
     fn format_res_modulus(&mut self, r: &Ring, f: &Elem) -> RResult<String> {
         let RingKind::UPolyRes { base, .. } = &r.kind else { unreachable!() };
-        let base = base.clone();
-        let name = r.gen_name(1);
-        let mut terms = Vec::new();
-        for k in (0..f.poly_len()).rev() {
-            let c = f.poly_coeff(k);
-            if c.is_zero() == Truth::True {
-                continue;
-            }
-            terms.push(term(&coeff_text(self, &base, c, k > 0, Level::Default)?, &power(&name, k as u64)));
-        }
-        Ok(join_terms(&terms))
+        upoly_text(self, &base.clone(), f, &r.gen_name(1), Level::Default)
     }
 
     /// Print an element of a ring given as a FLINT element of the structure

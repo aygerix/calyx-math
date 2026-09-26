@@ -398,6 +398,8 @@ impl Interp {
         match target {
             StructKind::Integers | StructKind::Rationals => {
                 let i = match &e.ring().kind {
+                    // Residues lift to Z, but not to Q.
+                    RingKind::Residue(_) | RingKind::Finite(_) if matches!(target, StructKind::Rationals) => return None,
                     RingKind::Residue(_) => e.residue()?,
                     RingKind::Finite(_) => e.residue()?,
                     RingKind::Complex(_) => {

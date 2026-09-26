@@ -137,3 +137,7 @@ Sprint(Q, "Magma");
 Q6<w> := quo<P | x^2 - 2>;
 w^2;
 (w + 1)^-1;
+Sprint(q, "Magma"), Sprint(Q!0, "Magma"), Sprint(a + 2, "Magma"), Sprint(c + 1, "Magma");
+Sprint(A, "Magma");
+// Magma prints the generator of an ideal in the variable x.
+Sprint(ideal<P | x^2 - 1>, "Magma"), Sprint(ideal<P | 0>, "Magma"), Sprint(ideal<T | t^2 + 1>, "Magma");

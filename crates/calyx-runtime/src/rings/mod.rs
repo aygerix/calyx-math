@@ -28,7 +28,7 @@ use crate::types::{TypeId, t};
 use crate::value::{Struct, StructKind, Value};
 
 pub use arith::small_binop;
-pub use print::format_ring_elt;
+pub use print::{format_ring_elt, upoly_text};
 
 /// Largest field whose elements are stored as Zech logarithms (and printed
 /// as powers of the primitive element).
