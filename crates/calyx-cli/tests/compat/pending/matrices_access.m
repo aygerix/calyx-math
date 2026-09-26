@@ -141,3 +141,13 @@ X[1,3] := 1;
 X;
 Submatrix(X, [1,3], [1]);
 Submatrix(X, [1], [0]);
+
+// Parameters: RowSequence, Density and Submatrix with sequences are
+// written in Magma's language and report them without the argument types
+X := Matrix(Rationals(), 2, 2, [1,2,3,4]);
+RowSequence(X : Foo := 1);
+Density(X : Foo := 1);
+Submatrix(X, [1], [1] : Foo := 1);
+Submatrix(X, 1, 1, 1, 1 : Foo := 1);
+NumberOfRows(X : Foo := 1);
+SwapRows(~X, 1, 2 : Foo := 1);

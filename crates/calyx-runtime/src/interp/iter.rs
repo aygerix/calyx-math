@@ -138,6 +138,7 @@ impl Interp {
                     ValueIter::Values(a.map.values().cloned().collect(), 0)
                 }
             }
+            Value::Struct(st) if matches!(st.kind, StructKind::Matrices(_)) => ValueIter::Gen(crate::intrinsics::matrices::elements(self, st)?, 0),
             Value::Struct(st) if matches!(st.kind, StructKind::Ring(_)) => match self.ring_elements(st) {
                 Some(g) => ValueIter::Gen(g, 0),
                 None => ValueIter::Values(self.enumerate_structure(dom)?, 0),

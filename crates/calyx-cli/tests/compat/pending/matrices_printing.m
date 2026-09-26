@@ -65,6 +65,19 @@ Parent(Matrix(RealField(10), 2, 3, [1.5, -2, 3.25, 1/3, 1, 1]));
 Matrix(RealField(10), 2, 2, [1.5, 1/3, -2, 3.25]);
 Matrix(RealField(10), 2, 2, [1.5, 1/3, -2, 1000000]);
 Vector(RealField(10), [1.5, 2, 100]);
+
+// Signed zeros
+Matrix(RealField(10), 1, 2, [1, -(RealField(10)!0)]);
+z := -(RealField(10)!0);
+X := Matrix(RealField(10), 2, 2, [1, 0, z, 2]);
+X;
+X[2, 1];
+Transpose(X);
+-X;
+X[1, 2] := z;
+X;
+Vector(RealField(10), [z, 1]);
+Matrix(ComplexField(10), 1, 2, [1, -(ComplexField(10)!0)]);
 G := GF(2^30);
 Matrix(G, 2, 2, [G.1, G.1^2, 1, 0]);
 Matrix(GF(7^2), 2, 2, [1, 2, 3, 4]);

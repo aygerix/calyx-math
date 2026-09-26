@@ -136,11 +136,9 @@ pub fn set_index(it: &mut Interp, cur: &mut Value, ids: &[Value], x: Value) -> R
         [_, _] if !a.is_vector() => (assign_index(ids, 0, r, "Matrix row")?, assign_index(ids, 1, c, "Matrix column")?),
         _ => return Err(assign_error("Bad argument types")),
     };
-    let ctx = a.m.ctx().clone();
-    let Some(e) = scalar(it, &ring, &ctx, &x)? else {
+    if !set_entry(it, &ring, &mut Rc::make_mut(a).m, i, j, &x)? {
         return Err(assign_error("RHS cannot be coerced into the coefficient ring"));
-    };
-    Rc::make_mut(a).m.set_entry(i, j, &e);
+    }
     Ok(())
 }
 
@@ -541,14 +539,14 @@ pub fn register(it: &mut Interp) {
     for name in ["NumberOfNonZeroEntries", "NNZEntries"] {
         it.def(name, "A::Mtrx -> RngIntElt", "The number of non-zero entries of A.", nnz);
     }
-    it.def("Density", "A::Mtrx -> FldReElt", "The proportion of non-zero entries of A.", density);
+    it.def("Density", "A::Mtrx -> FldReElt", "The proportion of non-zero entries of A.", density).package = true;
     for name in ["BaseRing", "CoefficientRing"] {
         it.def(name, "A::Mtrx -> Rng", "The ring of the entries of A.", base_ring);
     }
     for name in ["ElementToSequence", "Eltseq"] {
         it.def(name, "A::Mtrx -> SeqEnum", "The entries of A in row-major order.", eltseq);
     }
-    it.def("RowSequence", "A::Mtrx -> SeqEnum", "The rows of A as sequences.", row_sequence);
+    it.def("RowSequence", "A::Mtrx -> SeqEnum", "The rows of A as sequences.", row_sequence).package = true;
     it.def("IsZero", "A::Mtrx -> BoolElt", "Whether A is the zero matrix.", is_zero);
 
     let block = "A::Mtrx, i::RngIntElt, j::RngIntElt, p::RngIntElt, q::RngIntElt -> Mtrx";
@@ -558,7 +556,7 @@ pub fn register(it: &mut Interp) {
     for name in ["SubmatrixRange", "ExtractBlockRange"] {
         it.def(name, block, "The block of A from (i, j) to (p, q).", submatrix_range);
     }
-    it.def("Submatrix", "A::Mtrx, I::[RngIntElt], J::[RngIntElt] -> Mtrx", "The submatrix of A with rows I and columns J.", submatrix_seqs);
+    it.def("Submatrix", "A::Mtrx, I::[RngIntElt], J::[RngIntElt] -> Mtrx", "The submatrix of A with rows I and columns J.", submatrix_seqs).package = true;
     it.def("InsertBlock", "~A::Mtrx, B::Mtrx, i::RngIntElt, j::RngIntElt", "Insert B into A at (i, j).", insert_block_proc);
     it.def("InsertBlock", "A::Mtrx, B::Mtrx, i::RngIntElt, j::RngIntElt -> Mtrx", "A with B inserted at (i, j).", insert_block_func);
     it.def("RowSubmatrix", "A::Mtrx, i::RngIntElt, k::RngIntElt -> Mtrx", "The k rows of A from row i.", row_submatrix);

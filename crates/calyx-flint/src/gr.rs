@@ -295,6 +295,10 @@ impl Ctx {
         Truth::from_raw(unsafe { sys::gr_ctx_is_field(self.ptr()) })
     }
 
+    pub fn is_integral_domain(&self) -> Truth {
+        Truth::from_raw(unsafe { sys::gr_ctx_is_integral_domain(self.ptr()) })
+    }
+
     /// The order of a finite field context.
     pub fn fq_order(&self) -> Option<Integer> {
         let mut z = Integer::zero();
