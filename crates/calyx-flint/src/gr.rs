@@ -66,6 +66,22 @@ impl Truth {
     }
 }
 
+/// Set an `arf` to a real rounded to `prec` bits (NaN and infinities map
+/// to FLINT's special values; the sign of zero is lost).
+unsafe fn set_arf_from_real(a: *mut sys::arf_struct, x: &Real, prec: u64) {
+    unsafe {
+        crate::mpfr::arf_set_mpfr(a, x.raw());
+        sys::arf_set_round(a, a, prec as sys::slong, sys::arf_rnd_t_ARF_RND_NEAR);
+    }
+}
+
+/// A real of `prec` bits from an `arf`.
+unsafe fn real_from_arf(a: *const sys::arf_struct, prec: u64) -> Real {
+    let mut r = Real::zero(prec);
+    unsafe { crate::mpfr::arf_get_mpfr(r.raw_mut(), a, crate::mpfr::RNDN) };
+    r
+}
+
 // Constructors that FLINT exports but does not declare in its headers.
 unsafe extern "C" {
     fn gr_ctx_init_fq_zech_modulus_nmod_poly(ctx: *mut sys::gr_ctx_struct, modulus: *const sys::nmod_poly_struct, var: *const c_char) -> c_int;
@@ -423,13 +439,8 @@ impl Elem {
     pub fn from_real(ctx: &Rc<Ctx>, x: &Real) -> GrResult<Elem> {
         let mut e = Elem::new(ctx);
         match ctx.kind {
-            CtxKind::RealFloat(prec) => unsafe {
-                sys::arf_set_round(e.as_mut_ptr().cast(), x.raw_ptr(), prec as sys::slong, sys::arf_rnd_t_ARF_RND_NEAR);
-            },
-            CtxKind::ComplexFloat(prec) => unsafe {
-                // acf = (real arf, imaginary arf); the imaginary part stays zero.
-                sys::arf_set_round(e.as_mut_ptr().cast(), x.raw_ptr(), prec as sys::slong, sys::arf_rnd_t_ARF_RND_NEAR);
-            },
+            // acf = (real arf, imaginary arf); the imaginary part stays zero.
+            CtxKind::RealFloat(prec) | CtxKind::ComplexFloat(prec) => unsafe { set_arf_from_real(e.as_mut_ptr().cast(), x, prec) },
             _ => {
                 let q = x.to_rational().ok_or(GrError::Domain)?;
                 return Elem::from_rational(ctx, &q);
@@ -441,11 +452,7 @@ impl Elem {
     /// The value of an element of a real floating-point context.
     pub fn to_real(&self) -> Option<Real> {
         match self.ctx.kind {
-            CtxKind::RealFloat(prec) => {
-                let mut r = Real::zero(prec);
-                unsafe { sys::arf_set(r.raw_mut_ptr(), self.as_ptr().cast()) };
-                Some(r)
-            }
+            CtxKind::RealFloat(prec) => Some(unsafe { real_from_arf(self.as_ptr().cast(), prec) }),
             _ => None,
         }
     }
@@ -454,14 +461,8 @@ impl Elem {
     pub fn to_complex_parts(&self) -> Option<(Real, Real)> {
         match self.ctx.kind {
             CtxKind::ComplexFloat(prec) => {
-                let mut re = Real::zero(prec);
-                let mut im = Real::zero(prec);
                 let p = self.as_ptr() as *const sys::arf_struct;
-                unsafe {
-                    sys::arf_set(re.raw_mut_ptr(), p);
-                    sys::arf_set(im.raw_mut_ptr(), p.add(1));
-                }
-                Some((re, im))
+                Some(unsafe { (real_from_arf(p, prec), real_from_arf(p.add(1), prec)) })
             }
             _ => None,
         }
@@ -473,8 +474,8 @@ impl Elem {
         let mut e = Elem::new(ctx);
         let p = e.as_mut_ptr() as *mut sys::arf_struct;
         unsafe {
-            sys::arf_set_round(p, re.raw_ptr(), prec as sys::slong, sys::arf_rnd_t_ARF_RND_NEAR);
-            sys::arf_set_round(p.add(1), im.raw_ptr(), prec as sys::slong, sys::arf_rnd_t_ARF_RND_NEAR);
+            set_arf_from_real(p, re, prec);
+            set_arf_from_real(p.add(1), im, prec);
         }
         Ok(e)
     }

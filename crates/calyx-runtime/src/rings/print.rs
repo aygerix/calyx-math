@@ -6,7 +6,7 @@ use calyx_flint::gr::{CtxKind, Elem, MonomialOrder, Truth};
 use super::{Elt, Ring, RingKind};
 use crate::error::RResult;
 use crate::interp::Interp;
-use crate::print::{Level, format_real};
+use crate::print::Level;
 use crate::value::Value;
 
 /// One term `coef*mono` of a sum, with Magma's conventions for unit and
@@ -94,6 +94,19 @@ fn coeff_text(it: &mut Interp, base: &Value, c: Elem, monomial: bool, level: Lev
     it.format_flat(&cv, level)
 }
 
+/// A term `c*mono` of a polynomial over `base`, with the coefficient as
+/// `coeff_text`, except that a complex coefficient with a negative real
+/// part is printed negated: `-(1.0 - 2.0*i)*t`.
+fn coef_term(it: &mut Interp, base: &Value, c: Elem, mono: &str, level: Level) -> RResult<String> {
+    if level != Level::Magma && !mono.is_empty() && matches!(c.ctx().kind(), CtxKind::ComplexFloat(_)) {
+        if let Some((re, im)) = c.to_complex_parts().filter(|(re, im)| !im.is_zero() && re.sign() < 0) {
+            let s = crate::intrinsics::complex::format_complex(it, &calyx_flint::Complex::new(re, im).neg(), level);
+            return Ok(format!("-({s})*{mono}"));
+        }
+    }
+    Ok(term(&coeff_text(it, base, c, !mono.is_empty(), level)?, mono))
+}
+
 /// A univariate polynomial over `base` as text in the variable `name`.
 pub fn upoly_text(it: &mut Interp, base: &Value, f: &Elem, name: &str, level: Level) -> RResult<String> {
     let mut terms = Vec::new();
@@ -102,7 +115,7 @@ pub fn upoly_text(it: &mut Interp, base: &Value, f: &Elem, name: &str, level: Le
         if c.is_zero() == Truth::True {
             continue;
         }
-        terms.push(term(&coeff_text(it, base, c, k > 0, level)?, &power(name, k as u64)));
+        terms.push(coef_term(it, base, c, &power(name, k as u64), level)?);
     }
     Ok(join_terms(&terms))
 }
@@ -179,23 +192,14 @@ pub fn format_ring_elt(it: &mut Interp, e: &Elt, level: Level) -> RResult<String
             for i in 0..e.x.mpoly_len() {
                 let (c, exps) = e.x.mpoly_term(i);
                 let mono: Vec<String> = exps.iter().enumerate().filter(|(_, k)| **k > 0).map(|(j, k)| power(&names[j], *k)).collect();
-                terms.push(term(&coeff_text(it, &base, c, !mono.is_empty(), level)?, &mono.join("*")));
+                terms.push(coef_term(it, &base, c, &mono.join("*"), level)?);
             }
             join_terms(&terms)
         }
-        RingKind::Complex(d) => {
+        // Complex numbers are `Value::Complex`, not ring elements.
+        RingKind::Complex(_) => {
             let (re, im) = e.x.to_complex_parts().unwrap();
-            let name = ring.gen_name(1);
-            let rs = format_real(&re, *d);
-            if im.is_zero() {
-                return Ok(rs);
-            }
-            let is = format_real(&im.abs(), *d);
-            let neg = im.sign() < 0;
-            if re.is_zero() {
-                return Ok(format!("{}{is}*{name}", if neg { "-" } else { "" }));
-            }
-            format!("{rs} {} {is}*{name}", if neg { "-" } else { "+" })
+            crate::intrinsics::complex::format_complex(it, &calyx_flint::Complex::new(re, im), level)
         }
     })
 }
@@ -234,7 +238,7 @@ impl Interp {
                         MonomialOrder::DegRevLex => format!("PolynomialRing({b}, {rank}, \"grevlex\")"),
                     }
                 }
-                RingKind::Complex(d) => format!("ComplexField({d})"),
+                RingKind::Complex(b) => format!("ComplexField({})", calyx_flint::digits_for_bits(*b)),
             }]);
         }
         let minimal = level == Level::Minimal;
@@ -269,7 +273,7 @@ impl Interp {
                 let m = self.format_res_modulus(r, modulus)?;
                 vec![format!("Univariate Quotient Polynomial Algebra in {} over {b}", r.gen_name(1)), format!("with modulus {m}")]
             }
-            RingKind::Complex(d) => vec![format!("Complex field of precision {d}")],
+            RingKind::Complex(b) => vec![format!("Complex field of precision {}", calyx_flint::digits_for_bits(*b))],
         })
     }
 

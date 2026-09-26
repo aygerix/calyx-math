@@ -23,44 +23,6 @@ fn is_num(v: &Value) -> bool {
     matches!(v, Value::Int(_) | Value::Rat(_))
 }
 
-fn is_real_mix(a: &Value, b: &Value) -> bool {
-    (matches!(a, Value::Real(_)) || matches!(b, Value::Real(_))) && matches!(a, Value::Int(_) | Value::Rat(_) | Value::Real(_)) && matches!(b, Value::Int(_) | Value::Rat(_) | Value::Real(_))
-}
-
-/// Both operands as reals of the smaller precision, with that precision.
-fn reals_of(a: &Value, b: &Value) -> (calyx_flint::Real, calyx_flint::Real, u32, Option<u32>) {
-    let digits = |v: &Value| match v {
-        Value::Real(r) => Some(r.digits),
-        _ => None,
-    };
-    let fixed = |v: &Value| match v {
-        Value::Real(r) => r.fixed,
-        _ => None,
-    };
-    let d = match (digits(a), digits(b)) {
-        (Some(x), Some(y)) => x.min(y),
-        (Some(x), None) | (None, Some(x)) => x,
-        _ => crate::intrinsics::reals::DEFAULT_DIGITS,
-    };
-    let bits = calyx_flint::bits_for_digits(d as u64);
-    let conv = |v: &Value| match v {
-        Value::Int(i) => calyx_flint::Real::from_integer(i, bits),
-        Value::Rat(q) => calyx_flint::Real::from_rational(q, bits),
-        Value::Real(r) => r.x.clone(),
-        _ => unreachable!(),
-    };
-    let fx = match (fixed(a), fixed(b)) {
-        (Some(x), Some(y)) => Some(x.min(y)),
-        (Some(x), None) | (None, Some(x)) => Some(x),
-        _ => None,
-    };
-    (conv(a), conv(b), d, fx)
-}
-
-fn real_value(x: calyx_flint::Real, digits: u32, fixed: Option<u32>) -> Value {
-    Value::Real(Rc::new(RealV { x, digits, fixed }))
-}
-
 /// The sign of a number or infinity, if `v` is one.
 fn extended_sign(v: &Value) -> Option<i32> {
     Some(match v {
@@ -260,20 +222,12 @@ impl Interp {
                 return Ok(Some(v));
             }
         }
-        Ok(Some(match op {
-            Add | Sub | Mul | Div if is_real_mix(a, b) => {
-                let (x, y, d, fx) = reals_of(a, b);
-                real_value(
-                    match op {
-                        Add => x.add(&y),
-                        Sub => x.sub(&y),
-                        Mul => x.mul(&y),
-                        _ => x.div(&y).ok_or_else(|| div_by_zero().in_context("/"))?,
-                    },
-                    d,
-                    fx,
-                )
+        if matches!(a, Value::Real(_) | Value::Complex(_)) || matches!(b, Value::Real(_) | Value::Complex(_)) {
+            if let Some(v) = crate::intrinsics::reals::num_binop(op, a, b)? {
+                return Ok(Some(v));
             }
+        }
+        Ok(Some(match op {
             Add | Sub | Mul => match (a, b) {
                 (Int(x), Int(y)) => Int(match op {
                     Add => x + y,
@@ -408,10 +362,6 @@ impl Interp {
             return Ok(None);
         };
         Ok(Some(match a {
-            Value::Real(r) => {
-                let e = e.to_i64().ok_or_else(|| RuntimeError::runtime("Exponent is too large").in_context("^"))?;
-                Value::Real(Rc::new(RealV { x: r.x.pow(e).ok_or_else(|| div_by_zero().in_context("^"))?, digits: r.digits, fixed: r.fixed }))
-            }
             Value::Int(x) => {
                 let too_large = || RuntimeError::runtime("Argument 2 is too large").in_context("^");
                 // 0, 1 and -1 take any power (0 even a huge negative one).
@@ -454,7 +404,8 @@ impl Interp {
             Value::Infinity(pos) => Ok(Value::Infinity(!pos)),
             Value::Int(i) => Ok(Value::Int(-i)),
             Value::Rat(q) => Ok(Value::rat(-&*q)),
-            Value::Real(r) => Ok(Value::Real(Rc::new(RealV { x: r.x.neg(), digits: r.digits, fixed: r.fixed }))),
+            Value::Real(r) => Ok(Value::Real(Rc::new(RealV { x: r.x.neg(), fixed: r.fixed }))),
+            Value::Complex(c) => Ok(crate::intrinsics::complex::negate(&c)),
             Value::Elt(e) => self.ring_negate(&e),
             Value::Small(r, x) => Ok(Value::Small(r, r.modulus().neg(x))),
             Value::AbElt(x) => Ok(x.neg()),
@@ -606,12 +557,11 @@ impl Interp {
             }
             return Ok(Some(x.coords == y.coords));
         }
+        if let Some(e) = crate::intrinsics::reals::num_eq(a, b) {
+            return Ok(Some(e));
+        }
         Ok(Some(match (a, b) {
             (Int(x), Int(y)) => x == y,
-            _ if is_real_mix(a, b) => {
-                let (x, y, _, _) = reals_of(a, b);
-                x == y
-            }
             (Bool(x), Bool(y)) => x == y,
             (Str(x), Str(y)) => x == y,
             _ if is_num(a) && is_num(b) => rat_of(a) == rat_of(b),
@@ -719,13 +669,12 @@ impl Interp {
 
     pub fn compare_ord(&mut self, a: &Value, b: &Value) -> RResult<Option<Ordering>> {
         use Value::*;
+        if let Some(o) = crate::intrinsics::reals::num_cmp(a, b) {
+            return Ok(Some(o));
+        }
         Ok(Some(match (a, b) {
             (Int(x), Int(y)) => x.cmp(y),
             _ if is_num(a) && is_num(b) => rat_of(a).unwrap().cmp(&rat_of(b).unwrap()),
-            _ if is_real_mix(a, b) => {
-                let (x, y, _, _) = reals_of(a, b);
-                x.cmp(&y)
-            }
             (Str(x), Str(y)) => x.cmp(y),
             (Bool(x), Bool(y)) => x.cmp(y),
             (Infinity(_), _) | (_, Infinity(_)) => return Ok(natural_cmp(a, b)),

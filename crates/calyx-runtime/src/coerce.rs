@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use calyx_flint::{Rational, Real, bits_for_digits};
+use calyx_flint::Rational;
 use calyx_syntax::ast::AggKind;
 
 use crate::error::{RResult, RuntimeError};
@@ -20,7 +20,8 @@ impl Interp {
             Value::Bool(_) => Value::booleans(),
             Value::Int(_) => Value::integers(),
             Value::Rat(_) => Value::rationals(),
-            Value::Real(r) => Value::reals(r.digits),
+            Value::Real(r) => Value::reals(r.x.prec()),
+            Value::Complex(c) => self.complex_field(c.prec()),
             Value::Str(_) => Value::strings(),
             Value::Seq(s) if s.fact => Value::structure(StructKind::PowerStructure(t::RNG_INT_ELT_FACT)),
             Value::Seq(s) => Value::structure(StructKind::PowerSeq(s.universe.clone())),
@@ -82,8 +83,11 @@ impl Interp {
                     let style = if msg_given { crate::error::ErrStyle::Normal } else { crate::error::ErrStyle::Plain };
                     return Err(crate::error::ErrorInfo { style, ..crate::error::ErrorInfo::runtime(reason) }.into());
                 }
-                let rhs = self.coercion_type_name(x);
-                let text = format!("{reason}\nLHS: {}\nRHS: {rhs}", self.type_name(s));
+                // A reason ending in a newline is reported on its own.
+                let text = match reason.strip_suffix('\n') {
+                    Some(r) => r.to_string(),
+                    None => format!("{reason}\nLHS: {}\nRHS: {}", self.type_name(s), self.coercion_type_name(x)),
+                };
                 Err(crate::error::ErrorInfo { style: crate::error::ErrStyle::Plain, ..crate::error::ErrorInfo::runtime(text) }.into())
             }
         }
@@ -237,15 +241,15 @@ impl Interp {
                     Value::Seq(_) => Ok(Err(Some("Sequence must have length 2 to lift into this field".into()))),
                     _ => fail(),
                 },
-                StructKind::Reals(d) => {
-                    let bits = bits_for_digits(*d as u64);
+                StructKind::Reals(bits) => {
                     let r = match x {
-                        Value::Int(i) => Real::from_integer(i, bits),
-                        Value::Rat(q) => Real::from_rational(q, bits),
-                        Value::Real(r) => r.x.round_to(bits),
-                        _ => return fail(),
+                        Value::Complex(c) if c.im.is_zero() => c.re.round_to(*bits),
+                        _ => match crate::intrinsics::reals::to_real(x, *bits) {
+                            Some(r) => r,
+                            None => return fail(),
+                        },
                     };
-                    Ok(Ok(Value::real(r, *d)))
+                    Ok(Ok(Value::real(r)))
                 }
                 StructKind::Booleans => match x {
                     Value::Bool(_) => Ok(Ok(x.clone())),

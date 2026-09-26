@@ -39,6 +39,8 @@ pub enum Value {
     Int(Integer),
     Rat(Rc<Rational>),
     Real(Rc<RealV>),
+    /// A complex number (an element of a complex field).
+    Complex(Rc<ComplexV>),
     Str(Rc<Text>),
     Seq(Rc<SeqEnum>),
     Set(Rc<SetEnum>),
@@ -130,21 +132,28 @@ impl std::ops::Deref for Text {
     }
 }
 
-/// A real number with the decimal precision of its real field.
+/// A real number. Its precision in bits determines its real field.
 #[derive(Clone)]
 pub struct RealV {
     pub x: Real,
-    /// Decimal digits of the parent real field.
-    pub digits: u32,
     /// Print with this many decimals instead (used for timings).
     pub fixed: Option<u32>,
 }
 
 impl RealV {
-    pub fn new(x: Real, digits: u32) -> RealV {
-        RealV { x, digits, fixed: None }
+    pub fn new(x: Real) -> RealV {
+        RealV { x, fixed: None }
+    }
+
+    /// The decimal precision of its field.
+    pub fn digits(&self) -> u32 {
+        self.x.digits() as u32
     }
 }
+
+/// A complex number: real and imaginary parts of the same precision, which
+/// determines its complex field.
+pub type ComplexV = calyx_flint::Complex;
 
 // ----- aggregates -----------------------------------------------------------
 
@@ -437,8 +446,8 @@ pub struct Struct {
 pub enum StructKind {
     Integers,
     Rationals,
-    /// The real field with the given decimal precision.
-    Reals(u32),
+    /// The real field with the given precision in bits.
+    Reals(u64),
     Booleans,
     Strings,
     PowerSet(Option<Value>),
@@ -501,8 +510,8 @@ thread_local! {
     static BOOLEANS: Rc<Struct> = Struct::new(StructKind::Booleans);
     static STRINGS: Rc<Struct> = Struct::new(StructKind::Strings);
     static EXTENDED_REALS: Rc<Struct> = Struct::new(StructKind::ExtendedReals);
-    /// One real field per precision.
-    static REALS: RefCell<FxHashMap<u32, Rc<Struct>>> = RefCell::default();
+    /// One real field per precision (in bits).
+    static REALS: RefCell<FxHashMap<u64, Rc<Struct>>> = RefCell::default();
 }
 
 pub fn next_object_id() -> u64 {
@@ -556,12 +565,17 @@ impl Value {
         EXTENDED_REALS.with(|s| Value::Struct(s.clone()))
     }
 
-    pub fn reals(digits: u32) -> Value {
-        REALS.with(|m| Value::Struct(m.borrow_mut().entry(digits).or_insert_with(|| Struct::new(StructKind::Reals(digits))).clone()))
+    /// The real field with the given precision in bits.
+    pub fn reals(bits: u64) -> Value {
+        REALS.with(|m| Value::Struct(m.borrow_mut().entry(bits).or_insert_with(|| Struct::new(StructKind::Reals(bits))).clone()))
     }
 
-    pub fn real(x: Real, digits: u32) -> Value {
-        Value::Real(Rc::new(RealV::new(x, digits)))
+    pub fn real(x: Real) -> Value {
+        Value::Real(Rc::new(RealV::new(x)))
+    }
+
+    pub fn complex(re: Real, im: Real) -> Value {
+        Value::Complex(Rc::new(ComplexV::new(re, im)))
     }
 
     pub fn booleans() -> Value {
@@ -650,6 +664,7 @@ impl Value {
             Value::Int(_) => t::RNG_INT_ELT,
             Value::Rat(_) => t::FLD_RAT_ELT,
             Value::Real(_) => t::FLD_RE_ELT,
+            Value::Complex(_) => t::FLD_COM_ELT,
             Value::Str(_) => t::MON_STG_ELT,
             Value::Seq(s) if s.fact => t::RNG_INT_ELT_FACT,
             Value::Seq(_) => t::SEQ_ENUM,
@@ -734,10 +749,11 @@ impl Hash for Value {
             // Integers and integral rationals must hash alike.
             Value::Int(i) => state.write_u64(i.hash_u64()),
             Value::Rat(q) => state.write_u64(q.hash_u64()),
-            Value::Real(r) => match r.x.to_rational() {
-                Some(q) => state.write_u64(q.hash_u64()),
-                None => state.write_u8(3),
-            },
+            Value::Real(r) => state.write_u64(r.x.hash_u64()),
+            Value::Complex(c) => {
+                state.write_u64(c.re.hash_u64());
+                state.write_u64(c.im.hash_u64());
+            }
             Value::Str(s) => s.hash(state),
             Value::Seq(s) => {
                 state.write_u8(10);
@@ -883,6 +899,7 @@ impl PartialEq for Value {
             (Rat(a), Rat(b)) => a == b,
             (Int(a), Rat(b)) | (Rat(b), Int(a)) => b.is_integral() && b.numerator() == *a,
             (Real(a), Real(b)) => a.x == b.x,
+            (Complex(a), Complex(b)) => a.re == b.re && a.im == b.im,
             (Str(a), Str(b)) => a == b,
             (Seq(a), Seq(b)) => Rc::ptr_eq(a, b) || a.elems == b.elems,
             (Set(a), Set(b)) => Rc::ptr_eq(a, b) || (a.len() == b.len() && a.iter().all(|x| b.contains(&x))),

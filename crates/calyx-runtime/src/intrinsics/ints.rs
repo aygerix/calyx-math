@@ -55,7 +55,7 @@ fn abs(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(match &a.args[0] {
         Value::Int(n) => Value::Int(n.abs()),
         Value::Rat(q) => Value::rat(q.abs()),
-        Value::Real(r) => Value::Real(Rc::new(RealV { x: r.x.abs(), digits: r.digits, fixed: r.fixed })),
+        Value::Real(r) => Value::Real(Rc::new(RealV { x: r.x.abs(), fixed: r.fixed })),
         _ => unreachable!(),
     })
 }

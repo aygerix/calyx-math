@@ -24,19 +24,29 @@ fn is_unit(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(match &a.args[0] {
         Value::Int(n) => n.is_one() || (-n).is_one(),
         Value::Rat(q) => q.sign() != 0,
-        Value::Real(r) => r.x.sign() != 0,
+        Value::Real(r) => !r.x.is_zero(),
+        Value::Complex(c) => !c.is_zero(),
         _ => unreachable!(),
     })
 }
 
+/// Whether a real or complex number equals `k`, compared as Magma does
+/// (NaN equals everything).
+fn equals(v: &Value, k: i64) -> bool {
+    let eq = |x: &calyx_flint::Real, k: i64| x.cmp_magma(&calyx_flint::Real::from_i64(k, x.prec())).is_eq();
+    match v {
+        Value::Real(r) => eq(&r.x, k),
+        Value::Complex(c) => eq(&c.re, k) && eq(&c.im, 0),
+        _ => false,
+    }
+}
+
 fn is_one(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let Value::Real(r) = &a.args[0] else { unreachable!() };
-    boolv(r.x.to_rational().is_some_and(|q| q.is_integral() && q.numerator().is_one()))
+    boolv(equals(&a.args[0], 1))
 }
 
 fn is_minus_one(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let Value::Real(r) = &a.args[0] else { unreachable!() };
-    boolv(r.x.to_rational().is_some_and(|q| q.is_integral() && (-&q.numerator()).is_one()))
+    boolv(equals(&a.args[0], -1))
 }
 
 /// `x^2 = x`
@@ -46,7 +56,11 @@ fn is_idempotent(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(match &arg {
         Value::Int(n) => n.is_zero() || n.is_one(),
         Value::Rat(q) => zero_or_one(Some((**q).clone())),
-        Value::Real(r) => zero_or_one(r.x.to_rational()),
+        Value::Real(r) => r.x.mul(&r.x).cmp_magma(&r.x).is_eq(),
+        Value::Complex(c) => {
+            let s = c.mul(c);
+            s.re.cmp_magma(&c.re).is_eq() && s.im.cmp_magma(&c.im).is_eq()
+        }
         Value::Elt(e) => e.x.sqr().is_ok_and(|s| truth(s.equal(&e.x))),
         _ => unreachable!(),
     })
@@ -59,7 +73,8 @@ fn is_nilpotent(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let zero = match &arg {
         Value::Int(n) => n.is_zero(),
         Value::Rat(q) => q.sign() == 0,
-        Value::Real(r) => r.x.sign() == 0,
+        Value::Real(r) => r.x.is_zero(),
+        Value::Complex(c) => c.is_zero(),
         Value::Elt(e) => {
             if truth(e.x.is_zero()) {
                 return yes(1);
@@ -108,7 +123,7 @@ fn is_zero_divisor(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 fn irreducible(e: &Value) -> RResult<bool> {
     Ok(match e {
         Value::Int(n) => n.abs().is_prime(),
-        Value::Rat(_) | Value::Real(_) => false,
+        Value::Rat(_) | Value::Real(_) | Value::Complex(_) => false,
         Value::Elt(e) => elt_irreducible(e)?,
         _ => unreachable!(),
     })
@@ -143,11 +158,13 @@ fn is_prime_elt(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 }
 
 pub fn register(it: &mut Interp) {
-    for t in ["RngIntElt", "FldRatElt", "FldReElt"] {
+    for t in ["RngIntElt", "FldRatElt", "FldReElt", "FldComElt"] {
         it.def("IsUnit", &format!("x::{t} -> BoolElt"), "Whether x is a unit.", is_unit);
     }
-    it.def("IsOne", "x::FldReElt -> BoolElt", "Whether x is one.", is_one);
-    it.def("IsMinusOne", "x::FldReElt -> BoolElt", "Whether x is minus one.", is_minus_one);
+    for t in ["FldReElt", "FldComElt"] {
+        it.def("IsOne", &format!("x::{t} -> BoolElt"), "Whether x is one.", is_one);
+        it.def("IsMinusOne", &format!("x::{t} -> BoolElt"), "Whether x is minus one.", is_minus_one);
+    }
     it.def("IsIdempotent", "x::RngElt -> BoolElt", "Whether x^2 = x.", is_idempotent);
     it.def("IsNilpotent", "x::RngElt -> BoolElt, RngIntElt", "Whether some power of x is zero, and if so the least such power.", is_nilpotent);
     it.def("IsZeroDivisor", "x::RngElt -> BoolElt", "Whether x is a non-zero zero divisor.", is_zero_divisor);
