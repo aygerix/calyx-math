@@ -1003,6 +1003,19 @@ impl Interp {
         // neighbours level by level, so that its first part is the largest
         // power of two below the count.
         if matches!(op, BinOp::Add | BinOp::Mul) {
+            // Sums of integers are exact, so they are added in turn.
+            if let (BinOp::Add, Value::Seq(q)) = (op, s) {
+                if q.elems.iter().all(|v| matches!(v, Value::Int(_))) {
+                    let mut sum = Integer::zero();
+                    for v in q.elems.iter() {
+                        self.check_interrupt()?;
+                        if let Value::Int(x) = v {
+                            sum += x;
+                        }
+                    }
+                    return Ok(Value::Int(sum));
+                }
+            }
             let n = match s {
                 Value::Seq(q) => q.elems.iter().filter(|v| !v.is_undef()).count(),
                 Value::Set(q) => q.len(),
