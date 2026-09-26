@@ -59,7 +59,7 @@ pub(super) fn irreducible_polynomial(it: &mut Interp, a: &mut CallArgs) -> RResu
 
 pub(super) fn random_irreducible_polynomial(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let k = field_arg(a, 0)?;
-    let n = a.small_ge(1, 1).map_err(super::bare)?;
+    let n = a.small_ge(1, 1).map_err(super::require)?;
     let cs = random_irreducible(it, &k, n)?;
     one(poly_value(it, &k, &cs)?)
 }

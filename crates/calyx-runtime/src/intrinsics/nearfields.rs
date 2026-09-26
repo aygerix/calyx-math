@@ -398,20 +398,27 @@ fn same_parent(x: &NfdElt, y: &NfdElt) -> bool {
     Rc::ptr_eq(&x.parent, &y.parent) || nfd(&x.parent).same_as(nfd(&y.parent))
 }
 
-/// Magma's error for elements of nearfields that are not equal: nearfields
-/// of different kinds do not even compare.
-fn not_same(x: &NfdElt, y: &NfdElt) -> RuntimeError {
+/// Magma's error for `op` on elements of nearfields that are not equal:
+/// nearfields of different kinds do not even compare. As Magma reports it,
+/// `/` fails a requirement, and `^` and nearfields of different kinds fail
+/// deeper in the package.
+fn not_same(x: &NfdElt, y: &NfdElt, op: BinOp) -> RuntimeError {
     let (m, n) = (nfd(&x.parent), nfd(&y.parent));
-    if m.type_id() == n.type_id() {
-        return super::bare(RuntimeError::runtime("Elements must belong to the same nearfield"));
+    if m.type_id() != n.type_id() {
+        return super::hidden_inner(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}, {}", m.type_name(), n.type_name())));
     }
-    super::bare(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}, {}", m.type_name(), n.type_name())))
+    let e = RuntimeError::runtime("Elements must belong to the same nearfield");
+    match op {
+        BinOp::Div => super::require(e),
+        BinOp::Pow => super::hidden_inner(e),
+        _ => super::bare(e),
+    }
 }
 
 /// `x eq y` for elements of nearfields.
 pub fn nfd_equal(x: &NfdElt, y: &NfdElt) -> RResult<bool> {
     if !same_parent(x, y) {
-        return Err(not_same(x, y));
+        return Err(not_same(x, y, BinOp::Eq));
     }
     Ok(x.x.equal(&y.x) == Truth::True)
 }
@@ -513,8 +520,17 @@ impl Interp {
                     // x^y begins with y^-1 x.
                     return Err(match op {
                         Pow if is_zero(&y.x) => no_inverse(),
-                        Pow => not_same(y, x),
-                        _ => not_same(x, y),
+                        Pow => {
+                            let mut e = not_same(y, x, op);
+                            if nfd(&x.parent).type_id() != nfd(&y.parent).type_id() {
+                                // Magma's report shows the frame of its `^`, as for an intrinsic.
+                                let arg = |it: &mut Interp, v: &Value| it.format_flat(v, crate::print::Level::Default).unwrap_or_default();
+                                let args = vec![("x".to_string(), arg(self, a)), ("y".to_string(), arg(self, b))];
+                                e.trace.push(crate::error::TraceFrame { name: Sym::from("^"), span: None, args });
+                            }
+                            e
+                        }
+                        _ => not_same(x, y, op),
                     });
                 }
                 let n = nfd(&x.parent).clone();
@@ -565,7 +581,7 @@ impl Interp {
                         Some(e) => Ok(Ok(elt(st, e.x.clone()))),
                         None => Ok(Err(None)),
                     },
-                    Err(_) if is_ff && strict => Err(RuntimeError::runtime(CARRIER).in_context("Element")),
+                    Err(_) if is_ff && strict => Err(super::hidden_inner(RuntimeError::runtime(CARRIER).in_context("Element"))),
                     Err(_) => Ok(Err(None)),
                 }
             }
@@ -622,10 +638,10 @@ fn prime_factors(mut n: u64) -> Vec<u64> {
 /// q - 1 if it divides v. (Magma lets v be negative.)
 fn dickson_pair(q: &Integer, v: i64) -> RResult<bool> {
     if q < &Integer::from_u64(2) {
-        return Err(RuntimeError::runtime(format!("Argument 1 ({q}) should be >= 2")).in_context("IsPrimePower"));
+        return Err(super::hidden(RuntimeError::runtime(format!("Argument 1 ({q}) should be >= 2")).in_context("IsPrimePower")));
     }
     if v == 0 {
-        return Err(RuntimeError::runtime("Argument 1 is not non-zero").in_context("PrimeBasis"));
+        return Err(super::hidden(RuntimeError::runtime("Argument 1 is not non-zero").in_context("PrimeBasis")));
     }
     if prime_power(q).is_none() {
         return Ok(false);
@@ -743,7 +759,7 @@ fn dickson_pairs_in(p: &Integer, hs: std::ops::RangeInclusive<i64>, vs: std::ops
     let mut out = Vec::new();
     for h in hs {
         if h < 0 {
-            return Err(RuntimeError::runtime("Bad argument types\nArgument types given: FldRatElt").in_context("IsPrimePower"));
+            return Err(super::hidden(RuntimeError::runtime("Bad argument types\nArgument types given: FldRatElt").in_context("IsPrimePower")));
         }
         let q = p.pow(h as u64);
         for v in vs.clone() {
@@ -762,7 +778,8 @@ fn dickson_pairs(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 }
 
 fn dickson_pairs_bounded(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let p = prime_arg(a)?;
+    // Magma reports a bad p from deeper in its package, as DicksonPairs's.
+    let p = prime_arg(a).map_err(|e| super::hidden_inner(e.in_context("DicksonPairs")))?;
     one(dickson_pairs_in(&p, 1..=bound_arg(a, 1)?, 1..=bound_arg(a, 2)?)?)
 }
 
@@ -797,7 +814,7 @@ fn pair_args(a: &CallArgs) -> RResult<(Integer, u64, Integer, i64)> {
 fn number_of_variants(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (p, _, _, v) = pair_args(a)?;
     if v < 0 {
-        return Err(RuntimeError::runtime("Argument 1 is not positive").in_context("EulerPhi"));
+        return Err(super::hidden_inner(RuntimeError::runtime("Argument 1 is not positive").in_context("EulerPhi")));
     }
     intv(Integer::from_u64(variant_reps(&p, v as u64).len() as u64))
 }
@@ -812,7 +829,7 @@ fn number_of_variants_n(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 fn variant_representatives(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (p, _, _, v) = pair_args(a)?;
     if v < 0 {
-        return Err(RuntimeError::runtime(format!("Argument 1 ({v}) should be >= 2")).in_context("ResidueClassRing"));
+        return Err(super::hidden_inner(RuntimeError::runtime(format!("Argument 1 ({v}) should be >= 2")).in_context("ResidueClassRing")));
     }
     one(Value::seq(None, variant_reps(&p, v as u64).into_iter().map(|s| Value::Int(Integer::from_u64(s))).collect()))
 }
@@ -853,7 +870,7 @@ fn variant_exponent(s: u64, v: u64, n: &Integer, factors: &[(Integer, u64)]) -> 
 fn dickson_nearfield(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (p, h, q, v) = pair_args(a)?;
     if v < 0 {
-        return Err(super::bare(RuntimeError::runtime("Bad argument types\nArgument types given: FldRatElt, FldRatElt")));
+        return Err(super::hidden(RuntimeError::runtime("Bad argument types\nArgument types given: FldRatElt, FldRatElt")));
     }
     let v = v as u64;
     let s = match a.param("Variant").cloned() {
@@ -867,7 +884,7 @@ fn dickson_nearfield(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
         return Err(super::require(RuntimeError::runtime("Variant must be coprime to v")));
     }
     if a.param("LargeMatrices").is_some_and(|x| !matches!(x, Value::Bool(_))) {
-        return Err(super::bare(RuntimeError::runtime("Expected a logical for the 'select' operator")));
+        return Err(super::hidden(RuntimeError::runtime("Expected a logical for the 'select' operator")));
     }
     let s = s.mod_u64(v);
     let gf = it.default_field(&p, h * v)?;

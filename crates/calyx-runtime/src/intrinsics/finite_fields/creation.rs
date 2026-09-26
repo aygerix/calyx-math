@@ -50,7 +50,7 @@ fn ext_by(it: &mut Interp, k: &Rc<Struct>, poly: Vec<Elem>) -> RResult<Rc<Struct
 
 pub(super) fn random_extension(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let k = field_arg(a, 0)?;
-    let n = a.small_ge(1, 1).map_err(super::bare)?;
+    let n = a.small_ge(1, 1).map_err(super::require)?;
     let poly = random_irreducible(it, &k, n)?;
     one(Value::Struct(ext_by(it, &k, poly)?))
 }
@@ -129,7 +129,7 @@ pub(super) fn common_overfield(it: &mut Interp, a: &mut CallArgs) -> RResult<Val
     let (f, g) = (field_arg(a, 0)?, field_arg(a, 1)?);
     match it.ff_cover(&f, &g)? {
         Some(c) => one(Value::Struct(c)),
-        None => Err(super::bare(RuntimeError::runtime("No covering field exists"))),
+        None => Err(super::require(RuntimeError::runtime("No covering field exists"))),
     }
 }
 

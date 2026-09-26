@@ -27,7 +27,7 @@ use calyx_flint::gr::{Ctx, CtxKind, Elem, Truth};
 use calyx_flint::{Integer, Nmod};
 use calyx_syntax::ast::BinOp;
 
-use super::{arg_ge, arg_not, arg_prime, bare, boolv, dlog, factseq, intv, none, one};
+use super::{arg_ge, arg_not, arg_prime, boolv, dlog, factseq, intv, none, one, require};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
 use crate::rings::finite::{self, field_of};
