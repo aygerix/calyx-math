@@ -57,8 +57,12 @@ with one milestone per handbook part.
 `~/calyx-tools/` holds `mref.sh FILE` (run a script with Magma 2.22 on the
 VM), `mdiff.sh FILE` (diff this worktree's release build against 2.22),
 `mbench.sh FILE` (build this worktree on the VM and time it against 2.22,
-best of three) and `guard.py`. See `~/calyx-tools/README.md`. Magma runs
-share the VM freely; a benchmark waits for sole use of it.
+best of three), `vtest.sh` (run this worktree's `cargo test --release` on
+the VM) and `guard.py`. See `~/calyx-tools/README.md`. Magma runs share the
+VM freely; a benchmark waits for sole use of it.
+
+The Mac has 16 GB shared by every session: build locally for quick probes
+and diffs, but run the full test suite with `vtest.sh`.
 
 ## Parallel lanes (Part III)
 
