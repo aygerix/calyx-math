@@ -79,6 +79,9 @@ pub struct Cache {
     /// The image of the generator of the context in the default field of
     /// the same size, through a default overfield.
     anchor: OnceCell<Option<Elem>>,
+    /// For square roots: the least non-square z (in counting order) to the
+    /// power of the odd part of q - 1.
+    pub non_square: OnceCell<Elem>,
 }
 
 pub fn field_of(st: &Struct) -> Option<(&Ring, &FiniteField)> {
