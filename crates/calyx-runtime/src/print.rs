@@ -42,8 +42,10 @@ impl Level {
 
 /// Accumulates output, wrapping lines as Magma does: a line that would
 /// exceed the width is broken at its last space (which stays at the end of
-/// the line), or with a backslash when there is no space to break at.
-/// Continued lines start with `cont` spaces.
+/// the line) if the word after it starts in the second half of the line.
+/// A word that starts in the first half fills the line instead, up to the
+/// column before the last, and continues after a backslash. Continued lines
+/// start with the `cont` spaces in force where their word started.
 pub struct Printer {
     pub buf: String,
     pub col: usize,
@@ -58,14 +60,14 @@ pub struct Printer {
     pub no_wrap: bool,
     /// Lines start without indentation, as in `Sprint` and `Sprintf`.
     pub bare: bool,
-    /// A number ended in the column before the last: what follows it, but a
-    /// space, continues on the next line after a backslash, as in Magma.
-    full: bool,
+    /// The `cont` in force where the word being written started; none
+    /// between words.
+    word_cont: Option<usize>,
 }
 
 impl Printer {
     pub fn new(col: usize, width: usize, level: Level) -> Printer {
-        Printer { buf: String::new(), col, width: width.max(20), level, cont: 0, line_start: 0, no_wrap: false, bare: false, full: false }
+        Printer { buf: String::new(), col, width: width.max(20), level, cont: 0, line_start: 0, no_wrap: false, bare: false, word_cont: None }
     }
 
     pub fn write(&mut self, s: &str) {
@@ -75,15 +77,17 @@ impl Printer {
     }
 
     fn put(&mut self, c: char) {
-        if std::mem::take(&mut self.full) && c != ' ' && c != '\n' && !self.no_wrap {
-            self.buf.push('\\');
-            self.break_line();
-        }
         if c == '\n' {
             self.buf.push('\n');
             self.col = 0;
             self.line_start = self.buf.len();
+            self.word_cont = None;
             return;
+        }
+        if c == ' ' {
+            self.word_cont = None;
+        } else if self.word_cont.is_none() {
+            self.word_cont = Some(self.cont);
         }
         if self.col >= self.width && !self.no_wrap {
             if c == ' ' {
@@ -111,27 +115,40 @@ impl Printer {
                     }
                 }
             }
+        } else if self.col + 1 == self.width && c != ' ' && !self.no_wrap && !self.late() {
+            self.buf.push('\\');
+            self.break_line();
         }
         self.buf.push(c);
         self.col += 1;
     }
 
+    /// Whether the word being written (after the last space on the line)
+    /// starts in the second half of the line.
+    fn late(&self) -> bool {
+        let w = self.buf[self.line_start..].rfind(' ').map_or(self.line_start, |j| self.line_start + j + 1);
+        self.col.saturating_sub(self.buf[w..].chars().count()) > self.width / 2
+    }
+
+    /// Continue on the next line, indented as where the word being written
+    /// started (as `cont` between words).
     fn break_line(&mut self) {
+        let indent = self.word_cont.unwrap_or(self.cont);
         self.buf.push('\n');
-        for _ in 0..self.cont {
+        for _ in 0..indent {
             self.buf.push(' ');
         }
-        self.col = self.cont;
+        self.col = indent;
         self.line_start = self.buf.len();
     }
 
     pub fn newline(&mut self, indent: usize) {
-        self.full = false;
         // Trim trailing spaces on the finished line.
         while self.buf.ends_with(' ') && self.buf.len() > self.line_start {
             self.buf.pop();
         }
         self.buf.push('\n');
+        self.word_cont = None;
         let indent = if self.bare { 0 } else { indent };
         for _ in 0..indent {
             self.buf.push(' ');
@@ -145,20 +162,18 @@ impl Printer {
     /// starts in the second half of the line, and otherwise must end before
     /// it. One that does not fit moves to the next line if it starts in the
     /// second half; otherwise it is broken where it stands (with backslashes).
-    /// Returns whether its last line starts in the first half, so that it had
-    /// to end before the last column.
-    pub fn atom(&mut self, s: &str, _breakable: bool) -> bool {
-        self.full = false;
+    pub fn atom(&mut self, s: &str, _breakable: bool) {
         let n = s.chars().count();
         if self.no_wrap || n == 0 {
             self.write(s);
-            return false;
+            return;
         }
+        self.word_cont.get_or_insert(self.cont);
         let space = self.buf[self.line_start..].rfind(' ').map(|j| self.line_start + j + 1);
         let late = self.col.saturating_sub(self.buf[space.unwrap_or(self.line_start)..].chars().count()) > self.width / 2;
         if self.col + n < self.width + late as usize {
             self.write(s);
-            return !late;
+            return;
         }
         if let (true, Some(from)) = (late, space) {
             let tail = self.buf.split_off(from);
@@ -166,7 +181,7 @@ impl Printer {
             self.write(&tail);
             if self.col + n < self.width {
                 self.write(s);
-                return true;
+                return;
             }
         }
         // Each line holds all it can but the backslash.
@@ -179,14 +194,6 @@ impl Printer {
             self.buf.push(c);
             self.col += 1;
         }
-        true
-    }
-
-    /// Write a number, as an atom that marks the line full when it had to end
-    /// before the last column and did so in the column before it.
-    pub fn number(&mut self, s: &str) {
-        let early = self.atom(s, true);
-        self.full = early && self.col + 1 == self.width;
     }
 
     /// Write a quoted string. Magma never breaks one, and the line counts as
@@ -198,6 +205,7 @@ impl Printer {
         self.no_wrap = saved;
         self.col = 0;
         self.line_start = self.buf.len();
+        self.word_cont = None;
     }
 
     /// Write text that breaks at spaces, each word placed as an atom (a
@@ -421,13 +429,11 @@ impl Interp {
             Value::Bool(b) => p.write(if *b { "true" } else { "false" }),
             Value::Int(i) if p.level == Level::Hex => {
                 let digits = i.abs().to_string_radix(16).to_uppercase();
-                p.number(&format!("{}0x{digits}", if i.sign() < 0 { "-" } else { "" }))
+                p.atom(&format!("{}0x{digits}", if i.sign() < 0 { "-" } else { "" }), true)
             }
-            Value::Int(i) => p.number(&i.to_string()),
-            Value::Rat(q) => p.number(&q.to_string()),
-            Value::Real(r) => {
-                p.atom(&crate::intrinsics::reals::format_real(r, p.level), true);
-            }
+            Value::Int(i) => p.atom(&i.to_string(), true),
+            Value::Rat(q) => p.atom(&q.to_string(), true),
+            Value::Real(r) => p.atom(&crate::intrinsics::reals::format_real(r, p.level), true),
             Value::Complex(c) => {
                 let s = crate::intrinsics::complex::format_complex(self, c, p.level);
                 p.write(&s);
