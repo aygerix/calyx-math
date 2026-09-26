@@ -94,6 +94,8 @@ try a eq b; catch e print e`Object; end try;
 try a + b; catch e print e`Object; end try;
 try a*b; catch e print e`Object; end try;
 try a^b; catch e print e`Object; end try;
+try a/(B!0); catch e print e`Object; end try;
+try a^(B!0); catch e print e`Object; end try;
 try B!a; catch e print e`Object; end try;
 try Element(B, a); catch e print e`Object; end try;
 
@@ -147,3 +149,20 @@ Order(m), Order(m^6), Order(M!(t^6)), Order(M!(t + 1));
 (m*M!(t + 1))*M!(t^3) eq m*(M!(t + 1)*M!(t^3));
 Inverse(m)*m eq Identity(M), m^-1 eq Inverse(m);
 m^(M!(t + 2)) eq Inverse(M!(t + 2))*m*M!(t + 2);
+
+// Long elements wrap as text, without the indentation of field elements
+D := DicksonNearfield(625, 4 : Variant := 3);
+L<l> := D`gf;
+a := D!(l^5); b := D!(l^1234 + 7);
+a*b, b*a, a*a, b*b;
+x := l^1234 + 7; c := D!x;
+c;
+x;
+c, 1;
+[c];
+<c, 1>;
+Sprint(c);
+
+// The generator of the field goes by a name given with < > only
+N9 := DicksonNearfield(7, 9); K9 := N9`gf; c9 := N9!(K9.1);
+c9; K9.1; [c9]; c9*c9; Sprint(c9); Eltseq(c9);
