@@ -70,8 +70,12 @@ pub struct Cache {
     basis: OnceCell<Option<LinMap>>,
     /// Embedding matrices and their left inverses, by subfield.
     restrict: RefCell<Vec<(u64, Rc<(LinMap, LinMap)>)>>,
-    /// The primes dividing q - 1.
+    /// The factorisation of q - 1, and its primes.
+    qm1_factors: OnceCell<Vec<(Integer, u64)>>,
     qm1_primes: OnceCell<Vec<Integer>>,
+    /// Logarithms to the base of the primitive element found so far, by the
+    /// coordinates of the element.
+    pub logs: RefCell<rustc_hash::FxHashMap<Vec<Integer>, Integer>>,
     /// The image of the generator of the context in the default field of
     /// the same size, through a default overfield.
     anchor: OnceCell<Option<Elem>>,
@@ -665,13 +669,15 @@ pub fn min_poly(x: &Elem, f: &Rc<Struct>, e: &Rc<Struct>) -> Option<Vec<Elem>> {
     cs.iter().map(|c| restrict_with(c, e, &img, f)).collect()
 }
 
+/// The factorisation of q - 1 for the field `st`.
+pub fn qm1_factors(st: &Struct) -> &[(Integer, u64)] {
+    let f = ff(st).1;
+    f.cache.qm1_factors.get_or_init(|| (&f.order() - &Integer::one()).factor().map(|fac| fac.factors).unwrap_or_default())
+}
+
 /// The primes dividing q - 1 for the field `st`.
 pub fn qm1_primes(st: &Struct) -> &[Integer] {
-    let f = ff(st).1;
-    f.cache.qm1_primes.get_or_init(|| {
-        let q1 = &f.order() - &Integer::one();
-        q1.factor().map(|fac| fac.factors.into_iter().map(|(p, _)| p).collect()).unwrap_or_default()
-    })
+    ff(st).1.cache.qm1_primes.get_or_init(|| qm1_factors(st).iter().map(|(p, _)| p.clone()).collect())
 }
 
 /// Whether `x` generates the multiplicative group of `st`.

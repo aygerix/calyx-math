@@ -603,6 +603,7 @@ fn set_primitive_element(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     }
     *fd.cache.primitive.borrow_mut() = Some(x);
     fd.cache.primitive_fixed.set(true);
+    fd.cache.logs.borrow_mut().clear();
     none()
 }
 
@@ -1213,18 +1214,33 @@ fn log_base(it: &mut Interp, f: &Rc<Struct>, b: &Elem, y: &Elem) -> RResult<Opti
     let (lb, ly) = match (b.zech_log(), y.zech_log()) {
         (Some(lb), Some(ly)) => (Integer::from_u64(lb), Integer::from_u64(ly)),
         _ => {
-            let pe = if fd.degree == 1 { it.ff_primitive(f)? } else { it.ff_primitive(f)? };
-            let fac = q1.factor().map(|x| x.factors).unwrap_or_default();
-            let hard = || RuntimeError::runtime("Discrete logarithm is too hard");
-            let lg = |x: &Elem| -> Option<Integer> {
-                match r.ctx.kind() {
-                    CtxKind::Nmod(_) | CtxKind::FmpzMod(_) => {
-                        super::dlog::log_mod_prime(&x.to_integer().ok()?, &pe.to_integer().ok()?, &fd.p, &fac)
-                    }
-                    _ => super::dlog::log_in_field(x, &pe, &q1, &fac),
+            // (Remembered, as Magma remembers them.)
+            let pe = it.ff_primitive(f)?;
+            let fac = finite::qm1_factors(f);
+            let prime = matches!(r.ctx.kind(), CtxKind::Nmod(_) | CtxKind::FmpzMod(_));
+            let lg = |x: &Elem| -> RResult<Integer> {
+                if x.equal(&pe) == Truth::True {
+                    return Ok(Integer::one());
                 }
+                let key = if prime { vec![x.to_integer().unwrap_or_default()] } else { x.fq_coords() };
+                if let Some(k) = fd.cache.logs.borrow().get(&key) {
+                    return Ok(k.clone());
+                }
+                let k = if prime {
+                    let (x, g) = (x.to_integer().unwrap_or_default(), pe.to_integer().unwrap_or_default());
+                    super::dlog::log_mod_prime(&x, &g, &fd.p, fac)
+                } else {
+                    super::dlog::log_in_field(x, &pe, &q1, fac)
+                };
+                let k = k.ok_or_else(|| RuntimeError::runtime("Discrete logarithm is too hard"))?;
+                let mut logs = fd.cache.logs.borrow_mut();
+                if logs.len() >= 1 << 12 {
+                    logs.clear();
+                }
+                logs.insert(key, k.clone());
+                Ok(k)
             };
-            (lg(b).ok_or_else(hard)?, lg(y).ok_or_else(hard)?)
+            (lg(b)?, lg(y)?)
         }
     };
     // lb k = ly modulo q - 1.
@@ -1252,15 +1268,13 @@ fn log(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 fn log_b(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (f, b) = felt_arg(a, 0)?;
     let (g, x) = felt_arg(a, 1)?;
-    let (f, b, x) = if id(&f) == id(&g) {
-        (f, b, x)
-    } else {
-        let c = it.ff_cover(&f, &g)?.ok_or_else(|| RuntimeError::runtime("Arguments are not compatible"))?;
-        let b = it.ff_convert(&b, &f, &c)?.ok_or_else(bad)?;
-        let x = it.ff_convert(&x, &g, &c)?.ok_or_else(bad)?;
-        (c, b, x)
-    };
-    if is_zero(&b) || is_zero(&x) {
+    if id(&f) != id(&g) {
+        return Err(RuntimeError::runtime("Arguments are not compatible\nArgument types given: FldFinElt, FldFinElt"));
+    }
+    if is_zero(&b) {
+        return Err(RuntimeError::runtime("Base argument 1 must be non-zero"));
+    }
+    if is_zero(&x) {
         return Err(RuntimeError::runtime("Can not take log of zero element"));
     }
     match log_base(it, &f, &b, &x)? {
@@ -1676,7 +1690,12 @@ fn irreducible_sparse_gf2(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 // (DicksonFirst and DicksonSecond are in `upoly.rs`.)
 
 fn is_probably_permutation_polynomial(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let (k, f) = ff_poly_arg(&a.args[0])?;
+    let (k, f) = ff_poly_arg(&a.args[0]).map_err(|_| RuntimeError::runtime("Ring needs to be a finite field"))?;
+    let attempts = match a.param("NumAttempts") {
+        Some(Value::Int(n)) => n.to_u64().filter(|n| (1..1 << 30).contains(n)),
+        _ => None,
+    };
+    let attempts = attempts.ok_or_else(|| RuntimeError::runtime("Integer must be small"))?;
     let (r, kf) = ff(&k);
     let ctx = r.ctx.clone();
     if f.poly_len() < 2 {
@@ -1693,15 +1712,9 @@ fn is_probably_permutation_polynomial(it: &mut Interp, a: &mut CallArgs) -> RRes
         return boolv(seen.len() as u64 == q);
     }
     // Otherwise f(x) - f(x0) has the single root x0 for random x0.
-    let attempts = match a.param("NumAttempts") {
-        Some(Value::Int(n)) => n.to_u64().unwrap_or(100),
-        _ => 100,
-    };
     let q = kf.order();
     let px = f.ctx().clone();
     let x = Elem::poly_from_coeffs(&px, &[Elem::zero(&ctx), Elem::one(&ctx)?])?;
-    let xq = poly_powmod(&x, &q, &f)?;
-    let _ = xq;
     for _ in 0..attempts.min(1000) {
         let x0 = random_elem(it, &k);
         let y = f.poly_evaluate(&x0)?;
@@ -1880,7 +1893,7 @@ pub fn register(it: &mut Interp) {
 
     it.def_params(
         "IsProbablyPermutationPolynomial",
-        "p::RngUPolElt[FldFin] -> BoolElt",
+        "p::RngUPolElt -> BoolElt",
         &[("NumAttempts", Value::int(100))],
         "Whether p probably permutes its coefficient field.",
         is_probably_permutation_polynomial,
