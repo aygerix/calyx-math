@@ -83,14 +83,14 @@ pub fn groebner_basis(r: &Ring, gens: &[Elem]) -> RResult<Vec<Elem>> {
 
 /// The reduced Gröbner basis in the order of `r` of the ideal whose easy
 /// basis is `easy`: the easy basis in the ring's order, else by a change of
-/// order (FGLM for a zero-dimensional ideal over GF(p)), else computed
-/// again from the easy basis.
-pub fn groebner_from_easy(r: &Ring, easy: &Easy) -> RResult<Vec<Elem>> {
+/// order (FGLM for a zero-dimensional ideal), else computed again from the
+/// easy basis, as `strategy` says.
+pub fn groebner_from_easy(r: &Ring, easy: &Easy, strategy: gb::Strategy) -> RResult<Vec<Elem>> {
     let (base, n, order) = shape(r);
     if easy.order == *order {
         return from_terms(r, &easy.terms);
     }
-    from_terms(r, &engine(r, gb::change_order(base, n, &easy.order, &easy.terms, order))?)
+    from_terms(r, &engine(r, gb::change_order_with(base, n, &easy.order, &easy.terms, order, strategy))?)
 }
 
 /// The polynomials of `r` with the terms `ts`.
@@ -166,12 +166,19 @@ fn groebner_basis_of(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = polys(a, 0)?;
     let r = s.ring();
     let (base, n, order) = shape(r);
-    let g = engine(r, gb::groebner(base, n, order, &s.terms()))?;
+    let g = engine(r, gb::groebner_with(base, n, order, &s.terms(), strategy(a)?))?;
     // The degrees of the steps of F4 and the denominators, which Magma
     // leaves unassigned here.
     let mut out = vals![s.seq(&g)?];
     out.extend((1..a.nresults.min(3)).map(|_| Value::Undef));
     Ok(out)
+}
+
+/// How the parameters of `a` have a basis computed: over the rationals by
+/// the modular method, Monte Carlo as in Magma, unless GlobalModular is
+/// false.
+fn strategy(a: &CallArgs) -> RResult<gb::Strategy> {
+    Ok(gb::Strategy { rational: !a.param_bool("GlobalModular")? })
 }
 
 /// `GroebnerBasis(S, d)`: the basis truncated at weighted degree d.
@@ -314,7 +321,7 @@ fn poly_seq(pst: &Rc<Struct>, xs: impl IntoIterator<Item = Elem>) -> Value {
 /// basis.
 fn ideal_groebner_basis(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let id = ideal_arg(a, 0)?;
-    let g = id.groebner()?;
+    let g = id.groebner_with(strategy(a)?)?;
     // The degrees of the steps of F4, left unassigned as for sequences.
     let mut out = vals![poly_seq(&id.ring, g.iter().cloned())];
     out.extend((1..a.nresults.min(2)).map(|_| Value::Undef));
@@ -323,7 +330,7 @@ fn ideal_groebner_basis(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 
 /// `Groebner(I)`: compute the Gröbner basis of I.
 fn groebner_of(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    ideal_arg(a, 0)?.groebner()?;
+    ideal_arg(a, 0)?.groebner_with(strategy(a)?)?;
     Ok(vals![])
 }
 
@@ -512,8 +519,8 @@ fn small_basis(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 }
 
 /// The parameters of Magma's Gröbner basis functions that choose among
-/// algorithms and strategies: they leave the result as it is, so they are
-/// accepted and have no effect.
+/// algorithms and strategies, which leave the result as it is. Only
+/// GlobalModular has an effect (see `strategy`).
 fn strategy_params() -> Vec<(&'static str, Value)> {
     let (yes, no) = (Value::Bool(true), Value::Bool(false));
     vec![
