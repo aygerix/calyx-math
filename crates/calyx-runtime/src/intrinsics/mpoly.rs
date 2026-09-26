@@ -13,7 +13,7 @@ use std::rc::Rc;
 
 use calyx_flint::gr::{Ctx, CtxKind, Elem, GrError, Truth};
 use calyx_flint::mpoly as fm;
-use calyx_flint::{Integer, Rational};
+use calyx_flint::{Integer, Rational, Real};
 use calyx_groebner::{Order, OrderArg};
 use calyx_syntax::ast::{AggKind, BinOp};
 
@@ -1395,7 +1395,78 @@ fn is_irreducible(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 /// discriminant of `f`: on FLINT's types, over polynomial rings flattened,
 /// and over Z/nZ through the integers (it is a polynomial in the
 /// coefficients).
+/// The resultant (or discriminant) over the real or complex field, computed
+/// exactly and rounded once: the coefficients are dyadic rationals, with
+/// i a last variable reduced by i^2 = -1 at the end. None over other rings.
+fn float_res_disc(f: &Elem, g: Option<&Elem>, i: usize) -> RResult<Option<Elem>> {
+    let ctx = f.ctx();
+    let b = ctx.base().expect("a polynomial ring");
+    let (complex, prec) = match *b.kind() {
+        CtxKind::RealFloat(p) => (false, p),
+        CtxKind::ComplexFloat(p) => (true, p),
+        _ => return Ok(None),
+    };
+    let CtxKind::MPoly { nvars, order } = *ctx.kind() else { unreachable!("a multivariate polynomial ring") };
+    let qq = Ctx::rationals();
+    let qx = Ctx::mpoly(&qq, nvars + complex as usize, order);
+    let lift = |x: &Elem| -> RResult<Elem> {
+        let mut ts = Vec::new();
+        for (c, e) in terms(x) {
+            let parts = match c.to_complex_parts() {
+                Some((re, im)) => vec![(re, 0), (im, 1)],
+                None => vec![(c.to_real().expect("a real number"), 0)],
+            };
+            for (r, k) in parts {
+                let q = r.to_rational().ok_or_else(|| RuntimeError::runtime("Coefficients must be finite"))?;
+                if !q.is_zero() {
+                    let mut e = e.clone();
+                    if complex {
+                        e.push(k);
+                    }
+                    ts.push((Elem::from_rational(&qq, &q)?, e));
+                }
+            }
+        }
+        Ok(Elem::mpoly_from_terms(&qx, &ts)?)
+    };
+    let y = g.map(lift).transpose()?;
+    let x = lift(f)?;
+    let r = match &y {
+        Some(y) => fm::resultant(&x, y, i)?,
+        None => fm::discriminant(&x, i)?,
+    };
+    // The real and imaginary parts of each monomial, with i^k = ±1 or ±i.
+    let mut parts: BTreeMap<Vec<u64>, (Rational, Rational)> = BTreeMap::new();
+    for (c, mut e) in terms(&r) {
+        let mut q = c.to_rational()?;
+        let k = if complex { e.pop().expect("the variable i") } else { 0 };
+        if k % 4 >= 2 {
+            q = -&q;
+        }
+        let p = parts.entry(e).or_insert_with(|| (Rational::zero(), Rational::zero()));
+        if k % 2 == 0 { p.0 = &p.0 + &q } else { p.1 = &p.1 + &q }
+    }
+    let mut ts = Vec::new();
+    for (e, (re, im)) in parts {
+        if re.is_zero() && im.is_zero() {
+            continue;
+        }
+        let (re, im) = (Real::from_rational(&re, prec), Real::from_rational(&im, prec));
+        ts.push((if complex { Elem::from_complex_parts(b, &re, &im)? } else { Elem::from_real(b, &re)? }, e));
+    }
+    Ok(Some(Elem::mpoly_from_terms(ctx, &ts)?))
+}
+
 fn res_disc(f: &Elem, g: Option<&Elem>, i: usize) -> RResult<Elem> {
+    // As in Magma, the discriminant in a variable of degree 1 is 1, and of
+    // degree 0 (or of zero) it is 0.
+    if g.is_none() {
+        match terms(f).iter().map(|(_, e)| e[i]).max() {
+            None | Some(0) => return Ok(Elem::zero(f.ctx())),
+            Some(1) => return Ok(Elem::one(f.ctx())?),
+            _ => {}
+        }
+    }
     let run = |x: &Elem, y: Option<&Elem>| match y {
         Some(y) => fm::resultant(x, y, i),
         None => fm::discriminant(x, i),
@@ -1403,6 +1474,9 @@ fn res_disc(f: &Elem, g: Option<&Elem>, i: usize) -> RResult<Elem> {
     if let Some(t) = Tower::of(f.ctx()) {
         let y = g.map(|g| t.flatten(g)).transpose()?;
         return Ok(t.unflatten(&run(&t.flatten(f)?, y.as_ref())?)?);
+    }
+    if let Some(r) = float_res_disc(f, g, i)? {
+        return Ok(r);
     }
     match run(f, g) {
         Err(GrError::Unable) => {}
