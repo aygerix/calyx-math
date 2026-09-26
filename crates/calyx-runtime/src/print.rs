@@ -539,9 +539,9 @@ impl Interp {
                     if i > 0 {
                         p.write(", ");
                     }
-                    // Strings in tuples print with quotes.
+                    // Strings in tuples print with quotes, except minimally.
                     match e {
-                        Value::Str(s) => p.quoted(&quote_string(s)),
+                        Value::Str(s) if p.level != Level::Minimal => p.quoted(&quote_string(s)),
                         _ => self.fmt(p, e, indent)?,
                     }
                 }
@@ -801,6 +801,11 @@ impl Interp {
         let fields: Vec<(Sym, Value)> = rf.names.iter().zip(&r.fields).filter(|(_, v)| !v.is_undef()).map(|(n, v)| (*n, v.clone())).collect();
         if fields.is_empty() {
             p.write(" | >");
+            return Ok(());
+        }
+        // Minimally, the fields are left out.
+        if p.level == Level::Minimal {
+            p.write(" | ...>");
             return Ok(());
         }
         p.write(" |");

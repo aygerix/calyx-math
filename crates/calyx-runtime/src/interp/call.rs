@@ -300,7 +300,7 @@ impl Interp {
                     let mut targs = Vec::with_capacity(code.params.len());
                     for p in &code.params {
                         let v = frame.slots[p.slot as usize].clone();
-                        let text = if v.is_undef() { "<unassigned>".to_string() } else { self.format_flat(&v, crate::print::Level::Default).unwrap_or_default() };
+                        let text = if v.is_undef() { "<unassigned>".to_string() } else { self.frame_arg(&v) };
                         targs.push((p.name.to_string(), text));
                     }
                     e.trace.push(TraceFrame { name, span: Some(span), args: targs });
@@ -511,7 +511,7 @@ impl Interp {
                     if e.hidden == Some(true) {
                         // The intrinsic's call frame, as a user function's.
                         e.hidden = Some(false);
-                        let targs = sig.args.iter().zip(args.iter()).map(|(a, v)| (a.name.to_string(), self.format_flat(v, crate::print::Level::Default).unwrap_or_default())).collect();
+                        let targs = sig.args.iter().zip(args.iter()).map(|(a, v)| (a.name.to_string(), self.frame_arg(v))).collect();
                         e.trace.push(TraceFrame { name, span: None, args: targs });
                     }
                     if e.require && !stmt {
@@ -545,6 +545,16 @@ impl Interp {
         let mut args = args;
         let r = self.call_intrinsic(sym, &mut args, &mask, Vec::new(), 1, false, Span::default(), None)?;
         Ok(r.and_then(|v| v.into_iter().next()))
+    }
+
+    /// An argument as a call frame of an error report shows it: printed
+    /// minimally on one line, and cut after 60 characters.
+    pub fn frame_arg(&mut self, v: &Value) -> String {
+        let s = self.format_flat(v, crate::print::Level::Minimal).unwrap_or_default().replace('\n', " ");
+        match s.char_indices().nth(60) {
+            Some((i, _)) => format!("{}...", &s[..i]),
+            None => s,
+        }
     }
 
     pub fn type_name_ext(&self, v: &Value) -> String {

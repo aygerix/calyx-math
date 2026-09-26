@@ -71,6 +71,7 @@ impl Interp {
                 let st = st.clone();
                 self.coerce_into_nearfield(&st, x, true)?
             }
+            Value::Seq(_) | Value::Set(_) | Value::ISet(_) | Value::MSet(_) => return self.coerce_into_aggregate(s, x),
             _ => self.try_coerce(s, x)?,
         };
         match attempt {
@@ -98,6 +99,32 @@ impl Interp {
                 Err(crate::error::ErrorInfo { style: crate::error::ErrStyle::Plain, ..crate::error::ErrorInfo::runtime(text) }.into())
             }
         }
+    }
+
+    /// `S ! x` for a sequence or set `S`: `x` in the universe of `S`, if it
+    /// is an element of `S`.
+    fn coerce_into_aggregate(&mut self, s: &Value, x: &Value) -> RResult<Value> {
+        // Reported like other failed coercions, without a blank line.
+        let fail = |text: String| -> RuntimeError { crate::error::ErrorInfo { style: crate::error::ErrStyle::Plain, ..crate::error::ErrorInfo::runtime(text) }.into() };
+        let u = match s {
+            Value::Seq(a) => a.universe.clone(),
+            Value::Set(a) => a.universe.clone(),
+            Value::ISet(a) => a.universe.clone(),
+            Value::MSet(a) => a.universe.clone(),
+            _ => unreachable!(),
+        };
+        let Some(u) = u else {
+            let lhs = self.format_value(s, crate::print::Level::Default)?;
+            return Err(fail(format!("Cannot coerce into a null object\nLHS: {lhs}\nRHS: {}", self.coercion_type_name(x))));
+        };
+        let v = match self.try_coerce(&u, x)? {
+            Ok(v) => v,
+            Err(_) => return Err(fail("Illegal coercion".into())),
+        };
+        if self.contains(s, &v)? {
+            return Ok(v);
+        }
+        Err(fail(format!("Object is not in the {}", if matches!(s, Value::Seq(_)) { "sequence" } else { "set" })))
     }
 
     /// `elt< S | a, b, ... >`. The integers take exactly one integer and the
