@@ -11,7 +11,7 @@ use calyx_flint::upoly as fu;
 use super::{base_of, bctx, len, nonzero, pol, sort_by_ring_order};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
-use crate::intrinsics::{boolv, one};
+use crate::intrinsics::one;
 use crate::rings::{Elt, RingKind, ring_of};
 use crate::value::*;
 
@@ -234,7 +234,7 @@ fn has_root_of(it: &mut Interp, f: &Rc<Elt>) -> RResult<Vals> {
     };
     match pick {
         Some(r) => Ok(vals![Value::Bool(true), r]),
-        None => boolv(false),
+        None => Ok(vals![Value::Bool(false), Value::Undef]),
     }
 }
 

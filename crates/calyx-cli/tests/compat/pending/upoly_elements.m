@@ -82,6 +82,7 @@ Roots(x^2 - 2, GF(7));
 Roots(x^2 + 1, Q);
 Roots((x^2 - 4)*(3*x - 1), Q);
 HasRoot(x^2 + 1), HasRoot((x - 3)*(x^2 + 1));
+b, r := HasRoot(x^2 + 1); b, assigned r;
 // Over finite fields Magma finds some root.
 HasRoot(t^2 + 1);
 b, r := HasRoot(t^2 + 6); b, r in [1, 6];
