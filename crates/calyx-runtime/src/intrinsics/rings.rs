@@ -275,7 +275,7 @@ fn prime_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
                     let p = f.p.clone();
                     it.finite_field(&p, 1)?
                 }
-                RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. } | RingKind::UPolyRes { base, .. } => {
+                RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. } | RingKind::UPolyRes { base, .. } | RingKind::MPolyRes { base, .. } => {
                     let base = base.clone();
                     of(it, &base)?
                 }
@@ -392,6 +392,7 @@ pub fn register(it: &mut Interp) {
         it.def(name, "P::RngMPol -> Rng", "The coefficient ring of P.", base_ring);
         it.def(name, "f::RngUPolElt -> Rng", "The coefficient ring of the parent of f.", base_ring);
         it.def(name, "f::RngMPolElt -> Rng", "The coefficient ring of the parent of f.", base_ring);
+        it.def(name, "Q::RngMPolRes -> Rng", "The coefficient ring of Q.", base_ring);
     }
 
     for t in ["FldFin", "RngUPol", "RngMPol"] {

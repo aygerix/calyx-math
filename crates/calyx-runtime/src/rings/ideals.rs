@@ -253,6 +253,9 @@ impl Interp {
         if let Some(v) = crate::intrinsics::upoly::quo_constructor(self, base, right)? {
             return Ok(Some(v));
         }
+        if let Some(v) = crate::intrinsics::poly_ideals::quo_constructor(self, base, right)? {
+            return Ok(Some(v));
+        }
         if !matches!(base.as_struct(), Some(StructKind::Integers)) {
             return Ok(None);
         }

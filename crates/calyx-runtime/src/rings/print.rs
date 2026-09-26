@@ -218,7 +218,7 @@ pub fn format_ring_elt(it: &mut Interp, e: &Elt, level: Level) -> RResult<String
             }
             upoly_text(it, &base, &e.x, &gen_name(e, 1), level)?
         }
-        RingKind::MPoly { base, rank, .. } => {
+        RingKind::MPoly { base, rank, .. } | RingKind::MPolyRes { base, rank, .. } => {
             let base = base.clone();
             let names: Vec<String> = (1..=*rank).map(|i| ring.gen_name(i)).collect();
             let mut terms = Vec::new();
@@ -273,6 +273,7 @@ impl Interp {
                     }
                 }
                 RingKind::Complex(b) => format!("ComplexField({})", calyx_flint::digits_for_bits(*b)),
+                RingKind::MPolyRes { .. } => return crate::intrinsics::poly_ideals::format_affine(self, r, level),
             }]);
         }
         let minimal = level == Level::Minimal;
@@ -307,6 +308,7 @@ impl Interp {
                 vec![format!("Univariate Quotient Polynomial Algebra in {} over {b}", r.gen_name(1)), format!("with modulus {m}")]
             }
             RingKind::Complex(b) => vec![format!("Complex field of precision {}", calyx_flint::digits_for_bits(*b))],
+            RingKind::MPolyRes { .. } => crate::intrinsics::poly_ideals::format_affine(self, r, level)?,
         })
     }
 

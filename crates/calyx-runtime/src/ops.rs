@@ -475,6 +475,13 @@ impl Interp {
                 StructKind::SymGroup(n) => return Ok(Value::Int(Integer::factorial(*n as u64))),
                 StructKind::AbGroup(g) => return Ok(g.order().map_or(Value::Infinity(true), Value::Int)),
                 StructKind::Nearfield(n) => return Ok(Value::Int(n.order())),
+                StructKind::Ring(r) if matches!(r.kind, crate::rings::RingKind::MPolyRes { .. }) => {
+                    let crate::rings::RingKind::MPolyRes { affine, .. } = &r.kind else { unreachable!() };
+                    return match crate::intrinsics::poly_ideals::affine_cardinality(affine).map_err(|e| e.in_context("#"))? {
+                        Some(n) => Ok(Value::Int(n)),
+                        None => Err(RuntimeError::runtime("Cardinality is infinite or not feasibly computable").in_context("#")),
+                    };
+                }
                 _ if crate::rings::props::ring_props(v).is_some() => {
                     return Ok(match crate::rings::props::ring_props(v).unwrap().cardinality {
                         Some(n) => Value::Int(n),

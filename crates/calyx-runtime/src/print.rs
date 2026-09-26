@@ -223,7 +223,7 @@ fn is_block(v: &Value) -> bool {
 fn elt_is_compound(e: &crate::rings::Elt) -> bool {
     use crate::rings::RingKind;
     match &e.ring().kind {
-        RingKind::UPoly { .. } | RingKind::MPoly { .. } | RingKind::UPolyRes { .. } => true,
+        RingKind::UPoly { .. } | RingKind::MPoly { .. } | RingKind::UPolyRes { .. } | RingKind::MPolyRes { .. } => true,
         RingKind::Finite(f) => f.degree > 1 && !crate::rings::finite::is_small(&f.p, f.degree),
         _ => false,
     }
@@ -955,6 +955,7 @@ impl Interp {
             StructKind::PowerStructure(t) if p.level == Level::Magma => p.write(&format!("PowerStructure({})", self.types.name(*t))),
             StructKind::PowerStructure(t) => p.write(&format!("Power Structure of {}", self.types.name(*t))),
             StructKind::Ring(r) if p.level == Level::Minimal && matches!(r.kind, crate::rings::RingKind::Complex(_)) && s.name.borrow().is_some() => p.write(&group_name(s)),
+            StructKind::Ring(r) if matches!(r.kind, crate::rings::RingKind::MPolyRes { .. }) => crate::intrinsics::poly_ideals::fmt_affine(self, p, s, indent)?,
             StructKind::Ring(r) => {
                 let lines = self.format_ring(r, p.level)?;
                 // A multivariate ring's first line continues further indented.
