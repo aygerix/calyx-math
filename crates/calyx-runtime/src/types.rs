@@ -100,6 +100,16 @@ builtin_types! {
     EXT_RE_ELT = "ExtReElt": [ELT],
     GRP_AB = "GrpAb": [GRP],
     GRP_AB_ELT = "GrpAbElt": [GRP_ELT],
+    // The chapters being written in parallel add their types each in its
+    // own block below, so that their branches merge cleanly.
+
+    // Rational field (#38).
+
+    // Finite fields and nearfields (#39, #43).
+
+    // Polynomial rings (#40, #41).
+
+    // Real and complex fields (#42).
 }
 
 #[derive(Clone, Debug)]
@@ -158,6 +168,13 @@ impl TypeRegistry {
             (t::FLD_COM, t::FLD_COM_ELT),
             (t::EXT_RE, t::EXT_RE_ELT),
             (t::GRP_AB, t::GRP_AB_ELT),
+            // Rational field (#38).
+
+            // Finite fields and nearfields (#39, #43).
+
+            // Polynomial rings (#40, #41).
+
+            // Real and complex fields (#42).
         ];
         for (s, e) in elts {
             r.types[s.0 as usize].elt_type = Some(e);

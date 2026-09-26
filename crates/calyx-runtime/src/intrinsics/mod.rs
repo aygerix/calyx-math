@@ -4,22 +4,28 @@
 pub mod abgroups;
 pub mod aggregates;
 pub mod combinat;
+pub mod complex;
 pub mod core;
 pub mod dlog;
 pub mod env;
 pub mod factoring;
 pub mod factseq;
+pub mod finite_fields;
 pub mod ideals;
 pub mod ints;
 pub mod io;
 pub mod maps;
+pub mod mpoly;
+pub mod nearfields;
 pub mod numtheory;
 pub mod perms;
+pub mod rationals;
 pub mod ring_elts;
 pub mod reals;
 pub mod residue;
 pub mod rings;
 pub mod strings;
+pub mod upoly;
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -478,6 +484,13 @@ pub fn register_all(it: &mut Interp) {
     perms::register(it);
     ring_elts::register(it);
     ideals::register(it);
+    // The Part III chapters that are still being written, one module each.
+    rationals::register(it);
+    finite_fields::register(it);
+    nearfields::register(it);
+    upoly::register(it);
+    mpoly::register(it);
+    complex::register(it);
     io::register(it);
     env::register(it);
 }
