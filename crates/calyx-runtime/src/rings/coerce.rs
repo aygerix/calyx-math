@@ -11,9 +11,9 @@
 use std::rc::Rc;
 
 use calyx_flint::Integer;
-use calyx_flint::gr::{Ctx, Elem, GrError, Truth, is_irreducible_mod_p};
+use calyx_flint::gr::{Ctx, Elem, GrError, is_irreducible_mod_p};
 
-use super::{FiniteField, Ring, RingKind, ZECH_LIMIT, make_elt, ring_of, small};
+use super::{FiniteField, Ring, RingKind, ZECH_LIMIT, finite, make_elt, ring_of, small};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::Interp;
 use crate::value::{Struct, StructKind, Value};
@@ -44,13 +44,6 @@ pub fn default_irreducible(p: &Integer, n: u64) -> RResult<Vec<Integer>> {
     }
 }
 
-/// Whether elements of the finite field `from` embed automatically into
-/// `to`: from the prime field, or between fields defined by Conway
-/// polynomials whose degrees divide.
-fn ff_embeds(from: &FiniteField, to: &FiniteField) -> bool {
-    from.p == to.p && (from.degree == 1 || (from.conway && to.conway && to.degree % from.degree == 0))
-}
-
 impl Interp {
     /// Whether elements of structure `from` coerce automatically into
     /// structure `to`.
@@ -76,7 +69,7 @@ impl Interp {
             },
             (Ring(a), Ring(b)) => match (&a.kind, &b.kind) {
                 (RingKind::Complex(_), RingKind::Complex(_)) => true,
-                (RingKind::Finite(f), RingKind::Finite(g)) => ff_embeds(f, g),
+                (RingKind::Finite(_), RingKind::Finite(_)) => finite::is_subfield(finite::field_struct(from).unwrap(), finite::field_struct(to).unwrap()),
                 (RingKind::UPoly { base: b1, .. }, RingKind::UPoly { base: b2, .. }) => self.auto_coerces(b1, b2),
                 (RingKind::MPoly { base: b1, rank: r1, .. }, RingKind::MPoly { base: b2, rank: r2, .. }) => r1 <= r2 && self.auto_coerces(b1, b2),
                 (_, RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. } | RingKind::UPolyRes { base, .. }) => self.auto_coerces(from, base),
@@ -91,6 +84,10 @@ impl Interp {
     /// complex field meet in the polynomial ring over that field (created
     /// when needed); no other rings are made.
     pub fn common_ring(&mut self, a: &Value, b: &Value) -> RResult<Option<Value>> {
+        if let (Some(fa), Some(fb)) = (finite::field_struct(a), finite::field_struct(b)) {
+            let (fa, fb) = (fa.clone(), fb.clone());
+            return Ok(self.ff_cover(&fa, &fb)?.map(Value::Struct));
+        }
         if self.auto_coerces(b, a) {
             return Ok(Some(a.clone()));
         }
@@ -206,7 +203,7 @@ impl Interp {
                 },
                 _ => None,
             }),
-            RingKind::Finite(f) => self.to_field_elem(r, f, x, forced),
+            RingKind::Finite(f) => self.to_field_elem(st, r, f, x, forced),
             RingKind::UPoly { base, .. } => {
                 let base = base.clone();
                 // Elements of the coefficient ring (and of rings embedding in
@@ -298,42 +295,54 @@ impl Interp {
     }
 
     /// Convert `x` to an element of the finite field `f`.
-    fn to_field_elem(&mut self, r: &Ring, f: &FiniteField, x: &Value, forced: bool) -> RResult<Option<Elem>> {
+    fn to_field_elem(&mut self, st: &Rc<Struct>, r: &Ring, f: &FiniteField, x: &Value, forced: bool) -> RResult<Option<Elem>> {
         let ctx = &r.ctx;
         Ok(match x {
             Value::Int(i) => Elem::from_integer(ctx, i).ok(),
-            Value::Rat(q) if forced => Elem::from_rational(ctx, q).ok(),
+            // (Automatic only in arithmetic: see `ring_binop`.)
+            Value::Rat(q) => Elem::from_rational(ctx, q).ok(),
             Value::Elt(e) => match &e.ring().kind {
                 RingKind::Residue(n) if forced && n == &f.p => e.residue().and_then(|i| Elem::from_integer(ctx, &i).ok()),
                 RingKind::Finite(g) if g.p == f.p => {
-                    if ff_embeds(g, f) {
-                        Some(embed_field_elem(&e.x, g, &e.ring().ctx, f, ctx))
-                    } else if forced && ff_embeds(f, g) {
-                        restrict_field_elem(&e.x, g, &e.ring().ctx, f, ctx)
+                    if forced {
+                        self.ff_convert(&e.x, &e.parent, st)?
                     } else {
-                        None
+                        self.ff_emb_image(&e.parent, st)?.map(|img| finite::embed_with(&e.x, g.degree, &img))
                     }
                 }
                 _ => None,
             },
-            Value::Seq(s) if forced && s.elems.len() as u64 == f.degree => {
-                let mut coords = Vec::with_capacity(s.elems.len());
-                for v in &s.elems {
-                    let c = match v {
-                        Value::Int(i) => i.clone(),
-                        Value::Small(s, c) if Integer::from_u64(s.modulus().modulus()) == f.p => Integer::from_u64(*c),
-                        Value::Elt(e) => match e.residue() {
-                            Some(i) if e.ring().finite_field().is_some_and(|g| g.p == f.p && g.degree == 1) || matches!(&e.ring().kind, RingKind::Residue(n) if n == &f.p) => i,
-                            _ => return Ok(None),
-                        },
-                        _ => return Ok(None),
-                    };
-                    coords.push(c);
+            // The sum of the entries times the powers of F.1.
+            Value::Seq(s) if forced && f.degree > 1 && !s.elems.is_empty() && s.elems.len() as u64 <= finite::rel_degree(f) => {
+                return self.field_from_coeffs(st, r, f, &s.elems.clone());
+            }
+            Value::Seq(s) if forced && f.degree == 1 && s.elems.len() == 1 => return self.to_field_elem(st, r, f, &s.elems[0].clone(), forced),
+            // elt< F | a0, ..., am >
+            Value::Tuple(t) if forced => {
+                if t.elems.len() as u64 > finite::rel_degree(f) {
+                    return Err(RuntimeError::runtime("Rhs argument 1 is invalid for this constructor"));
                 }
-                if f.degree == 1 { Elem::from_integer(ctx, &coords[0]).ok() } else { Elem::fq_from_coords(ctx, &coords).ok() }
+                return self.field_from_coeffs(st, r, f, &t.elems.clone());
             }
             _ => None,
         })
+    }
+
+    /// The sum of the coefficients times the powers of `F.1`.
+    fn field_from_coeffs(&mut self, st: &Rc<Struct>, r: &Ring, f: &FiniteField, elems: &[Value]) -> RResult<Option<Elem>> {
+        let mut cs = Vec::with_capacity(elems.len());
+        for v in elems {
+            match self.to_structure_elem(&Value::Struct(st.clone()), v, true)? {
+                Some(c) => cs.push(c),
+                None => return Ok(None),
+            }
+        }
+        let g1 = finite::gen1(r, f);
+        let mut acc = Elem::zero(&r.ctx);
+        for c in cs.iter().rev() {
+            acc = acc.mul(&g1)?.add(c)?;
+        }
+        Ok(Some(acc))
     }
 
     /// Coerce into a ring structure `s` (the `!` operator for rings).
@@ -350,6 +359,12 @@ impl Interp {
                 }
             }
         }
+        if let (Some((_, f)), Value::Seq(s)) = (finite::field_of(st), x) {
+            let n = finite::rel_degree(f);
+            if s.elems.len() as u64 > n {
+                return Ok(Err(Some(format!("Sequence must have length {n} to lift into this finite field"))));
+            }
+        }
         match self.to_ring_elem(st, x, true)? {
             Some(e) => Ok(Ok(make_elt(st, e))),
             None => {
@@ -364,6 +379,9 @@ impl Interp {
                             }
                         }
                     }
+                }
+                if finite::field_of(st).is_some() && crate::rings::small::elt_of(x).is_some_and(|e| e.ring().finite_field().is_some()) {
+                    return Ok(Err(Some("No embedding known into LHS field".into())));
                 }
                 // Explain failed coercions of rationals.
                 if let (Value::Rat(q), StructKind::Ring(r)) = (x, &st.kind) {
@@ -414,100 +432,6 @@ impl Interp {
 
 fn divides(a: &Integer, b: &Integer) -> bool {
     !a.is_zero() && b.div_rem_euclid(a).is_some_and(|(_, r)| r.is_zero())
-}
-
-/// The image in `to` of the generator of the subfield `from`: for Conway
-/// fields, `alpha^((p^n - 1)/(p^d - 1))`.
-fn subfield_generator(from: &FiniteField, to: &FiniteField, to_ctx: &Rc<Ctx>) -> Elem {
-    let one = Integer::one();
-    let k = (&(&to.order() - &one)).div_rem_euclid(&(&from.order() - &one)).unwrap().0;
-    to_ctx.generator().unwrap().pow(&k).unwrap()
-}
-
-/// Map an element of the subfield `from` into `to`.
-pub fn embed_field_elem(x: &Elem, from: &FiniteField, _from_ctx: &Rc<Ctx>, to: &FiniteField, to_ctx: &Rc<Ctx>) -> Elem {
-    if from.degree == 1 {
-        let i = x.to_integer().unwrap_or_default();
-        return Elem::from_integer(to_ctx, &i).unwrap();
-    }
-    if from.degree == to.degree {
-        // Same Conway polynomial: the same coordinates.
-        return Elem::fq_from_coords(to_ctx, &x.fq_coords()).unwrap();
-    }
-    let g = subfield_generator(from, to, to_ctx);
-    let mut acc = Elem::zero(to_ctx);
-    let mut pw = Elem::one(to_ctx).unwrap();
-    for c in x.fq_coords() {
-        if !c.is_zero() {
-            acc = acc.add(&pw.mul_integer(&c).unwrap()).unwrap();
-        }
-        pw = pw.mul(&g).unwrap();
-    }
-    acc
-}
-
-/// Map an element of `from` that lies in its subfield `to` into `to`.
-fn restrict_field_elem(x: &Elem, from: &FiniteField, from_ctx: &Rc<Ctx>, to: &FiniteField, to_ctx: &Rc<Ctx>) -> Option<Elem> {
-    // x lies in the subfield of order q iff x^q = x.
-    let q = to.order();
-    if x.pow(&q).ok()?.equal(x) != Truth::True {
-        return None;
-    }
-    if to.degree == 1 {
-        return Elem::from_integer(to_ctx, &x.fq_prime_value()?).ok();
-    }
-    // Solve for the coordinates of x in the basis g^i of the subfield,
-    // where g is the image of the generator of `to`.
-    let g = subfield_generator(to, from, from_ctx);
-    let n = from.degree as usize;
-    let d = to.degree as usize;
-    let mut cols: Vec<Vec<Integer>> = Vec::with_capacity(d);
-    let mut pw = Elem::one(from_ctx).ok()?;
-    for _ in 0..d {
-        cols.push(pw.fq_coords());
-        pw = pw.mul(&g).ok()?;
-    }
-    let rhs = x.fq_coords();
-    let sol = solve_mod_p(&from.p, &cols, &rhs, n)?;
-    Elem::fq_from_coords(to_ctx, &sol).ok()
-}
-
-/// Solve `sum_j c_j * cols[j] = rhs` over `F_p` (a consistent system with a
-/// unique solution).
-fn solve_mod_p(p: &Integer, cols: &[Vec<Integer>], rhs: &[Integer], n: usize) -> Option<Vec<Integer>> {
-    let d = cols.len();
-    // Augmented matrix, rows = coordinates.
-    let modp = |x: &Integer| x.div_rem_euclid(p).unwrap().1;
-    let mut m: Vec<Vec<Integer>> = (0..n).map(|i| (0..d).map(|j| modp(&cols[j][i])).chain(std::iter::once(modp(&rhs[i]))).collect()).collect();
-    let mut row = 0;
-    let mut pivots = Vec::new();
-    for col in 0..d {
-        let Some(r) = (row..n).find(|&r| !m[r][col].is_zero()) else { continue };
-        m.swap(row, r);
-        let inv = m[row][col].invmod(p)?;
-        for k in col..=d {
-            m[row][k] = modp(&(&m[row][k] * &inv));
-        }
-        for r2 in 0..n {
-            if r2 != row && !m[r2][col].is_zero() {
-                let f = m[r2][col].clone();
-                for k in col..=d {
-                    let v = &m[r2][k] - &(&f * &m[row][k]);
-                    m[r2][k] = modp(&v);
-                }
-            }
-        }
-        pivots.push(col);
-        row += 1;
-    }
-    if (row..n).any(|r| !m[r][d].is_zero()) {
-        return None;
-    }
-    let mut sol = vec![Integer::zero(); d];
-    for (i, &c) in pivots.iter().enumerate() {
-        sol[c] = m[i][d].clone();
-    }
-    Some(sol)
 }
 
 impl From<GrError> for RuntimeError {

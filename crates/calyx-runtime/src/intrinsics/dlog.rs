@@ -62,6 +62,47 @@ impl Units for BigMod {
     }
 }
 
+/// The multiplicative group of a finite field.
+struct FieldUnits(std::rc::Rc<calyx_flint::gr::Ctx>);
+
+/// A field element compared by value.
+#[derive(Clone)]
+struct Fe(calyx_flint::gr::Elem);
+
+impl PartialEq for Fe {
+    fn eq(&self, o: &Fe) -> bool {
+        self.0.equal(&o.0) == calyx_flint::gr::Truth::True
+    }
+}
+
+impl Units for FieldUnits {
+    type E = Fe;
+    fn mul(&self, a: &Fe, b: &Fe) -> Fe {
+        Fe(a.0.mul(&b.0).expect("field multiplication"))
+    }
+    fn pow(&self, a: &Fe, e: &Integer) -> Fe {
+        Fe(a.0.pow(e).expect("field power"))
+    }
+    fn inv(&self, a: &Fe) -> Fe {
+        Fe(a.0.inv().expect("a unit"))
+    }
+    fn one(&self) -> Fe {
+        Fe(calyx_flint::gr::Elem::one(&self.0).expect("field one"))
+    }
+    fn key(&self, a: &Fe) -> u64 {
+        a.0.fq_coords_u64().iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &c| (h ^ c).wrapping_mul(0x0100_0000_01b3))
+    }
+}
+
+/// The least x >= 0 with g^x = y in a finite field of word-sized
+/// characteristic, for g of order n with factorisation `nf`. `None` if y is
+/// not a power of g, or if n has a prime factor too large to handle.
+pub fn log_in_field(y: &calyx_flint::gr::Elem, g: &calyx_flint::gr::Elem, n: &Integer, nf: &[(Integer, u64)]) -> Option<Integer> {
+    let u = FieldUnits(y.ctx().clone());
+    let x = pohlig_hellman(&u, &Fe(g.clone()), &Fe(y.clone()), n, nf)?;
+    (u.pow(&Fe(g.clone()), &x) == Fe(y.clone())).then_some(x)
+}
+
 /// The least x >= 0 with g^x = y modulo the prime p, for a primitive root
 /// g, given the factorisation of p - 1. `None` if y is not a unit, or if
 /// p - 1 has a prime factor too large to handle.

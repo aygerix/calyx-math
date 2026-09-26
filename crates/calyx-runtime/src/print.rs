@@ -164,13 +164,13 @@ fn is_block(v: &Value) -> bool {
     matches!(v, Value::Struct(s) if matches!(s.kind, StructKind::AbGroup(_)))
 }
 
-/// Ring elements that print as sums of terms (polynomials, and finite field
-/// elements not printed as powers).
+/// Ring elements that print as sums of terms (polynomials, and elements of
+/// finite fields too large for Zech logarithms).
 fn elt_is_compound(e: &crate::rings::Elt) -> bool {
     use crate::rings::RingKind;
     match &e.ring().kind {
         RingKind::UPoly { .. } | RingKind::MPoly { .. } | RingKind::UPolyRes { .. } => true,
-        RingKind::Finite(f) => f.degree > 1 && !f.power_printing.get(),
+        RingKind::Finite(f) => f.degree > 1 && !crate::rings::finite::is_small(&f.p, f.degree),
         _ => false,
     }
 }

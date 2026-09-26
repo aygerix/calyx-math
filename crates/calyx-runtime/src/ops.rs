@@ -338,7 +338,12 @@ impl Interp {
                 None => return Ok(None),
             },
             In | Notin => {
-                let c = self.contains(b, a)?;
+                let c = self.contains(b, a).map_err(|mut e| {
+                    if op == Notin && e.context.as_deref() == Some("in") {
+                        e.context = Some("notin".into());
+                    }
+                    e
+                })?;
                 Bool(if op == In { c } else { !c })
             }
             Subset | Notsubset => match self.subset(a, b)? {
@@ -506,6 +511,12 @@ impl Interp {
                 return incompatible("Could not find a covering module");
             }
             if !Rc::ptr_eq(x, y) {
+                if crate::rings::finite::field_of(x).is_some() && crate::rings::finite::field_of(y).is_some() {
+                    return match crate::rings::finite::field_eq(x, y) {
+                        Ok(e) => Ok(Some(e)),
+                        Err(msg) => incompatible(msg),
+                    };
+                }
                 if let (Some(_), Some(_)) = (crate::rings::props::ring_props(a), crate::rings::props::ring_props(b)) {
                     use crate::rings::RingKind;
                     let types = format!("Argument types given: {}, {}", self.type_name_ext(a), self.type_name_ext(b));

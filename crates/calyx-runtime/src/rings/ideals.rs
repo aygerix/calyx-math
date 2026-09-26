@@ -227,6 +227,10 @@ impl Interp {
             let g = self.res_generators(&ring, right, "sub< ... >")?;
             return Ok(Some(vec![self.res_ideal(&ring, &g)]));
         }
+        if let Some(f) = crate::rings::finite::field_struct(base) {
+            let f = f.clone();
+            return self.ff_sub_constructor(&f, right).map(Some);
+        }
         match base.as_struct() {
             Some(StructKind::Integers) => {}
             Some(StructKind::IntIdeal(_)) => return Err(RuntimeError::runtime("LHS must be all of Z, not just an ideal of it").in_context("sub< ... >")),
@@ -268,6 +272,10 @@ impl Interp {
     pub fn ext_constructor(&mut self, left: &[Value], right: &[Value]) -> RResult<Option<Vec<Value>>> {
         if left.len() > 1 {
             return Err(RuntimeError::runtime("This constructer is no longer supported"));
+        }
+        if let (Some(k), [x]) = (crate::rings::finite::field_struct(&left[0]), right) {
+            let k = k.clone();
+            return self.ff_ext_constructor(&k, x).map(Some);
         }
         if !right.is_empty() || crate::rings::props::ring_props(&left[0]).is_none() {
             return Ok(None);

@@ -3,7 +3,7 @@
 use calyx_flint::Integer;
 use calyx_flint::gr::{CtxKind, Elem, MonomialOrder, Truth};
 
-use super::{Elt, Ring, RingKind};
+use super::{Elt, Ring, RingKind, finite};
 use crate::error::RResult;
 use crate::interp::Interp;
 use crate::print::Level;
@@ -164,19 +164,32 @@ pub fn format_ring_elt(it: &mut Interp, e: &Elt, level: Level) -> RResult<String
             }
             let name = gen_name(e, 1);
             if f.power_printing.get() {
-                if let Some(k) = e.x.zech_log() {
-                    // Elements of the prime field print as integers.
-                    let q = f.order();
-                    let step = (&(&q - &Integer::one())).div_rem_euclid(&(&f.p - &Integer::one())).unwrap().0;
-                    let k_int = Integer::from_u64(k);
-                    if k_int.div_rem_euclid(&step).is_some_and(|(_, r)| r.is_zero()) {
-                        return Ok(e.x.fq_prime_value().unwrap_or_default().to_string());
-                    }
-                    return Ok(power(&name, k));
+                let Some(k) = finite::log_gen1(f, &e.x) else { return Ok("0".to_string()) };
+                // Elements of the prime field print as integers.
+                let q1 = &f.order() - &Integer::one();
+                let step = q1.divexact(&(&f.p - &Integer::one()));
+                if Integer::from_u64(k).is_divisible_by(&step) {
+                    return Ok(e.x.fq_prime_value().unwrap_or_default().to_string());
                 }
-                return Ok("0".to_string());
+                return Ok(power(&name, k));
             }
-            int_poly(&e.x.fq_coords(), &name)
+            match &f.ground {
+                None => int_poly(&finite::ground_coords(&e.parent, &e.x).integers(), &name),
+                Some(g) => {
+                    // A polynomial in F.1 with coefficients in the ground field.
+                    let cs = finite::ground_elems(&e.parent, &e.x, &ring.ctx);
+                    let mut terms = Vec::new();
+                    for (i, c) in cs.into_iter().enumerate().rev() {
+                        if c.is_zero() == Truth::True {
+                            continue;
+                        }
+                        let cv = super::make_elt(&g.field, c);
+                        let cs = it.format_flat(&cv, level)?;
+                        terms.push(term(&cs, &power(&name, i as u64)));
+                    }
+                    join_terms(&terms)
+                }
+            }
         }
         RingKind::UPoly { base, .. } | RingKind::UPolyRes { base, .. } => {
             let base = base.clone();
