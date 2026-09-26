@@ -210,13 +210,13 @@ pub(super) fn additive_hilbert90(it: &mut Interp, a: &mut CallArgs) -> RResult<V
     one(make_elt(&l, sol.to_elem(&ctx)))
 }
 
-pub(super) fn factored_order(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+pub(super) fn factored_order(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (f, x) = felt_arg(a, 0)?;
     if is_zero(&x) {
         return Err(RuntimeError::runtime("Can not take order of zero element"));
     }
     let q1 = &ff(&f).1.order() - &Integer::one();
-    let fac = q1.factor().map(|x| x.factors).unwrap_or_default();
+    let fac = it.factor_int(&q1);
     let mut out = Vec::new();
     let mut n = q1.clone();
     for (r, e) in &fac {
@@ -373,7 +373,7 @@ fn sqrt_ts(_it: &mut Interp, f: &Rc<Struct>, a: &Elem) -> RResult<Elem> {
 /// A g-th root (g dividing q - 1) of a g-th power, one prime at a time by
 /// Adleman–Manders–Miller.
 fn root_by_factors(it: &mut Interp, f: &Rc<Struct>, a: &Elem, g: &Integer) -> RResult<Elem> {
-    let fac = g.factor().map(|x| x.factors).unwrap_or_default();
+    let fac = it.factor_int(g);
     let mut y = a.clone();
     for (r, e) in fac {
         for _ in 0..e {

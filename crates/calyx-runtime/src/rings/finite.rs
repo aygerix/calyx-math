@@ -714,7 +714,7 @@ pub fn min_poly(x: &Elem, f: &Rc<Struct>, e: &Rc<Struct>) -> Option<Vec<Elem>> {
 /// The factorisation of q - 1 for the field `st`.
 pub fn qm1_factors(st: &Struct) -> &[(Integer, u64)] {
     let f = ff(st).1;
-    f.cache.qm1_factors.get_or_init(|| (&f.order() - &Integer::one()).factor().map(|fac| fac.factors).unwrap_or_default())
+    f.cache.qm1_factors.get_or_init(|| crate::intrinsics::factseq::factor(&(&f.order() - &Integer::one())))
 }
 
 /// The primes dividing q - 1 for the field `st`.

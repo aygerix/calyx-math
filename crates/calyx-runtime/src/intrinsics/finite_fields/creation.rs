@@ -6,12 +6,9 @@ use super::*;
 pub(super) fn finite_field_q(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let q = a.int_ge(0, 2)?;
     let err = || RuntimeError::runtime(format!("Argument 1 ({q}) is not a prime power"));
-    let f = q.factor().ok_or_else(err)?;
-    if f.factors.len() != 1 {
-        return Err(err());
-    }
-    let (p, n) = f.factors[0].clone();
-    one(it.finite_field(&p, n)?)
+    let f = it.factor_int(&q);
+    let [(p, n)] = &f[..] else { return Err(err()) };
+    one(it.finite_field(p, *n)?)
 }
 
 pub(super) fn finite_field_pn(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
