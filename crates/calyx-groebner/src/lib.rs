@@ -10,6 +10,7 @@
 mod basis;
 mod buchberger;
 mod f4;
+mod fglm;
 pub mod field;
 pub mod order;
 mod poly;
@@ -114,6 +115,21 @@ pub fn is_groebner(base: &Rc<Ctx>, n: usize, order: &Order, polys: &[Terms]) -> 
     with_field!(base, f => Ok(basis::is_groebner(&f, &ring, imports(&f, &ring, polys)?)))
 }
 
+/// The reduced Gröbner basis in the order `to` of the ideal of which `gb`
+/// is the reduced Gröbner basis in the order `from`: for a zero-dimensional
+/// ideal over GF(p), p < 2^31, by a change of order, and otherwise computed
+/// again from `gb`.
+pub fn change_order(base: &Rc<Ctx>, n: usize, from: &Order, gb: &[Terms], to: &Order) -> Result<Vec<Terms>, Error> {
+    let (ring, ring2) = (Ring { n, order: from.clone() }, Ring { n, order: to.clone() });
+    if let Some(Coefficients::Zp(f)) = field::coefficients(base) {
+        let h = if f.modulus() < 1 << 31 { fglm::fglm(&f, &ring, &imports(&f, &ring, gb)?, &ring2) } else { None };
+        if let Some(h) = h {
+            return Ok(h.iter().map(|p| export(&f, &ring2, p)).collect());
+        }
+    }
+    basis_of(base, &ring2, gb, None)
+}
+
 /// A basis by F4 for the primes below 2^31, where it runs in word
 /// arithmetic, and by Buchberger's algorithm for the other fields.
 fn basis_of(base: &Rc<Ctx>, ring: &Ring, gens: &[Terms], limit: Option<(&[u64], i128)>) -> Result<Vec<Terms>, Error> {
@@ -130,6 +146,16 @@ fn basis_of(base: &Rc<Ctx>, ring: &Ring, gens: &[Terms], limit: Option<(&[u64], 
             };
             let g = f4::groebner(&f, ring, imports(&f, ring, gens)?, &weights, limit.map(|(_, d)| d));
             Ok(g.iter().map(|p| export(&f, ring, p)).collect())
+        }
+        // As Magma does, the basis in the other orders is computed in grevlex
+        // and changed to the order, when the ideal is zero-dimensional.
+        Coefficients::Zp(f) if f.modulus() < 1 << 31 => {
+            let grevlex = Ring { n: ring.n, order: Order::GRevLex };
+            let g = f4::groebner(&f, &grevlex, imports(&f, &grevlex, gens)?, &vec![1; ring.n], None);
+            match fglm::fglm(&f, &grevlex, &g, ring) {
+                Some(h) => Ok(h.iter().map(|p| export(&f, ring, p)).collect()),
+                None => groebner_in(&f, ring, gens, None),
+            }
         }
         Coefficients::Zp(f) => groebner_in(&f, ring, gens, limit),
         Coefficients::Gr(f) => groebner_in(&f, ring, gens, limit),
@@ -414,9 +440,12 @@ mod tests {
         ];
         let p = gf(32003);
         let (zp, grp) = (field::Zp::new(&p), field::GrField::new(&p));
+        let grevlex = Ring { n: 3, order: Order::GRevLex };
         let mut s = 0x243f6a8885a308d3;
+        let mut changed = 0;
         for round in 0..24 {
             let gens = random_system(&p, &mut s, 3, 2 + round % 3, 3, 3);
+            let g0 = f4::groebner(&zp, &grevlex, gens.iter().map(|t| import(&zp, &grevlex, t).unwrap()).collect(), &[1; 3], None);
             for o in &orders {
                 let g = checked(&zp, 3, o, &Order::GRevLex, &gens);
                 let ring = Ring { n: 3, order: o.clone() };
@@ -426,13 +455,59 @@ mod tests {
                 assert_eq!(shown(&g), shown(&f4));
                 let h = groebner_in(&grp, &ring, &gens, None).unwrap();
                 assert_eq!(shown(&g), shows("xyz", &h));
+                // So does the change of order when the ideal is zero-dimensional.
+                if let Some(h) = fglm::fglm(&zp, &grevlex, &g0, &ring) {
+                    assert_eq!(shown(&g), shown(&h));
+                    changed += 1;
+                }
             }
         }
+        assert!(changed >= 64, "{changed} changes of order");
         let q = Ctx::rationals();
         for round in 0..8 {
             let gens = random_system(&q, &mut s, 3, 2 + round % 2, 3, 2);
             checked(&field::GrField::new(&q), 3, &Order::GRevLex, &Order::Lex, &gens);
         }
+    }
+
+    #[test]
+    fn change_of_order_for_zero_dimensional_ideals() {
+        let mut s = 0x13198a2e03707344;
+        let mut sizes = Vec::new();
+        for round in 0..16 {
+            // Also a prime near 2^31, where few products fit a word.
+            let p = gf(if round % 4 == 3 { (1 << 31) - 1 } else { 32003 });
+            let zp = field::Zp::new(&p);
+            let n = 2 + round % 3;
+            let gens = random_system(&p, &mut s, n, n, 3 + round % 2, 2 + round as u64 % 3);
+            let (grevlex, lex, elim) = (Ring { n, order: Order::GRevLex }, Ring { n, order: Order::Lex }, Ring { n, order: Order::ElimK(1) });
+            let g0 = f4::groebner(&zp, &grevlex, gens.iter().map(|t| import(&zp, &grevlex, t).unwrap()).collect(), &vec![1; n], None);
+            let masks: Vec<u64> = g0.iter().map(|p| poly::mask(p.lm(n))).collect();
+            let all: Vec<usize> = (0..g0.len()).collect();
+            for ring in [&lex, &elim] {
+                let polys: Vec<Poly<u64>> = gens.iter().map(|t| import(&zp, ring, t).unwrap()).collect();
+                let Some(h) = fglm::fglm(&zp, &grevlex, &g0, ring) else { continue };
+                // A reduced Gröbner basis whose ideal has the generators and is
+                // in theirs.
+                check_reduced(&zp, ring, &polys, &h);
+                assert!(basis::is_groebner(&zp, ring, h.clone()));
+                for f in &h {
+                    let f = import(&zp, &grevlex, &export(&zp, ring, f)).unwrap();
+                    assert!(poly::reduce(&zp, &grevlex, f, 0, &g0, &masks, &all).is_zero());
+                }
+            }
+            sizes.push(g0.len());
+        }
+        assert!(sizes.iter().filter(|&&k| k > 1).count() >= 8);
+        // Katsura-3 in lex, through grevlex.
+        let p = gf(32003);
+        let zp = field::Zp::new(&p);
+        let k = katsura(&p, 3);
+        let ring = Ring { n: 4, order: Order::Lex };
+        let g = groebner(&p, 4, &Order::Lex, &k).unwrap();
+        check_reduced(&zp, &ring, &imports(&zp, &ring, &k).unwrap(), &imports(&zp, &ring, &g).unwrap());
+        assert_eq!(shows("abcd", &g), shows("abcd", &groebner_in(&zp, &ring, &k, None).unwrap()));
+        assert_eq!(g.len(), 4);
     }
 
     fn shows(vars: &str, ts: &[Terms]) -> Vec<String> {
