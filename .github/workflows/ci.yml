@@ -1,5 +1,5 @@
 # Build, clippy and the test suite on every push and pull request.
-# No `cargo fmt --check`: the code is formatted by hand (see CLAUDE.md).
+# No `cargo fmt --check`: the code is formatted by hand.
 name: CI
 
 on:
