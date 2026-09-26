@@ -287,9 +287,10 @@ pub enum St {
     Freeze,
 }
 
+/// Generator names with their spans, and the span of `<`.
 pub enum GenNamesEx {
-    List(Vec<(Place, Span)>),
-    Seq(Place, Span),
+    List(Vec<(Place, Span)>, Span),
+    Seq(Place, Span, Span),
 }
 
 /// A user intrinsic, ready to be registered.

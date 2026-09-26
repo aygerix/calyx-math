@@ -740,24 +740,30 @@ impl Interp {
         }
     }
 
+    /// `E<x, y> := v` as Magma runs it: E is assigned first, then its generators are named (errors
+    /// at `<`), then each name is bound to its generator through Name (errors at the name).
     pub fn gen_assign(&mut self, target: &LV, names: &GenNamesEx, v: Value, f: &mut Frame) -> RResult<()> {
-        let strs: Vec<String> = match names {
-            GenNamesEx::List(ps) => ps.iter().map(|(p, _)| p.name().to_string()).collect(),
-            GenNamesEx::Seq(p, _) => {
-                let n = self.num_generators(&v)?;
-                (1..=n).map(|i| format!("{}[{i}]", p.name())).collect()
+        self.assign(target, v.clone(), f)?;
+        let (strs, lt): (Vec<String>, _) = match names {
+            GenNamesEx::List(ps, lt) => (ps.iter().map(|(p, _)| p.name().to_string()).collect(), *lt),
+            GenNamesEx::Seq(p, _, lt) => {
+                let n = self.num_generators(&v).map_err(|e| e.at(*lt))?;
+                ((1..=n).map(|i| format!("{}[{i}]", p.name())).collect(), *lt)
             }
         };
-        let v = self.assign_generator_names(v, &strs)?;
+        let v = self.assign_generator_names(v, &strs).map_err(|e| e.at(lt))?;
         self.assign(target, v.clone(), f)?;
         match names {
-            GenNamesEx::List(ps) => {
-                for (i, (p, _)) in ps.iter().enumerate() {
-                    let g = self.generator(&v, i + 1)?;
+            GenNamesEx::List(ps, _) => {
+                for (i, (p, sp)) in ps.iter().enumerate() {
+                    let g = self.generator(&v, i + 1).map_err(|e| {
+                        let e = if e.span.is_none() && e.message.starts_with("Bad argument types") { RuntimeError::runtime("Bad argument types").in_context("Name") } else { e };
+                        e.at(*sp)
+                    })?;
                     self.assign_place(*p, g, f)?;
                 }
             }
-            GenNamesEx::Seq(p, _) => {
+            GenNamesEx::Seq(p, ..) => {
                 let n = self.num_generators(&v)?;
                 let mut gens = Vec::new();
                 for i in 1..=n {

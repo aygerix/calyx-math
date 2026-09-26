@@ -378,10 +378,10 @@ impl LValue {
 
 #[derive(Clone, Debug)]
 pub enum GenNames {
-    /// `E<x, y, z>`
-    List(Vec<(Name, Span)>),
-    /// `E<[x]>`
-    Seq(Name, Span),
+    /// `E<x, y, z>`, with the span of `<`
+    List(Vec<(Name, Span)>, Span),
+    /// `E<[x]>`, with the span of `<`
+    Seq(Name, Span, Span),
 }
 
 #[derive(Clone, Debug)]

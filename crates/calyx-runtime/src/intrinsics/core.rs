@@ -424,7 +424,11 @@ fn assert_attribute(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     none()
 }
 
-fn assign_names(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
+fn assign_names(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    // Only structures have names in Magma.
+    if !matches!(a.args[0], Value::Struct(_) | Value::Obj(_)) {
+        return Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {} ~, {}", it.type_name_ext(&a.args[0]), it.type_name_ext(&a.args[1]))));
+    }
     none()
 }
 

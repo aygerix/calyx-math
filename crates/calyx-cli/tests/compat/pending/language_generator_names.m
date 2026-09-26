@@ -1,0 +1,11 @@
+// E<x, y> := v: E is assigned first, then AssignNames (errors at '<'), then each name through Name (errors at the name).
+R<r> := Integers(10); R;
+K<p, q, s> := DirichletGroup(35, GF(13)); K;
+F<a, b> := GF(7); F;
+P<x, y> := PolynomialRing(Integers()); P; x;
+S<[w]> := PolynomialRing(Integers(), 2); w;
+L<c> := [1, 2]; L;
+M<d> := 5; M;
+G<g> := GF(9); g^2;
+H< h > := GF(8); h^3;
+U<u>, V<v> := Explode([PolynomialRing(GF(2)), PolynomialRing(GF(3))]); u + 1; v + 1;

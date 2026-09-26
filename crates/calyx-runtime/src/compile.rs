@@ -289,14 +289,14 @@ impl<'a> Compiler<'a> {
                 for (lv, names) in lvs {
                     let names = match names {
                         None => None,
-                        Some(ast::GenNames::List(ns)) => {
+                        Some(ast::GenNames::List(ns, lt)) => {
                             let mut out = Vec::new();
                             for (n, sp) in ns {
                                 out.push((self.place(Sym::new(n), *sp)?, *sp));
                             }
-                            Some(GenNamesEx::List(out))
+                            Some(GenNamesEx::List(out, *lt))
                         }
-                        Some(ast::GenNames::Seq(n, sp)) => Some(GenNamesEx::Seq(self.place(Sym::new(n), *sp)?, *sp)),
+                        Some(ast::GenNames::Seq(n, sp, lt)) => Some(GenNamesEx::Seq(self.place(Sym::new(n), *sp)?, *sp, *lt)),
                     };
                     targets.push((self.lvalue(lv)?, names));
                 }
@@ -1055,8 +1055,8 @@ fn scan_stmt(s: &Stmt, out: &mut Vec<String>) {
             for (lv, names) in lvs {
                 scan_lvalue(lv, out);
                 match names {
-                    Some(ast::GenNames::List(ns)) => ns.iter().for_each(|n| push_unique(out, &n.0)),
-                    Some(ast::GenNames::Seq(n, _)) => push_unique(out, n),
+                    Some(ast::GenNames::List(ns, _)) => ns.iter().for_each(|n| push_unique(out, &n.0)),
+                    Some(ast::GenNames::Seq(n, ..)) => push_unique(out, n),
                     None => {}
                 }
             }

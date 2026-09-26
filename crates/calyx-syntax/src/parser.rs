@@ -711,17 +711,18 @@ impl<'a> Parser<'a> {
     /// An identifier with generator names: `E<x, y>`, `E<[x]>` or `E<>`.
     fn gen_target(&mut self) -> Option<(LValue, Option<GenNames>)> {
         let (name, sp) = self.ident().ok()?;
-        if !self.eat(&Tok::Lt) {
+        if !self.at(&Tok::Lt) {
             return None;
         }
+        let lt = self.bump().span;
         let names = if self.eat(&Tok::LBrack) {
             let (n, s) = self.ident().ok()?;
             self.eat(&Tok::RBrack).then_some(())?;
-            GenNames::Seq(n, s)
+            GenNames::Seq(n, s, lt)
         } else if self.at(&Tok::Gt) {
-            GenNames::List(Vec::new())
+            GenNames::List(Vec::new(), lt)
         } else {
-            GenNames::List(self.ident_list().ok()?)
+            GenNames::List(self.ident_list().ok()?, lt)
         };
         self.eat(&Tok::Gt).then_some(())?;
         Some((LValue::Ident(name, sp), Some(names)))
