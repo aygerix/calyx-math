@@ -578,7 +578,7 @@ fn leading_total_degree(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 // weights max(w, 1)) need not refine the weighted degree.
 
 /// The weights of the variables of a multivariate polynomial ring.
-fn weights(r: &Ring) -> Vec<u64> {
+pub(super) fn weights(r: &Ring) -> Vec<u64> {
     match &r.kind {
         RingKind::MPoly { grading: Some(w), .. } => w.to_vec(),
         RingKind::MPoly { rank, .. } => vec![1; *rank],
