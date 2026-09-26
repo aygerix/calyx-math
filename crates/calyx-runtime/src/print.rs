@@ -306,15 +306,23 @@ impl Interp {
     /// Print values separated by spaces, followed by a newline.
     pub fn print_values(&mut self, vals: &[Value], level: Level) -> RResult<()> {
         // Like printf, print wraps from the start of its own output.
-        let mut p = Printer::new(0, self.out.columns, level);
+        let mut p = self.printer(level);
         self.fmt_print_list(&mut p, vals)?;
         let text = self.apply_indent(&(p.buf + "\n"));
         self.out.write(&text);
         Ok(())
     }
 
+    /// A printer for the current line width. Without a limit
+    /// (`SetColumns(0)`), Magma indents no lines at all.
+    fn printer(&self, level: Level) -> Printer {
+        let mut p = Printer::new(0, self.out.columns, level);
+        p.bare = self.out.unlimited();
+        p
+    }
+
     fn apply_indent(&self, s: &str) -> String {
-        if self.indent_level == 0 {
+        if self.indent_level == 0 || self.out.unlimited() {
             return s.to_string();
         }
         let pad = " ".repeat(self.indent_level * self.indent_width);
@@ -331,7 +339,7 @@ impl Interp {
 
     /// Format values separated by spaces (no trailing newline).
     pub fn format_print_list(&mut self, vals: &[Value], level: Level) -> RResult<String> {
-        let mut p = Printer::new(0, self.out.columns, level);
+        let mut p = self.printer(level);
         self.fmt_print_list(&mut p, vals)?;
         Ok(p.buf)
     }
@@ -353,7 +361,7 @@ impl Interp {
     }
 
     pub fn format_value(&mut self, v: &Value, level: Level) -> RResult<String> {
-        let mut p = Printer::new(0, self.out.columns, level);
+        let mut p = self.printer(level);
         self.fmt(&mut p, v, 0)?;
         Ok(p.buf)
     }

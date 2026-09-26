@@ -36,6 +36,11 @@ impl Output {
         self.stack.last().map(|s| s.col).unwrap_or(0)
     }
 
+    /// Whether lines have no width limit (`SetColumns(0)`).
+    pub fn unlimited(&self) -> bool {
+        self.columns > 1_000_000
+    }
+
     pub fn write(&mut self, s: &str) {
         self.write_styled(s, None);
     }

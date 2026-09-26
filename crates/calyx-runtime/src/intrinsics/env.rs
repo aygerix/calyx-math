@@ -147,7 +147,7 @@ fn set_columns(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 }
 
 fn get_columns(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
-    let c = if it.out.columns > 1_000_000 { 0 } else { it.out.columns };
+    let c = if it.out.unlimited() { 0 } else { it.out.columns };
     one(Value::int(c as i64))
 }
 
