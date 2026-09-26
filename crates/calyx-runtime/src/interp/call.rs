@@ -245,12 +245,11 @@ impl Interp {
             }
         }
         // Optional parameters: given values or defaults evaluated in the callee.
-        for (pname, _) in &params {
-            if !code.opt_params.iter().any(|(n, _, _)| n == pname) {
-                // Restore arguments before failing.
-                self.restore_args(code, &mut frame, args);
-                return Err(RuntimeError::statement("procedure call", format!("Parameter '{pname}' is not defined for this function")));
-            }
+        if let Some((pname, _)) = params.iter().find(|(n, _)| !code.opt_params.iter().any(|(m, _, _)| m == n)) {
+            // Restore arguments before failing.
+            self.restore_args(code, &mut frame, args);
+            let msg = if code.opt_params.is_empty() { "No parameters are possible".to_string() } else { format!("Parameter '{pname}' is not defined for this function") };
+            return Err(RuntimeError::statement("procedure call", msg));
         }
         self.depth += 1;
         self.nresults_stack.push(nres);
@@ -439,6 +438,16 @@ impl Interp {
         true
     }
 
+    /// `\nArgument types given: ...` for an intrinsic's error, or nothing
+    /// when there are no arguments.
+    fn arg_types_line(&self, args: &[Value], refmask: &[bool]) -> String {
+        if args.is_empty() {
+            return String::new();
+        }
+        let types: Vec<String> = args.iter().zip(refmask).map(|(a, r)| if a.is_undef() { "<unassigned>".to_string() } else if *r { format!("{} ~", self.type_name_ext(a)) } else { self.type_name_ext(a) }).collect();
+        format!("\nArgument types given: {}", types.join(", "))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn call_intrinsic(
         &mut self,
@@ -472,22 +481,16 @@ impl Interp {
             if !self.intrinsics.contains(name) {
                 return Err(self.unassigned_error(name));
             }
-            let types: Vec<String> = args.iter().zip(refmask).map(|(a, r)| if a.is_undef() { "<unassigned>".to_string() } else if *r { format!("{} ~", self.type_name_ext(a)) } else { self.type_name_ext(a) }).collect();
-            let mut msg = "Bad argument types".to_string();
-            if !types.is_empty() {
-                msg.push_str(&format!("\nArgument types given: {}", types.join(", ")));
-            }
-            return Err(RuntimeError::runtime(msg).in_context(name.to_string()));
+            return Err(RuntimeError::runtime(format!("Bad argument types{}", self.arg_types_line(args, refmask))).in_context(name.to_string()));
         };
         if sig.returns.is_none() && !stmt {
             return Err(RuntimeError::runtime("Procedure has no return value (it may only be called as a statement)").in_context(name.to_string()));
         }
         // Fill named parameters.
         let mut full_params = Vec::with_capacity(sig.params.len());
-        for (pname, _) in &params {
-            if !sig.params.iter().any(|p| p.name == *pname) {
-                return Err(RuntimeError::runtime(format!("Undefined parameter '{pname}'")).in_context(name.to_string()));
-            }
+        if let Some((pname, _)) = params.iter().find(|(n, _)| !sig.params.iter().any(|p| p.name == *n)) {
+            let msg = if sig.params.is_empty() { "No parameters are possible".to_string() } else { format!("Parameter '{pname}' is not defined for this function") };
+            return Err(RuntimeError::runtime(format!("{msg}{}", self.arg_types_line(args, refmask))).in_context(name.to_string()));
         }
         let result = match &sig.imp {
             Imp::Native(fun) => {
