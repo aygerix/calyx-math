@@ -166,11 +166,29 @@ fn matrix_rows(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let q = a.seq(k)?.clone();
     let (ring, c) = match (k, q.elems.first()) {
         (1, Some(Value::Seq(s))) => (ring_arg(a, 0)?, s.elems.len()),
-        (1, _) => (ring_arg(a, 0)?, rows_shape(it, &q)?.1),
+        (1, _) => (ring_arg(a, 0)?, 0),
+        (_, Some(Value::Seq(s))) if s.universe.is_none() => return Err(bare(RuntimeError::runtime("Inner sequence must not be null "))),
+        (_, Some(Value::Mat(_))) => return one(flattened(it, &q)?),
         _ => rows_shape(it, &q)?,
     };
     let m = from_seq(it, &ring, q.elems.len(), c, &q)?;
     one(mat_value(it, &ring, m)?)
+}
+
+/// `Matrix(Q)` for a sequence of vectors or matrices (of one shape): their
+/// entries in row-major order as the rows.
+fn flattened(it: &mut Interp, q: &SeqEnum) -> RResult<Value> {
+    let Some(Value::Mat(first)) = q.elems.first() else { unreachable!() };
+    let (r, c) = (first.m.nrows(), first.m.ncols());
+    let mut m = Mat::zero(first.m.ctx(), q.elems.len(), r * c);
+    for (i, x) in q.elems.iter().enumerate() {
+        let Value::Mat(x) = x else { return Err(bad()) };
+        for k in 0..x.m.nrows() {
+            m.insert(&x.m.block(k, 0, 1, c), i, k * c);
+        }
+    }
+    let ring = first.ring().clone();
+    mat_value(it, &ring, m)
 }
 
 /// `Matrix(A)`: A in the matrix algebra or space of its shape.
@@ -615,12 +633,12 @@ pub fn coerce(it: &mut Interp, st: &Rc<Struct>, x: &Value) -> RResult<Result<Val
 pub fn register(it: &mut Interp) {
     it.def("Matrix", "R::Rng, m::RngIntElt, n::RngIntElt, Q::SeqEnum -> Mtrx", "The m by n matrix over R given by Q.", matrix_rmnq);
     it.def("Matrix", "m::RngIntElt, n::RngIntElt, Q::SeqEnum -> Mtrx", "The m by n matrix given by Q.", matrix_mnq);
-    it.def("Matrix", "R::Rng, n::RngIntElt, Q::SeqEnum -> Mtrx", "The matrix over R with rows of length n given by Q.", matrix_nq);
-    it.def("Matrix", "n::RngIntElt, Q::SeqEnum -> Mtrx", "The matrix with rows of length n given by Q.", matrix_nq);
+    it.def("Matrix", "R::Rng, n::RngIntElt, Q::[RngElt] -> Mtrx", "The matrix over R with rows of length n given by Q.", matrix_nq);
+    it.def("Matrix", "n::RngIntElt, Q::[RngElt] -> Mtrx", "The matrix with rows of length n given by Q.", matrix_nq);
+    it.def("Matrix", "Q::[Mtrx] -> Mtrx", "The matrix whose rows are the vectors (or the entries of the matrices) in Q.", matrix_rows);
     // Magma writes the forms taking sequences of sequences in its own language.
-    it.def("Matrix", "Q::[ModTupRngElt] -> Mtrx", "The matrix with the rows Q.", matrix_rows);
-    it.def("Matrix", "Q::SeqEnum -> Mtrx", "The matrix with the rows Q.", matrix_rows).package = true;
-    it.def("Matrix", "R::Rng, Q::SeqEnum -> Mtrx", "The matrix over R with the rows Q.", matrix_rows).package = true;
+    it.def("Matrix", "Q::[SeqEnum] -> Mtrx", "The matrix with the rows Q.", matrix_rows).package = true;
+    it.def("Matrix", "R::Rng, Q::[SeqEnum] -> Mtrx", "The matrix over R with the rows Q.", matrix_rows).package = true;
     it.def("Matrix", "A::Mtrx -> Mtrx", "A in the matrix algebra or space of its shape.", matrix_of);
     it.def("ZeroMatrix", "R::Rng, m::RngIntElt, n::RngIntElt -> Mtrx", "The m by n zero matrix over R.", zero_matrix).package = true;
     it.def("IdentityMatrix", "R::Rng, n::RngIntElt -> Mtrx", "The n by n identity matrix over R.", identity_matrix).package = true;

@@ -499,6 +499,9 @@ impl Interp {
             return Ok(Some(u));
         }
         match (a, b) {
+            (Value::Struct(x), Value::Struct(y)) if matches!((&x.kind, &y.kind), (StructKind::Matrices(_), StructKind::Matrices(_))) => {
+                crate::intrinsics::matrices::cover(self, a, b)
+            }
             (Value::Struct(_), Value::Struct(_)) => self.real_poly_cover(a, b),
             _ => Ok(None),
         }
@@ -997,6 +1000,8 @@ impl Interp {
                 StructKind::Nearfield(_) => TypeVal::Cat(t::NFD_ELT),
                 StructKind::Automorphisms(_) => TypeVal::Cat(t::MAP),
                 StructKind::DrchGroup(_) => TypeVal::Cat(t::GRP_DRCH_ELT),
+                // Magma shows the ring of vectors and square matrices, not of the others.
+                StructKind::Matrices(m) if m.shape == crate::intrinsics::matrices::Shape::Space => TypeVal::Cat(m.elt_type()),
                 StructKind::Matrices(m) => TypeVal::Ext(m.elt_type(), Rc::from(vec![TypeArg::Type(TypeVal::Cat(m.ring.type_id()))])),
             },
             Value::Seq(s) => match s.universe.clone() {
@@ -1116,6 +1121,8 @@ impl Interp {
                 StructKind::Nearfield(_) => TypeVal::Cat(t::NFD_ELT),
                 StructKind::Automorphisms(_) => TypeVal::Cat(t::MAP),
                 StructKind::DrchGroup(_) => TypeVal::Cat(t::GRP_DRCH_ELT),
+                // Magma shows the ring of vectors and square matrices, not of the others.
+                StructKind::Matrices(m) if m.shape == crate::intrinsics::matrices::Shape::Space => TypeVal::Cat(m.elt_type()),
                 StructKind::Matrices(m) => TypeVal::Ext(m.elt_type(), Rc::from(vec![TypeArg::Type(TypeVal::Cat(m.ring.type_id()))])),
             },
             Value::Seq(s) => s.universe.as_ref().map(|u| self.static_element_type(u)).unwrap_or(TypeVal::Cat(t::ANY)),

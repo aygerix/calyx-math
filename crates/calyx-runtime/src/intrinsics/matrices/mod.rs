@@ -17,8 +17,11 @@
 
 mod access;
 mod arith;
+mod blocks;
+mod change;
 mod creation;
 mod linalg;
+mod predicates;
 mod print;
 mod spaces;
 
@@ -222,6 +225,20 @@ pub fn parent(it: &mut Interp, ring: &Value, nrows: usize, ncols: usize, shape: 
     Ok(p)
 }
 
+/// The universe of matrices in two matrix algebras or spaces of one size
+/// over different rings: the one over a ring containing both (Z and Q
+/// matrices meet in the rational ones). Vectors over different rings have
+/// none, as in Magma.
+pub fn cover(it: &mut Interp, a: &Value, b: &Value) -> RResult<Option<Value>> {
+    let (Some(p), Some(q)) = (parent_info(a), parent_info(b)) else { return Ok(None) };
+    if p.shape != q.shape || p.shape == Shape::Tuples || p.nrows != q.nrows || p.ncols != q.ncols || p.sub.is_some() || q.sub.is_some() {
+        return Ok(None);
+    }
+    let (r, s, (m, n, shape)) = (p.ring.clone(), q.ring.clone(), (p.nrows, p.ncols, p.shape));
+    let Some(ring) = it.covering_universe(&r, &s)? else { return Ok(None) };
+    Ok(parent(it, &ring, m, n, shape).ok().map(Value::Struct))
+}
+
 /// The FLINT context of the entries of matrices over `ring`.
 pub fn entry_ctx(it: &mut Interp, ring: &Value) -> RResult<Rc<Ctx>> {
     let supported = match ring.as_struct() {
@@ -366,11 +383,23 @@ fn mat_arg(a: &CallArgs, i: usize) -> RResult<&Rc<Mtrx>> {
     }
 }
 
+/// Argument i as a square matrix.
+fn square(a: &CallArgs, i: usize) -> RResult<Rc<Mtrx>> {
+    let m = mat_arg(a, i)?;
+    if m.m.nrows() != m.m.ncols() {
+        return Err(RuntimeError::runtime(format!("Argument {} is not square", i + 1)));
+    }
+    Ok(m.clone())
+}
+
 /// Register the intrinsics of the chapter.
 pub fn register(it: &mut Interp) {
     creation::register(it);
     access::register(it);
+    blocks::register(it);
+    change::register(it);
     arith::register(it);
     linalg::register(it);
+    predicates::register(it);
     spaces::register(it);
 }

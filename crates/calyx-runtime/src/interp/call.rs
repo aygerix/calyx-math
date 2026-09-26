@@ -559,9 +559,11 @@ impl Interp {
     }
 
     /// An argument as a call frame of an error report shows it: printed
-    /// minimally on one line, and cut after 60 characters.
+    /// minimally on one line (the lines of a matrix, say, joined by single
+    /// spaces), and cut after 60 characters.
     pub fn frame_arg(&mut self, v: &Value) -> String {
-        let s = self.format_flat(v, crate::print::Level::Minimal).unwrap_or_default().replace('\n', " ");
+        let s = self.format_flat(v, crate::print::Level::Minimal).unwrap_or_default();
+        let s = s.split('\n').map(str::trim_start).collect::<Vec<_>>().join(" ");
         match s.char_indices().nth(60) {
             Some((i, _)) => format!("{}...", &s[..i]),
             None => s,
