@@ -502,6 +502,9 @@ pub enum StructKind {
     /// An ideal of a multivariate polynomial ring, of type `RngMPol`
     /// (`intrinsics/poly_ideals.rs`).
     MPolIdeal(Rc<crate::intrinsics::poly_ideals::MPolIdeal>),
+    /// An ideal of an affine algebra, of type `RngMPolRes` like the algebra
+    /// (`intrinsics/poly_ideals/affine.rs`).
+    AffIdeal(Rc<crate::intrinsics::poly_ideals::AffIdeal>),
     /// An abelian group; every construction makes a new group.
     AbGroup(Rc<AbGroup>),
     /// A nearfield (`intrinsics/nearfields.rs`).
@@ -735,6 +738,7 @@ impl Value {
                 StructKind::ResIdeal(..) => t::RNG_INT_RES,
                 StructKind::UPolIdeal(_) => t::RNG_UPOL,
                 StructKind::MPolIdeal(_) => t::RNG_MPOL,
+                StructKind::AffIdeal(_) => t::RNG_MPOL_RES,
                 StructKind::AbGroup(_) => t::GRP_AB,
                 StructKind::Nearfield(n) => n.type_id(),
                 StructKind::Automorphisms(_) => t::POW_MAP_AUT,
@@ -921,6 +925,10 @@ fn struct_hash<H: Hasher>(s: &Struct, state: &mut H) {
             state.write_u8(24);
             id.poly_ring().id.hash(state);
         }
+        StructKind::AffIdeal(id) => {
+            state.write_u8(25);
+            struct_hash(&id.algebra, state);
+        }
         StructKind::AbGroup(g) => (Rc::as_ptr(g) as usize).hash(state),
         StructKind::Nearfield(n) => {
             state.write_u8(23);
@@ -998,6 +1006,7 @@ pub fn struct_eq(a: &Rc<Struct>, b: &Rc<Struct>) -> bool {
         (ResIdeal(r, d), ResIdeal(s, e)) => struct_eq(r, s) && d == e,
         (UPolIdeal(f), UPolIdeal(g)) => f.same_as(g),
         (MPolIdeal(x), MPolIdeal(y)) => x.same_as(y),
+        (AffIdeal(x), AffIdeal(y)) => x.same_as(y),
         (AbGroup(x), AbGroup(y)) => Rc::ptr_eq(x, y),
         (Nearfield(x), Nearfield(y)) => x.same_as(y),
         (Automorphisms(x), Automorphisms(y)) => x == y,

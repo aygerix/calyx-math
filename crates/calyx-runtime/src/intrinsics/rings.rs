@@ -19,8 +19,13 @@ fn ring_arg(a: &CallArgs, i: usize) -> RResult<(Rc<Struct>, Rc<Ring>)> {
     match &a.args[i] {
         Value::Struct(s) => match &s.kind {
             StructKind::Ring(r) => Ok((s.clone(), r.clone())),
-            // An ideal of a polynomial ring answers for the ring.
+            // An ideal of a polynomial ring answers for the ring, and one of an
+            // affine algebra for the algebra.
             StructKind::MPolIdeal(id) => Ok((id.ring.clone(), id.poly_ring().clone())),
+            StructKind::AffIdeal(id) => match &id.algebra.kind {
+                StructKind::Ring(r) => Ok((id.algebra.clone(), r.clone())),
+                _ => unreachable!("an affine algebra"),
+            },
             _ => Err(RuntimeError::runtime("Bad argument types")),
         },
         _ => Err(RuntimeError::runtime("Bad argument types")),
@@ -176,10 +181,12 @@ fn assign_names(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     none()
 }
 
-/// A ring argument, an ideal of a polynomial ring standing for the ring.
+/// A ring argument, an ideal of a polynomial ring (or of an affine algebra)
+/// standing for the ring.
 fn ring_of_arg(v: &Value) -> Value {
     match v.as_struct() {
         Some(StructKind::MPolIdeal(id)) => Value::Struct(id.ring.clone()),
+        Some(StructKind::AffIdeal(id)) => Value::Struct(id.algebra.clone()),
         _ => v.clone(),
     }
 }

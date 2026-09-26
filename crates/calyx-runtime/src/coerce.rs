@@ -393,7 +393,7 @@ impl Interp {
                     _ => fail(),
                 },
                 // Deciding membership of an ideal needs a Gröbner basis.
-                StructKind::MPolIdeal(_) => fail(),
+                StructKind::MPolIdeal(_) | StructKind::AffIdeal(_) => fail(),
             },
             // An aggregate used as a universe: coerce into its universe and
             // check membership.
@@ -851,6 +851,10 @@ impl Interp {
                 let StructKind::MPolIdeal(id) = &st.kind else { unreachable!() };
                 crate::intrinsics::poly_ideals::ideal_contains(self, id, x)
             }
+            Value::Struct(st) if matches!(st.kind, StructKind::AffIdeal(_)) => {
+                let StructKind::AffIdeal(id) = &st.kind else { unreachable!() };
+                crate::intrinsics::poly_ideals::aff_ideal_contains(self, id, x)
+            }
             Value::Struct(st) if matches!(st.kind, StructKind::Nearfield(_)) => {
                 let st = st.clone();
                 self.nfd_contains(&st, x)
@@ -935,6 +939,7 @@ impl Interp {
                 StructKind::ResIdeal(..) => TypeVal::Cat(t::RNG_INT_RES_ELT),
                 StructKind::UPolIdeal(_) => TypeVal::Cat(t::RNG_UPOL_ELT),
                 StructKind::MPolIdeal(_) => TypeVal::Cat(t::RNG_MPOL_ELT),
+                StructKind::AffIdeal(_) => TypeVal::Cat(t::RNG_MPOL_RES_ELT),
                 StructKind::AbGroup(_) => TypeVal::Cat(t::GRP_AB_ELT),
                 StructKind::Nearfield(_) => TypeVal::Cat(t::NFD_ELT),
                 StructKind::Automorphisms(_) => TypeVal::Cat(t::MAP),
@@ -1044,6 +1049,7 @@ impl Interp {
                 StructKind::ResIdeal(..) => TypeVal::Cat(t::RNG_INT_RES_ELT),
                 StructKind::UPolIdeal(_) => TypeVal::Cat(t::RNG_UPOL_ELT),
                 StructKind::MPolIdeal(_) => TypeVal::Cat(t::RNG_MPOL_ELT),
+                StructKind::AffIdeal(_) => TypeVal::Cat(t::RNG_MPOL_RES_ELT),
                 StructKind::AbGroup(_) => TypeVal::Cat(t::GRP_AB_ELT),
                 StructKind::Nearfield(_) => TypeVal::Cat(t::NFD_ELT),
                 StructKind::Automorphisms(_) => TypeVal::Cat(t::MAP),
@@ -1150,6 +1156,10 @@ fn ring_membership_error(r: &crate::rings::Ring, a: &crate::rings::Ring) -> Opti
         (RingKind::Residue(m), RingKind::Residue(n)) if m != n => Some("Arguments have no covering structure"),
         (RingKind::Residue(_), RingKind::Finite(_)) | (RingKind::Finite(_), RingKind::Residue(_)) => Some("Bad argument types"),
         (RingKind::UPoly { .. } | RingKind::MPoly { .. }, RingKind::UPoly { .. } | RingKind::MPoly { .. }) => Some("Arguments are not compatible"),
+        // Affine algebras cover each other only when they are equal.
+        (RingKind::MPolyRes { affine: x, .. }, RingKind::MPolyRes { affine: y, .. }) if !crate::intrinsics::poly_ideals::algebras_equal(x, y).unwrap_or(false) => {
+            Some("Arguments have no covering structure")
+        }
         _ => None,
     }
 }
