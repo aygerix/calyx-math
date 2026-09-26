@@ -682,6 +682,14 @@ fn assign_names(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     none()
 }
 
+/// Unlike most structures, the group gives the reason a coercion fails.
+fn is_coercible(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    match it.try_coerce(&a.args[0], &a.args[1])? {
+        Ok(v) => Ok(vals![Value::Bool(true), v]),
+        Err(reason) => Ok(vals![Value::Bool(false), Value::str(reason.as_deref().unwrap_or("Invalid coercion."))]),
+    }
+}
+
 // ----- elements --------------------------------------------------------------
 
 /// The characters of the group, the first coordinate running fastest.
@@ -1159,6 +1167,7 @@ pub fn register(it: &mut Interp) {
     it.def("BaseExtend", &format!("G::{G}, R::Rng -> {G}"), "The characters of G with values in R.", base_extend);
     it.def("BaseExtend", &format!("G::{G}, R::Rng, z::RngElt -> {G}"), "The characters of G with values in R, the root of unity of G becoming z.", base_extend);
     it.def("AssignNames", &format!("~G::{G}, S::[MonStgElt]"), "Assign names to the generators of G.", assign_names);
+    it.def("IsCoercible", &format!("G::{G}, x::. -> BoolElt, ."), "Whether x can be coerced into G, and the result or the reason it cannot.", is_coercible);
 
     it.def("Elements", &format!("G::{G} -> [{E}]"), "The characters in G.", elements);
     it.def("Random", &format!("G::{G} -> {E}"), "A random character in G.", random);
