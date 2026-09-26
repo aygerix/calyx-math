@@ -12,6 +12,7 @@
 //! 2 x 2 matrices over GF(p) acting regularly on the non-zero vectors: in
 //! coordinates, w * u = w M_u for the matrix M_u taking (1, 0) to u.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use calyx_flint::gr::{Elem, Truth};
@@ -227,10 +228,13 @@ impl FrobeniusMaps {
     }
 }
 
-/// An element of a nearfield: an element of its field.
+/// An element of a nearfield: an element of its field. Magma's elements
+/// also have the attributes `elt`, `parent` and `log`; the ones assigned
+/// are kept in `attrs`, shared by the element's copies as in Magma.
 pub struct NfdElt {
     pub parent: Rc<Struct>,
     pub x: Elem,
+    pub attrs: RefCell<Vec<(Sym, Value)>>,
 }
 
 impl Nearfield {
@@ -433,7 +437,43 @@ fn nfd(st: &Struct) -> &Rc<Nearfield> {
 }
 
 fn elt(st: &Rc<Struct>, x: Elem) -> Value {
-    Value::Nfd(Rc::new(NfdElt { parent: st.clone(), x }))
+    Value::Nfd(Rc::new(NfdElt { parent: st.clone(), x, attrs: RefCell::default() }))
+}
+
+/// The attribute `name` of a nearfield element, if assigned: `elt` is the
+/// element of the field and `parent` the nearfield unless assigned
+/// otherwise, and `log` is assigned only by the user.
+pub fn attr(x: &NfdElt, name: Sym) -> Option<Value> {
+    if let Some((_, v)) = x.attrs.borrow().iter().find(|(n, _)| *n == name) {
+        return Some(v.clone());
+    }
+    match &*name.as_rc() {
+        "elt" => Some(as_field_value(x)),
+        "parent" => Some(Value::Struct(x.parent.clone())),
+        _ => None,
+    }
+}
+
+/// Assign the attribute `name` of the nearfield element `cur`. An element
+/// of the field assigned to `elt` becomes the element's value, as in Magma
+/// (though only in `cur`, not in its copies); other values only change what
+/// the attribute reads back.
+pub fn set_attr(it: &mut Interp, cur: &mut Value, name: Sym, v: Value) -> RResult<()> {
+    let Value::Nfd(x) = cur else { unreachable!("a nearfield element") };
+    if &*name.as_rc() == "elt" {
+        let gf = Value::Struct(nfd(&x.parent).gf.clone());
+        if let Some(e) = it.coerce(&gf, &v).ok().as_ref().and_then(crate::rings::small::elt_of) {
+            let attrs = x.attrs.borrow().iter().filter(|(n, _)| *n != name).cloned().collect();
+            *cur = Value::Nfd(Rc::new(NfdElt { parent: x.parent.clone(), x: e.x.clone(), attrs: RefCell::new(attrs) }));
+            return Ok(());
+        }
+    }
+    let mut attrs = x.attrs.borrow_mut();
+    match attrs.iter_mut().find(|(n, _)| *n == name) {
+        Some(slot) => slot.1 = v,
+        None => attrs.push((name, v)),
+    }
+    Ok(())
 }
 
 /// The element of the field that a nearfield element is.
