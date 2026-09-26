@@ -16,6 +16,7 @@ pub mod upoly;
 mod integer;
 mod lanes;
 mod packed;
+pub mod polroots;
 mod modular;
 pub mod mpfr;
 mod nmod;

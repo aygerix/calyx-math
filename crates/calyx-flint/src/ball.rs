@@ -112,7 +112,7 @@ impl Drop for Acb {
 
 /// The value of a ball rounded to nearest at `bits`, if every point of the
 /// ball rounds to the same number.
-fn round_ball(b: &sys::arb_struct, bits: u64) -> Option<Real> {
+pub(crate) fn round_ball(b: &sys::arb_struct, bits: u64) -> Option<Real> {
     unsafe {
         if sys::arb_is_finite(b) == 0 {
             return None;
