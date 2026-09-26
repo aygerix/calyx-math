@@ -555,6 +555,8 @@ pub struct ErrObj {
     pub kind: Rc<str>,
     pub position: Option<Rc<str>>,
     pub traceback: Option<Rc<str>>,
+    /// How a caught error prints: as it would have been reported.
+    pub report: Option<Rc<str>>,
 }
 
 pub struct CopElt {

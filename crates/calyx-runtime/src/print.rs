@@ -618,8 +618,13 @@ impl Interp {
             Value::ECat(t) => p.write(&t.display(&self.types).to_string()),
             Value::Err(e) => {
                 let e = e.clone();
-                p.write("Error: ");
-                self.fmt(p, &e.object, indent)?;
+                match &e.report {
+                    Some(r) => p.write(r.strip_suffix('\n').unwrap_or(r)),
+                    None => {
+                        p.write("Error: ");
+                        self.fmt(p, &e.object, indent)?;
+                    }
+                }
             }
             Value::Obj(_) => self.fmt_user(p, v)?,
             Value::CopElt(c) => {

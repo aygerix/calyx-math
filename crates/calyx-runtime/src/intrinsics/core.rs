@@ -312,7 +312,7 @@ fn is_intrinsic(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 }
 
 fn error_obj(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    one(Value::Err(Rc::new(ErrObj { object: a.args[0].clone(), kind: Rc::from("ErrUser"), position: None, traceback: None })))
+    one(Value::Err(Rc::new(ErrObj { object: a.args[0].clone(), kind: Rc::from("ErrUser"), position: None, traceback: None, report: None })))
 }
 
 fn nresults(it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {

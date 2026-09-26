@@ -1038,12 +1038,12 @@ impl<'a> Parser<'a> {
                     lhs = Self::mk(ExprKind::Multiplicity(Box::new(lhs), Box::new(rhs)), sp);
                 }
                 Tok::Kw(Kw::Select) if BP_SELECT >= min_bp => {
-                    self.bump();
+                    let op = self.bump().span;
                     let a = self.expr_bp(BP_SELECT)?;
                     self.expect_kw(Kw::Else)?;
                     let b = self.expr_bp(BP_SELECT)?;
                     let sp = lhs.span.to(b.span);
-                    lhs = Self::mk(ExprKind::Select(Box::new(lhs), Box::new(a), Box::new(b)), sp);
+                    lhs = Self::mk_at(ExprKind::Select(Box::new(lhs), Box::new(a), Box::new(b)), sp, op);
                 }
                 Tok::Kw(Kw::Where) if BP_WHERE >= min_bp => {
                     self.bump();

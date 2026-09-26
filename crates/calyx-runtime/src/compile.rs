@@ -261,9 +261,9 @@ impl<'a> Compiler<'a> {
                         return Ok(S { kind: St::CallStmt(Box::new(c), level), span: es[0].err_span() });
                     }
                 }
-                St::Print(self.expr_list(es)?, level)
+                St::Print(self.expr_list(es)?, level, es.len() == 1)
             }
-            StmtKind::Print(es, level) => St::Print(self.expr_list(es)?, level.as_deref().map(Sym::new)),
+            StmtKind::Print(es, level) => St::Print(self.expr_list(es)?, level.as_deref().map(Sym::new), false),
             StmtKind::Printf(es) => St::Printf(self.expr_list(es)?),
             StmtKind::Fprintf(f, es) => St::Fprintf(self.expr(f)?, self.expr_list(es)?),
             StmtKind::Vprint(flag, lvl, es) | StmtKind::Vprintf(flag, lvl, es) => {

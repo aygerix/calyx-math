@@ -97,11 +97,25 @@ pub fn div_by_zero() -> RuntimeError {
     RuntimeError::runtime("Division by zero")
 }
 
+/// Whether Magma reports errors of `op` without naming it, as it does for
+/// arithmetic and comparisons unless the operation is a statement of its
+/// own.
+pub fn unnamed_op(op: BinOp) -> bool {
+    use BinOp::*;
+    matches!(op, Add | Sub | Mul | IntDiv | Eq | Ne | Lt | Le | Gt | Ge)
+}
+
+/// An error of the operator `op` itself, without its name.
+pub fn unname_op(op: BinOp, mut e: RuntimeError) -> RuntimeError {
+    if e.span.is_none() && e.context.as_deref() == Some(op.intrinsic_name()) {
+        e.context = None;
+    }
+    e
+}
+
 impl Interp {
     pub(crate) fn bad_types(&self, op: BinOp, a: &Value, b: &Value) -> RuntimeError {
-        let e = RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}, {}", self.type_name_ext(a), self.type_name_ext(b)));
-        // Inside user functions Magma does not name the operator.
-        if self.depth > 0 { e } else { e.in_context(op.intrinsic_name()) }
+        RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}, {}", self.type_name_ext(a), self.type_name_ext(b))).in_context(op.intrinsic_name())
     }
 
     /// Apply a binary operator (not `and`/`or`, which short-circuit).
@@ -275,7 +289,8 @@ impl Interp {
                     // Rationals with integral values behave like integers.
                     let (x, y) = (rat_of(a).unwrap(), rat_of(b).unwrap());
                     if !x.is_integral() || !y.is_integral() {
-                        return Ok(None);
+                        let msg = "Bad argument types\nArgument types given: FldRatElt, FldRatElt";
+                        return Err(RuntimeError::runtime(msg).in_context(op.intrinsic_name()));
                     }
                     let (q, r) = x.numerator().fdiv_qr(&y.numerator()).ok_or_else(|| div_by_zero().in_context(op.intrinsic_name()))?;
                     Int(if op == IntDiv { q } else { r })
@@ -944,26 +959,27 @@ impl Interp {
                     }
                     let u = universe.unwrap();
                     let unit = if op == BinOp::Add { self.call_intrinsic_named(crate::sym::Sym::new("Zero"), vec![u.clone()]) } else { self.call_intrinsic_named(crate::sym::Sym::new("One"), vec![u.clone()]) };
-                    unit.map_err(|_| RuntimeError::runtime("The universe has no identity for this operation").in_context(ctx))
+                    let what = if op == BinOp::Add { "zero" } else { "one" };
+                    unit.map_err(|_| RuntimeError::runtime(format!("Universe has no {what} element")).in_context(ctx))
                 }
-                BinOp::Join => Ok(match universe {
+                BinOp::Join => match universe {
                     Some(Value::Struct(st)) => match &st.kind {
-                        StructKind::PowerSet(u) => Value::Set(Rc::new(SetEnum::new(u.clone(), VSet::default()))),
-                        StructKind::PowerISet(u) => Value::ISet(Rc::new(SetIndx { universe: u.clone(), elems: VSet::default(), name: Default::default() })),
-                        StructKind::PowerMSet(u) => Value::MSet(Rc::new(SetMulti { universe: u.clone(), elems: VMap::default(), name: Default::default() })),
-                        _ => Value::Set(Rc::new(SetEnum::new(None, VSet::default()))),
+                        StructKind::PowerSet(u) => Ok(Value::Set(Rc::new(SetEnum::new(u.clone(), VSet::default())))),
+                        StructKind::PowerISet(u) => Ok(Value::ISet(Rc::new(SetIndx { universe: u.clone(), elems: VSet::default(), name: Default::default() }))),
+                        StructKind::PowerMSet(u) => Ok(Value::MSet(Rc::new(SetMulti { universe: u.clone(), elems: VMap::default(), name: Default::default() }))),
+                        _ => Err(RuntimeError::runtime("Illegal empty set/sequence").in_context(ctx)),
                     },
-                    _ => Value::Set(Rc::new(SetEnum::new(None, VSet::default()))),
-                }),
-                BinOp::Cat => Ok(match universe {
+                    _ => Ok(Value::Set(Rc::new(SetEnum::new(None, VSet::default())))),
+                },
+                BinOp::Cat => match universe {
                     Some(Value::Struct(st)) => match &st.kind {
-                        StructKind::PowerSeq(u) => Value::seq(u.clone(), Vec::new()),
-                        StructKind::Strings => Value::str(""),
-                        _ => Value::seq(None, Vec::new()),
+                        StructKind::PowerSeq(u) => Ok(Value::seq(u.clone(), Vec::new())),
+                        StructKind::Strings => Ok(Value::str("")),
+                        _ => Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}", self.type_name_ext(s))).in_context(ctx)),
                     },
-                    _ => Value::seq(None, Vec::new()),
-                }),
-                _ => Err(RuntimeError::runtime("Cannot reduce an empty sequence or set").in_context(ctx)),
+                    _ => Ok(Value::seq(None, Vec::new())),
+                },
+                _ => Err(RuntimeError::runtime("Illegal empty set/sequence").in_context(ctx)),
             };
         };
         // Sums and products group their terms as Magma does, which decides
@@ -982,7 +998,18 @@ impl Interp {
             };
             let mut first = Some(acc);
             let mut next = || first.take().or_else(|| it.next_item().map(|(_, x)| x));
-            return Ok(self.reduce_tree(op, &mut next, n.max(1))?.expect("a first term"));
+            let r = self.reduce_tree(op, &mut next, n.max(1));
+            return r.map(|v| v.expect("a first term")).map_err(|e| self.reduce_error(op, s, e));
+        }
+        // Conjunctions, disjunctions and concatenations need suitable
+        // aggregates, whatever their length.
+        let fits = match op {
+            BinOp::And | BinOp::Or => matches!(acc, Value::Bool(_)),
+            BinOp::Cat => matches!(acc, Value::Seq(_) | Value::Str(_) | Value::List(_)),
+            _ => true,
+        };
+        if !fits {
+            return Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}", self.type_name_ext(s))).in_context(ctx));
         }
         while let Some((_, x)) = it.next_item() {
             self.check_interrupt()?;
@@ -990,16 +1017,33 @@ impl Interp {
             acc = match op {
                 BinOp::And | BinOp::Or => match (&cur, &x) {
                     (Value::Bool(p), Value::Bool(q)) => Value::Bool(if op == BinOp::And { *p && *q } else { *p || *q }),
-                    _ => return Err(self.bad_types(op, &cur, &x)),
+                    _ => return Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}", self.type_name_ext(s))).in_context(ctx)),
                 },
                 _ => {
                     let mut c = cur;
-                    self.binop_assign(op, &mut c, x)?;
+                    if let Err(e) = self.binop_assign(op, &mut c, x) {
+                        return Err(self.reduce_error(op, s, e));
+                    }
                     c
                 }
             };
         }
         Ok(acc)
+    }
+
+    /// Magma's error for `&op S` when the elements of `S` lack the
+    /// operation.
+    fn reduce_error(&mut self, op: BinOp, s: &Value, e: RuntimeError) -> RuntimeError {
+        if e.span.is_some() || e.context.as_deref() != Some(op.intrinsic_name()) || !e.message.starts_with("Bad argument types") {
+            return e;
+        }
+        let ctx = format!("&{}", op.intrinsic_name());
+        if op == BinOp::Cat {
+            return RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}", self.type_name_ext(s))).in_context(ctx);
+        }
+        let first = self.iter_value(s, false).ok().and_then(|mut it| it.next_item());
+        let t = first.map_or_else(String::new, |(_, x)| self.type_name(&x));
+        RuntimeError::runtime(format!("Operation not defined on elements of type {t}")).in_context(ctx)
     }
 
     /// The sum or product of the next `n` terms from `next`, grouped as in

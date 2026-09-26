@@ -154,8 +154,7 @@ impl Interp {
                 _ => return Ok(None),
             };
             let types = format!("Argument types given: {}, {}", self.type_name_ext(a), self.type_name_ext(b));
-            let e = RuntimeError::runtime(format!("{msg}\n{types}"));
-            return Err(if self.depth > 0 { e } else { e.in_context(op.intrinsic_name()) });
+            return Err(RuntimeError::runtime(format!("{msg}\n{types}")).in_context(op.intrinsic_name()));
         };
         let Value::Struct(st) = &r else { return Ok(None) };
         if !matches!(st.kind, StructKind::Ring(_)) {

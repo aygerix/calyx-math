@@ -30,13 +30,31 @@ impl Interp {
     fn exec_inner(&mut self, s: &S, f: &mut Frame) -> RResult<Flow> {
         match &s.kind {
             St::Nop => {}
-            St::Print(es, level) => {
+            St::Print(es, level, lone) => {
                 let level = self.print_level(*level)?;
                 let mut vals = Vec::with_capacity(es.len());
                 // Every value returned by a call is printed (except trailing
                 // unassigned ones).
                 for e in es {
-                    let mut vs = self.eval_multi(e, f, 0)?;
+                    let mut vs = match &e.kind {
+                        // As a statement of its own, an operation names its
+                        // operator in errors, and a reduction does not.
+                        Ex::Bin(op, a, b) if *lone && crate::ops::unnamed_op(*op) => {
+                            let (x, y) = (self.eval(a, f)?, self.eval(b, f)?);
+                            vec![self.binop(*op, x, y).map_err(|err| err.at(e.span))?]
+                        }
+                        Ex::Reduce(op, a) if *lone => {
+                            let v = self.eval(a, f)?;
+                            let ctx = format!("&{}", op.intrinsic_name());
+                            vec![self.reduce(*op, &v).map_err(|mut err| {
+                                if err.span.is_none() && err.context.as_deref() == Some(&ctx) && err.message.starts_with("Operation not defined") {
+                                    err.context = None;
+                                }
+                                err.at(e.span)
+                            })?]
+                        }
+                        _ => self.eval_multi(e, f, 0)?,
+                    };
                     while vs.len() > 1 && vs.last().is_some_and(|v| v.is_undef()) {
                         vs.pop();
                     }
@@ -443,9 +461,10 @@ impl Interp {
             }
         };
         let kind = if e.kind == ErrKind::User { "ErrUser" } else { "Err" };
-        let position = e.span.map(|s| Rc::from(self.describe_position(s).as_str()));
+        let position = e.span.map(|s| Rc::from(self.location_block(s, "", true).as_str()));
         let traceback = Some(Rc::from(self.format_trace(e).as_str()));
-        Value::Err(Rc::new(ErrObj { object, kind: Rc::from(kind), position, traceback }))
+        let report = Some(Rc::from(self.format_error(e).as_str()));
+        Value::Err(Rc::new(ErrObj { object, kind: Rc::from(kind), position, traceback, report }))
     }
 
     pub fn describe_position(&self, span: calyx_syntax::Span) -> String {

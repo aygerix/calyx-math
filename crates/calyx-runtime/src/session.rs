@@ -470,7 +470,7 @@ impl Interp {
 
     /// The source line of `span` (a window of it) with a caret under the
     /// position, each line starting with `indent`.
-    fn location_block(&self, span: Span, indent: &str, with_file: bool) -> String {
+    pub(crate) fn location_block(&self, span: Span, indent: &str, with_file: bool) -> String {
         let mut out = String::new();
         let Some(src) = self.source(span.file) else { return out };
         let (line, col) = src.line_col(span.lo as usize);

@@ -153,7 +153,8 @@ impl Interp {
             Ex::Bin(op, a, b) => {
                 let x = self.eval(a, f)?;
                 let y = self.eval(b, f)?;
-                self.binop(*op, x, y)
+                let r = self.binop(*op, x, y);
+                if crate::ops::unnamed_op(*op) { r.map_err(|e| crate::ops::unname_op(*op, e)) } else { r }
             }
             Ex::And(a, b) => {
                 if !self.bool_operand(a, f, "and")? {
@@ -168,7 +169,11 @@ impl Interp {
                 Ok(Value::Bool(self.bool_operand(b, f, "or")?))
             }
             Ex::Select(c, a, b) => {
-                if self.eval_bool(c, f)? {
+                let c = match self.eval(c, f)? {
+                    Value::Bool(c) => c,
+                    _ => return Err(RuntimeError::runtime("Expected a logical for the 'select' operator")),
+                };
+                if c {
                     self.eval(a, f)
                 } else {
                     self.eval(b, f)
@@ -389,10 +394,7 @@ impl Interp {
     fn bool_operand(&mut self, e: &E, f: &mut Frame, op: &str) -> RResult<bool> {
         match self.eval(e, f)? {
             Value::Bool(b) => Ok(b),
-            other => {
-                let t = self.type_name(&other);
-                Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {t}")).in_context(op))
-            }
+            _ => Err(RuntimeError::runtime(format!("Expected a logical for the '{op}' operator"))),
         }
     }
 

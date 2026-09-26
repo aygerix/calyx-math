@@ -1,0 +1,76 @@
+// Errors of + - * div and the comparisons name the operator only when the
+// operation is a statement of its own; other operators are always named.
+x := 1 + "a";
+1 + "a";
+print 1 + "a";
+1 + "a", 2;
+y := [1 + "a"];
+y := 0; z := 3/y;
+z := 3 div y;
+z := 3 mod y;
+z := 1 - "a";
+z := 1 * "a";
+z := 1 / "a";
+z := 1 ^ "a";
+z := 1 div "a";
+z := 1 eq "a";
+z := 1 ne "a";
+z := 1 lt "a";
+z := 1 ge "a";
+z := 1 cat "a";
+z := 1 in 2;
+z := 1 join 2;
+z := -"a";
+z := not 1;
+z := #1;
+z := (1 + "a") + 2;
+z := Abs(1 + "a");
+z := 1/2 div 2;
+z := 2^-1 mod 4;
+a := GF(5)!1; b := GF(7)!1;
+z := a + b;
+a + b;
+z := a / b;
+f := func< x | x + "a" >; z := f(1);
+f := func< x | x / "a" >; z := f(1);
+procedure p(x) x + "a"; end procedure; p(1);
+procedure p(x) print x + "a"; end procedure; p(1);
+if 1 + "a" eq 2 then z := 1; end if;
+z := [x + "a" : x in [1..3]];
+for i in [1..2] do z := i + "a"; end for;
+// Logical operators.
+1 and "a";
+z := "a" and true;
+z := false or "a";
+z := 1 xor true;
+z := "a" select 1 else 2;
+// Mutation assignments report at the operator.
+z := 1; z +:= "a";
+z := [1]; z[1] +:= "a";
+z := 1; z div:= 0;
+z := 1; z mod:= 0;
+z := GF(5)!1; z +:= GF(7)!1;
+f := function(z) z +:= "a"; return z; end function; y := f(1);
+// Reductions.
+z := &+[[1], [2]];
+&+[[1], [2]];
+print &+[[1], [2]];
+z := &*{ {1}, {2} };
+z := &+["a", "b"];
+z := &join[1, 2];
+z := &meet[[1], [2]];
+z := &cat[1, 2];
+z := &and[1, 2];
+z := &+[ PowerSet(Integers()) | ];
+z := &*[ PowerSet(Integers()) | ];
+z := &join[ Integers() | ];
+z := &meet[ Integers() | ];
+z := &cat[ Integers() | ];
+// Caught errors.
+try x := 1 + "a"; catch e print e`Object; end try;
+try 1 + "a"; catch e print e`Object; end try;
+try z := 1; z +:= "a"; catch e print e`Object; end try;
+try x := 1 + "a"; catch e print e; end try;
+try x := Factorization("a"); catch e print e; end try;
+try error "boo"; catch e print e; end try;
+try x := 1 + "a"; catch e p := e`Position; print Type(p); print p; end try;

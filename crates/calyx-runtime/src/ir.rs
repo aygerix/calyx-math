@@ -239,8 +239,9 @@ pub enum PrintLevel {
 
 pub enum St {
     Nop,
-    /// Print a list of expressions (auto-print or `print`).
-    Print(Vec<E>, Option<Sym>),
+    /// Print a list of expressions (auto-print or `print`); true for an
+    /// expression statement of its own.
+    Print(Vec<E>, Option<Sym>, bool),
     /// A lone call: a procedure call, or a function call whose results are printed.
     CallStmt(Box<CallEx>, Option<Sym>),
     Printf(Vec<E>),

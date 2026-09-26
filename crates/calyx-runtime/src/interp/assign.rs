@@ -710,7 +710,7 @@ impl Interp {
                 }
                 let r = self.binop_assign(op, &mut cur, rhs);
                 self.put_place(*p, cur, f);
-                r
+                r.map_err(|e| op_assign_error(op, e, at))
             }
             LV::Discard => Err(RuntimeError::runtime("Cannot apply a mutation assignment to '_'")),
             _ => {
@@ -724,7 +724,7 @@ impl Interp {
                         PathElem::Attr(n) => self.get_attr(&cur, *n).map_err(|e| e.at(lv_root_span(lv)))?,
                     };
                 }
-                let newv = self.binop(op, cur, rhs)?;
+                let newv = self.binop(op, cur, rhs).map_err(|e| op_assign_error(op, e, at))?;
                 let mut root_val = self.take_place(root, f);
                 let r = self.set_path(&mut root_val, &path, newv);
                 self.put_place(root, root_val, f);
@@ -959,4 +959,24 @@ fn lv_root_span(lv: &LV) -> calyx_syntax::Span {
         LV::Var(_, s) => *s,
         LV::Discard => calyx_syntax::Span::default(),
     }
+}
+
+/// An error of the operation in `x o:= y` as Magma reports it: at the
+/// operator, as an error of 'o:=' with its first argument passed by
+/// reference, or as a bare "Bad argument types" when the operation does
+/// not apply.
+fn op_assign_error(op: BinOp, mut e: RuntimeError, at: calyx_syntax::Span) -> RuntimeError {
+    if e.span.is_some() || e.context.as_deref() != Some(op.intrinsic_name()) {
+        return e;
+    }
+    if e.message.starts_with("Bad argument types") {
+        return RuntimeError::runtime("Bad argument types").at(at);
+    }
+    e.context = Some(format!("{}:=", op.intrinsic_name()));
+    if let Some(i) = e.message.find("Argument types given: ") {
+        if let Some(j) = e.message[i..].find(", ") {
+            e.message.insert_str(i + j, " ~");
+        }
+    }
+    e.at(at)
 }
