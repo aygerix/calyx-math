@@ -667,6 +667,24 @@ fn sort_with(it: &mut Interp, vals: &mut Vec<Value>, cmp: Option<&Value>) -> RRe
             }
         }
     }
+    // Integers compare directly, and machine integers sort as pairs of value
+    // and position (which keeps the sort stable, as the merge sort is).
+    if cmp.is_none() && vals.iter().all(|v| matches!(v, Value::Int(_))) {
+        let int = |v: &Value| match v {
+            Value::Int(x) => x.clone(),
+            _ => unreachable!(),
+        };
+        let words: Option<Vec<(i64, usize)>> = vals.iter().enumerate().map(|(i, v)| int(v).to_i64().map(|k| (k, i))).collect();
+        if let Some(mut words) = words {
+            words.sort_unstable();
+            *vals = words.iter().map(|&(k, _)| Value::Int(Integer::from_i64(k))).collect();
+            return Ok(words.into_iter().map(|(_, i)| i).collect());
+        }
+        idx.sort_by(|&a, &b| int(&vals[a]).cmp(&int(&vals[b])));
+        let mut old = std::mem::take(vals);
+        *vals = idx.iter().map(|&i| std::mem::take(&mut old[i])).collect();
+        return Ok(idx);
+    }
     // Merge sort with a fallible comparator (stable).
     let mut err = None;
     let snapshot = vals.clone();
