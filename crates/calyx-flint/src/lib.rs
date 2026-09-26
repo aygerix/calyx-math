@@ -9,6 +9,7 @@ pub mod ball;
 mod complex;
 pub mod fq;
 pub mod gr;
+pub mod mpoly;
 pub mod upoly;
 mod integer;
 mod modular;

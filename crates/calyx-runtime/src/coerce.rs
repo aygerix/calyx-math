@@ -78,9 +78,11 @@ impl Interp {
                 let msg_given = msg.is_some();
                 let reason = msg.unwrap_or_else(|| "Illegal coercion".to_string());
                 // Polynomial rings report just the reason (a plain failure
-                // without the blank line).
-                if crate::rings::ring_of(s).is_some_and(|(_, r)| matches!(r.kind, crate::rings::RingKind::UPoly { .. } | crate::rings::RingKind::UPolyRes { .. })) {
-                    let style = if msg_given { crate::error::ErrStyle::Normal } else { crate::error::ErrStyle::Plain };
+                // without the blank line), as do constant polynomials.
+                let constant = if let Value::Elt(e) = x { e.ring().base().is_some() && self.poly_constant(e).is_some() } else { false };
+                let target = crate::rings::ring_of(s).filter(|(_, r)| r.base().is_some()).map(|(_, r)| matches!(r.kind, crate::rings::RingKind::MPoly { .. }));
+                if let Some(multivariate) = target.or(constant.then_some(true)) {
+                    let style = if msg_given && !multivariate { crate::error::ErrStyle::Normal } else { crate::error::ErrStyle::Plain };
                     return Err(crate::error::ErrorInfo { style, ..crate::error::ErrorInfo::runtime(reason) }.into());
                 }
                 // A reason ending in a newline is reported on its own.

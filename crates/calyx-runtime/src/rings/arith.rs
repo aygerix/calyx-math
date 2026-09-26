@@ -143,17 +143,29 @@ impl Interp {
             if matches!(op, Cmpeq | Cmpne) {
                 return Ok(Some(Value::Bool(op == Cmpne)));
             }
-            // Elements of a polynomial quotient compare only within it.
-            let res = |v: &Value| matches!(v, Value::Elt(e) if matches!(e.ring().kind, RingKind::UPolyRes { .. }));
-            if matches!(op, Eq | Ne) && (res(a) || res(b)) {
-                let types = format!("Argument types given: {}, {}", self.type_name_ext(a), self.type_name_ext(b));
-                return Err(RuntimeError::runtime(format!("Bad argument types\n{types}")).in_context(op.intrinsic_name()));
-            }
-            if finite::field_struct(&pa).is_some() && finite::field_struct(&pb).is_some() {
-                let msg = "Arguments are not compatible\nArgument types given: FldFinElt, FldFinElt";
-                return Err(RuntimeError::runtime(msg).in_context(op.intrinsic_name()));
-            }
-            return Ok(None);
+            // Elements of distinct multivariate polynomial rings, or of
+            // unrelated finite fields, are incompatible; multivariate elements
+            // and those of a polynomial quotient compare only within their ring.
+            let kind = |v: &Value| match v {
+                Value::Elt(e) => match e.ring().kind {
+                    RingKind::MPoly { .. } => 2,
+                    RingKind::UPolyRes { .. } => 1,
+                    _ => 0,
+                },
+                _ => 0,
+            };
+            let msg = match (kind(a), kind(b)) {
+                (2, 2) if op != Mod => "Arguments are not compatible",
+                (1 | 2, _) | (_, 1 | 2) if matches!(op, Eq | Ne) => "Bad argument types",
+                _ if finite::field_struct(&pa).is_some() && finite::field_struct(&pb).is_some() => {
+                    let msg = "Arguments are not compatible\nArgument types given: FldFinElt, FldFinElt";
+                    return Err(RuntimeError::runtime(msg).in_context(op.intrinsic_name()));
+                }
+                _ => return Ok(None),
+            };
+            let types = format!("Argument types given: {}, {}", self.type_name_ext(a), self.type_name_ext(b));
+            let e = RuntimeError::runtime(format!("{msg}\n{types}"));
+            return Err(if self.depth > 0 { e } else { e.in_context(op.intrinsic_name()) });
         };
         let Value::Struct(st) = &r else { return Ok(None) };
         if !matches!(st.kind, StructKind::Ring(_)) {
@@ -225,6 +237,16 @@ impl Interp {
                 }
                 if y.is_zero() == Truth::True {
                     return Err(div_by_zero().in_context(name));
+                }
+                // Multivariate polynomials divide only exactly.
+                if let RingKind::MPoly { .. } = &ring.kind {
+                    if op == Mod {
+                        return Ok(None);
+                    }
+                    return match crate::intrinsics::mpoly::exact_div(&x, &y).map_err(|e| e.in_context(name))? {
+                        Some(q) => Ok(Some(make_elt(st, q))),
+                        None => Err(RuntimeError::runtime("Argument 1 is not exactly divisible by argument 2").in_context(name)),
+                    };
                 }
                 let (q, rem) = match &ring.kind {
                     RingKind::UPoly { .. } => crate::intrinsics::upoly::quotrem(self, ring, &x, &y).map_err(|e| e.in_context(name))?,

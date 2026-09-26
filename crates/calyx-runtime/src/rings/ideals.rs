@@ -268,6 +268,9 @@ impl Interp {
         if let Some(m) = crate::intrinsics::finite_fields::hom_images(self, domain, codomain, images)? {
             return Ok(Some(m));
         }
+        if let Some(m) = crate::intrinsics::mpoly::polynomial_hom(self, domain, codomain, images)? {
+            return Ok(Some(m));
+        }
         Ok(None)
     }
 

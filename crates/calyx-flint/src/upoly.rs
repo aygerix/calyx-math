@@ -188,7 +188,7 @@ fn base_of(ctx: &Rc<Ctx>) -> &Rc<Ctx> {
 
 /// Whether the context of integers modulo a large n is a field, deciding it
 /// (and remembering it in the context) the first time.
-fn fmpz_mod_is_field(base: &Ctx) -> bool {
+pub(crate) fn fmpz_mod_is_field(base: &Ctx) -> bool {
     match base.is_field() {
         Truth::True => true,
         Truth::False => false,
@@ -1240,21 +1240,24 @@ pub fn rational_coeff(f: &Elem, i: usize) -> Option<Rational> {
 mod tests {
     use super::*;
 
+    // Elements that meet in one operation must share their context, so the
+    // helpers take the polynomial ring rather than making one per call.
     fn zpoly(cs: &[i64]) -> Elem {
-        let zz = Ctx::integers();
-        let zx = Ctx::poly(&zz);
-        let v: Vec<Elem> = cs.iter().map(|&c| Elem::from_i64(&zz, c).unwrap()).collect();
-        Elem::poly_from_coeffs(&zx, &v).unwrap()
+        over(&zpoly_ctx(), cs)
     }
 
     fn coeffs_i64(f: &Elem) -> Vec<i64> {
         (0..len(f)).map(|i| f.poly_coeff(i).to_integer().unwrap().to_i64().unwrap()).collect()
     }
 
-    fn over(ctx: &Rc<Ctx>, cs: &[i64]) -> Elem {
-        let px = Ctx::poly(ctx);
-        let v: Vec<Elem> = cs.iter().map(|&c| Elem::from_i64(ctx, c).unwrap()).collect();
-        Elem::poly_from_coeffs(&px, &v).unwrap()
+    fn over(px: &Rc<Ctx>, cs: &[i64]) -> Elem {
+        let base = px.base().unwrap();
+        let v: Vec<Elem> = cs.iter().map(|&c| Elem::from_i64(base, c).unwrap()).collect();
+        Elem::poly_from_coeffs(px, &v).unwrap()
+    }
+
+    fn residue_poly(n: i64) -> Rc<Ctx> {
+        Ctx::poly(&Ctx::residue_ring(&Integer::from_i64(n)))
     }
 
     #[test]
@@ -1289,7 +1292,7 @@ mod tests {
 
     #[test]
     fn modular() {
-        let f7 = Ctx::residue_ring(&Integer::from_i64(7));
+        let f7 = residue_poly(7);
         // z^6 - 1 splits into linear factors over GF(7).
         let f = over(&f7, &[-1, 0, 0, 0, 0, 0, 1]);
         assert_eq!(factor(&f).unwrap().factors.len(), 6);
@@ -1299,13 +1302,13 @@ mod tests {
         assert_eq!(coeffs_i64_mod(&a), vec![6]);
         assert_eq!(coeffs_i64_mod(&b), vec![5, 5]);
         // (z + 1)^100 mod z^3 + z + 1 over GF(5).
-        let f5 = Ctx::residue_ring(&Integer::from_i64(5));
+        let f5 = residue_poly(5);
         let p = powmod(&over(&f5, &[1, 1]), &Integer::from_i64(100), &over(&f5, &[1, 1, 0, 1])).unwrap();
         assert_eq!(coeffs_i64_mod(&p), vec![3, 2, 4]);
         // Composite moduli are not fields.
-        let z12 = Ctx::residue_ring(&Integer::from_i64(12));
+        let z12 = residue_poly(12);
         assert!(factor(&over(&z12, &[1, 0, 1])).is_err());
-        assert!(!over_field(over(&z12, &[1]).ctx()));
+        assert!(!over_field(&z12));
     }
 
     fn coeffs_i64_mod(f: &Elem) -> Vec<i64> {
@@ -1335,12 +1338,12 @@ mod tests {
         assert_eq!(coeffs_i64(&swinnerton_dyer(&zx, 2)), vec![1, 0, -10, 0, 1]);
         // Over Z/6 the Euclidean resultant fails; the Sylvester determinant
         // gives Res(3x^2 + 2x + 1, x + 5) = 3 + 2 + 1 = 0.
-        let z6 = Ctx::residue_ring(&Integer::from_i64(6));
+        let z6 = residue_poly(6);
         assert!(resultant(&over(&z6, &[1, 2, 3]), &over(&z6, &[5, 1])).unwrap().is_zero() == Truth::True);
         assert_eq!(resultant(&over(&z6, &[1, 1]), &over(&z6, &[2, 1])).unwrap().to_integer().unwrap(), Integer::from_i64(1));
-        assert!(!can_factor(over(&z6, &[1]).ctx()) && !over_finite_field(over(&z6, &[1]).ctx()));
+        assert!(!can_factor(&z6) && !over_finite_field(&z6));
         // Distinct-degree factorization by increasing degree.
-        let f7 = Ctx::residue_ring(&Integer::from_i64(7));
+        let f7 = residue_poly(7);
         let g = over(&f7, &[1, 0, 1]).mul(&over(&f7, &[2, 3, 1])).unwrap().mul(&over(&f7, &[1, 1, 0, 1])).unwrap();
         let ddf: Vec<(u64, Vec<i64>)> = distinct_degree(&g).unwrap().iter().map(|(d, p)| (*d, coeffs_i64_mod(p))).collect();
         assert_eq!(ddf, vec![(1, vec![2, 3, 1]), (2, vec![1, 0, 1]), (3, vec![1, 1, 0, 1])]);
@@ -1350,7 +1353,7 @@ mod tests {
     fn hensel() {
         // The handbook's example: x^5 - x^3 + 2x^2 - 2 modulo 5^3.
         let f = zpoly(&[-2, 0, 2, -1, 0, 1]);
-        let f5 = Ctx::residue_ring(&Integer::from_i64(5));
+        let f5 = residue_poly(5);
         let fs = vec![over(&f5, &[1, 1]), over(&f5, &[3, 1]), over(&f5, &[4, 1]), over(&f5, &[4, 2, 1])];
         let lifted = hensel_lift(&f, &fs, 3).unwrap();
         let cs: Vec<Vec<i64>> = lifted.iter().map(|g| coeffs_i64(g).iter().map(|c| c.rem_euclid(125)).collect()).collect();
