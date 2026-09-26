@@ -373,6 +373,7 @@ impl Interp {
                     let den = q.denominator();
                     match &r.kind {
                         RingKind::Finite(f) if den.div_rem_euclid(&f.p).is_some_and(|(_, rem)| rem.is_zero()) => return Ok(Err(Some("Division by zero".into()))),
+                        RingKind::Residue(m) if den.is_divisible_by(m) => return Ok(Err(Some("Denominator is zero".into()))),
                         RingKind::Residue(m) if !den.gcd(m).is_one() => return Ok(Err(Some("Denominator is not a unit".into()))),
                         _ => {}
                     }

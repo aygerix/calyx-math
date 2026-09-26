@@ -521,18 +521,16 @@ impl Interp {
                         p.write(if inv.is_some() { " given by a rule" } else { " given by a rule [no inverse]" });
                     }
                     MapImpl::Graph(g) => {
-                        let g = g.clone();
-                        p.newline(indent);
-                        p.write("<");
-                        for (i, (x, y)) in g.iter().enumerate() {
-                            if i > 0 {
-                                p.write(", ");
-                            }
-                            self.fmt(p, x, indent)?;
-                            p.write(" -> ");
-                            self.fmt(p, y, indent)?;
+                        let pairs: Vec<(Value, Value)> = g.iter().map(|(x, y)| (x.clone(), y.clone())).collect();
+                        self.fmt_map_graph(p, &pairs, indent)?;
+                    }
+                    MapImpl::Native(n) => {
+                        if n.rule() {
+                            p.write(" given by a rule [no inverse]");
                         }
-                        p.write(">");
+                        if let Some(pairs) = n.graph(&m) {
+                            self.fmt_map_graph(p, &pairs, indent)?;
+                        }
                     }
                     MapImpl::Compose(ms) => {
                         p.newline(indent);
@@ -597,6 +595,19 @@ impl Interp {
                 p.write(&text);
                 p.cont = saved;
             }
+        }
+        Ok(())
+    }
+
+    /// The graph of a map, one pair `<x, y>` per line.
+    fn fmt_map_graph(&mut self, p: &mut Printer, pairs: &[(Value, Value)], indent: usize) -> RResult<()> {
+        for (x, y) in pairs {
+            p.newline(indent + 4);
+            p.write("<");
+            self.fmt(p, x, indent + 4)?;
+            p.write(", ");
+            self.fmt(p, y, indent + 4)?;
+            p.write(">");
         }
         Ok(())
     }
@@ -854,6 +865,13 @@ impl Interp {
                 p.cont = saved;
             }
             StructKind::ExtendedReals => p.write(if p.level == Level::Magma { "ExtendedReals()" } else { "Extended Reals" }),
+            StructKind::Automorphisms(x) => {
+                p.write("Set of all automorphisms of ");
+                let saved = p.level;
+                p.level = Level::Default;
+                self.fmt(p, x, indent)?;
+                p.level = saved;
+            }
             StructKind::SymGroup(n) => {
                 let n = *n as usize;
                 let name = group_name(s);

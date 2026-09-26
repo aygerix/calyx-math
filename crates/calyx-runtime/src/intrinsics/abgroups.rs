@@ -302,7 +302,7 @@ fn residue_ring(a: &CallArgs) -> RResult<(Rc<Struct>, Integer)> {
 
 /// A group with its map. A statement printing the call shows only the
 /// group.
-fn with_map(a: &CallArgs, group: Rc<Struct>, map: Value) -> RResult<Vals> {
+pub(super) fn with_map(a: &CallArgs, group: Rc<Struct>, map: Value) -> RResult<Vals> {
     if a.nresults < 2 { one(Value::Struct(group)) } else { Ok(vals![Value::Struct(group), map]) }
 }
 
@@ -389,11 +389,17 @@ fn multiplicative_group_z(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     with_map(a, group, map)
 }
 
-fn class_group_z(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    is_integers(a)?;
+/// The trivial class group of Z with its map onto the ideals.
+pub(super) fn class_group_of_z() -> (Rc<Struct>, Value) {
     let group = new_group(Vec::new());
     let codomain = Value::structure(StructKind::PowerStructure(crate::types::t::RNG_INT));
     let map = native_map(group.clone(), codomain, ClassMap);
+    (group, map)
+}
+
+fn class_group_z(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    is_integers(a)?;
+    let (group, map) = class_group_of_z();
     with_map(a, group, map)
 }
 
