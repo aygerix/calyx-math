@@ -280,7 +280,7 @@ fn needs_newline(v: &Value) -> bool {
     match v {
         Value::Seq(_) | Value::Set(_) | Value::ISet(_) | Value::MSet(_) | Value::Struct(_) | Value::Rec(_) => true,
         Value::Elt(e) => elt_is_compound(e),
-        Value::Perm(_) | Value::AbElt(_) | Value::Map(_) | Value::Nfd(_) => true,
+        Value::Perm(_) | Value::AbElt(_) | Value::Map(_) | Value::Nfd(_) | Value::Drch(_) => true,
         Value::Tuple(t) => t.elems.iter().any(needs_newline),
         _ => false,
     }
@@ -644,6 +644,12 @@ impl Interp {
             }
             Value::Small(_, x) => p.write(&x.to_string()),
             Value::AbElt(x) => p.write(&x.format()),
+            // Magma's package code prints characters: the line counts as
+            // empty after them, as after nearfields.
+            Value::Drch(x) => {
+                p.write(&crate::intrinsics::residue::dirichlet::format(x));
+                p.col = 0;
+            }
             // Magma prints nearfield elements as text: unlike field elements,
             // their continuation lines are not indented further, and the
             // field's generator goes by a name given with < > only, not by
@@ -879,6 +885,16 @@ impl Interp {
         }
         match &s.kind {
             StructKind::AbGroup(g) => fmt_abgroup(p, s, g, indent),
+            // Magma's package code prints the group the same at every level,
+            // and the line counts as empty after it.
+            StructKind::DrchGroup(g) => {
+                p.write(&format!("Group of Dirichlet characters of modulus {} over ", g.modulus));
+                let (saved, ring) = (p.level, g.ring.clone());
+                p.level = Level::Default;
+                self.fmt(p, &ring, indent)?;
+                p.level = saved;
+                p.col = 0;
+            }
             // Magma's package code prints nearfields (without the order at
             // the minimal level), and what it prints does not count toward
             // the width of the line: the line counts as empty after it.

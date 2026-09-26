@@ -133,6 +133,7 @@ fn object_addr(v: &Value) -> Option<*const ()> {
         Perm(x) => Rc::as_ptr(x) as *const (),
         AbElt(x) => Rc::as_ptr(x) as *const (),
         Nfd(x) => Rc::as_ptr(x) as *const (),
+        Drch(x) => Rc::as_ptr(x) as *const (),
         _ => return None,
     })
 }

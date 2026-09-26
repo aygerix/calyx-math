@@ -106,13 +106,15 @@ pub fn unnamed_op(op: BinOp) -> bool {
 }
 
 /// An error of the operator `op` itself as Magma reports it: + - * div and
-/// the comparisons are named only in a statement of their own (`stmt`),
-/// and failed requirements everywhere but there.
+/// the comparisons are named only in a statement of their own (`stmt`).
+/// Failed requirements (even those an intrinsic for the operator named)
+/// are named everywhere but there, except that + - * div and the
+/// comparisons never name them.
 pub fn op_error(op: BinOp, mut e: RuntimeError, stmt: bool) -> RuntimeError {
-    if e.span.is_none() && !stmt {
+    if e.span.is_none() {
         if e.require {
-            e.context = Some(op.intrinsic_name().into());
-        } else if unnamed_op(op) && e.context.as_deref() == Some(op.intrinsic_name()) {
+            e.context = Some(if stmt || unnamed_op(op) { String::new() } else { op.intrinsic_name().into() });
+        } else if !stmt && unnamed_op(op) && e.context.as_deref() == Some(op.intrinsic_name()) {
             e.context = None;
         }
     }
@@ -608,6 +610,9 @@ impl Interp {
         }
         if let (Value::Nfd(x), Value::Nfd(y)) = (a, b) {
             return crate::intrinsics::nearfields::nfd_equal(x, y).map(Some);
+        }
+        if let (Value::Drch(x), Value::Drch(y)) = (a, b) {
+            return Ok(Some(crate::intrinsics::residue::dirichlet::equal(x, y)));
         }
         if let Some(e) = crate::intrinsics::reals::num_eq(a, b) {
             return Ok(Some(e));
@@ -1198,7 +1203,13 @@ impl Interp {
                 self.apply_map(&mm, x)
             }
             Value::Func(_) | Value::Intr(_) => self.call_function(m, vec![x.clone()]),
-            _ => Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}, {}", self.type_name(x), self.type_name(m))).in_context("@")),
+            _ => {
+                // Other values act through the intrinsics for '@'.
+                if let Some(v) = self.dispatch_user_operator("@", vec![x.clone(), m.clone()])? {
+                    return Ok(v);
+                }
+                Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}, {}", self.type_name(x), self.type_name(m))).in_context("@"))
+            }
         }
     }
 

@@ -74,6 +74,8 @@ pub enum Value {
     AbElt(Rc<AbElt>),
     /// An element of a nearfield (`NfdElt`).
     Nfd(Rc<crate::intrinsics::nearfields::NfdElt>),
+    /// A Dirichlet character (`GrpDrchElt`).
+    Drch(Rc<crate::intrinsics::residue::dirichlet::DrchElt>),
     /// `Infinity()` (`true`) or `-Infinity()` (`false`).
     Infinity(bool),
 }
@@ -514,6 +516,8 @@ pub enum StructKind {
     Nearfield(Rc<crate::intrinsics::nearfields::Nearfield>),
     /// The set of all automorphisms of a structure (`PowMapAut`).
     Automorphisms(Value),
+    /// A group of Dirichlet characters (`intrinsics/residue/dirichlet.rs`).
+    DrchGroup(Rc<crate::intrinsics::residue::dirichlet::DrchGroup>),
 }
 
 #[derive(Clone)]
@@ -764,6 +768,7 @@ impl Value {
                 StructKind::AbGroup(_) => t::GRP_AB,
                 StructKind::Nearfield(n) => n.type_id(),
                 StructKind::Automorphisms(_) => t::POW_MAP_AUT,
+                StructKind::DrchGroup(_) => t::GRP_DRCH,
             },
             Value::Cat(_) => t::CAT,
             Value::ECat(_) => t::ECAT,
@@ -776,6 +781,7 @@ impl Value {
             Value::Perm(_) => t::GRP_PERM_ELT,
             Value::AbElt(_) => t::GRP_AB_ELT,
             Value::Nfd(_) => t::NFD_ELT,
+            Value::Drch(_) => t::GRP_DRCH_ELT,
             Value::Infinity(_) => t::INFTY,
         }
     }
@@ -886,6 +892,12 @@ impl Hash for Value {
                 state.write_u8(22);
                 crate::intrinsics::nearfields::as_field_value(x).hash(state);
             }
+            // Equal characters over different rings hash alike.
+            Value::Drch(x) => {
+                state.write_u8(26);
+                x.modulus().hash(state);
+                x.exps.hash(state);
+            }
             Value::Infinity(pos) => state.write_u8(if *pos { 19 } else { 20 }),
         }
     }
@@ -960,6 +972,10 @@ fn struct_hash<H: Hasher>(s: &Struct, state: &mut H) {
             state.write_u8(14);
             x.hash(state);
         }
+        StructKind::DrchGroup(g) => {
+            state.write_u8(27);
+            g.modulus.hash(state);
+        }
     }
 }
 
@@ -1000,6 +1016,7 @@ impl PartialEq for Value {
             (Perm(a), Perm(b)) => a.images == b.images,
             (AbElt(a), AbElt(b)) => Rc::ptr_eq(&a.group, &b.group) && a.coords == b.coords,
             (Nfd(a), Nfd(b)) => crate::intrinsics::nearfields::nfd_equal(a, b).unwrap_or(false),
+            (Drch(a), Drch(b)) => crate::intrinsics::residue::dirichlet::equal(a, b),
             (Infinity(a), Infinity(b)) => a == b,
             _ => false,
         }
@@ -1032,6 +1049,7 @@ pub fn struct_eq(a: &Rc<Struct>, b: &Rc<Struct>) -> bool {
         (AbGroup(x), AbGroup(y)) => Rc::ptr_eq(x, y),
         (Nearfield(x), Nearfield(y)) => x.same_as(y),
         (Automorphisms(x), Automorphisms(y)) => x == y,
+        (DrchGroup(x), DrchGroup(y)) => crate::intrinsics::residue::dirichlet::same_group(x, y),
         _ => false,
     }
 }

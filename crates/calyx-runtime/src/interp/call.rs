@@ -157,6 +157,9 @@ impl Interp {
             }
             // Magma reads `f(x)` as `x @ f`.
             other if args.len() == 1 && params.is_empty() => {
+                if let Some(v) = self.dispatch_user_operator("@", vec![args[0].clone(), other.clone()])? {
+                    return Ok(Some(vals![v]));
+                }
                 let e = RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}, {}", self.type_name_ext(&args[0]), self.type_name_ext(other)));
                 Err(if stmt { e.in_context("@") } else { e })
             }
