@@ -2,7 +2,9 @@
 //! the reduced basis is computed modulo primes below 2^31, where F4 and FGLM
 //! run in words, and its coefficients are recovered by Chinese remaindering
 //! and rational reconstruction. F4 runs in full on one prime, traced, and is
-//! replayed on the others.
+//! replayed on the others. A lex basis in shape position is lifted through
+//! its rational univariate representation, whose coefficients are far
+//! smaller (see `rur`).
 //!
 //! For all but finitely many primes the basis modulo p is the reduction of
 //! the basis over the rationals. The few others show other leading
@@ -15,7 +17,7 @@ use std::cmp::Ordering;
 use std::rc::Rc;
 
 use calyx_flint::gr::{Ctx, Elem};
-use calyx_flint::{Crt, Integer, Rational};
+use calyx_flint::{Crt, Integer, Rational, nmod_poly};
 
 use crate::field::{Field, Zp};
 use crate::order::Order;
@@ -111,16 +113,154 @@ pub(crate) fn groebner(q: &Rc<Ctx>, ring: &Ring, gens: &[Terms]) -> Result<Optio
 /// The reduced Gröbner basis in the order of `to` of the ideal whose reduced
 /// Gröbner basis in the order of `from` is `gb`; None if the modular method
 /// gives up. For a zero-dimensional ideal the primes take FGLM, which needs
-/// no F4; for others, Buchberger's algorithm in the order.
+/// no F4, and a lex basis in shape position is lifted through its rational
+/// univariate representation (see `rur`); for others, Buchberger's algorithm
+/// in the order.
 pub(crate) fn change_order(q: &Rc<Ctx>, from: &Ring, gb: &[Terms], to: &Ring) -> Result<Option<Vec<Terms>>, Error> {
     let polys = qpolys(gb, from)?;
     if !zero_dimensional(&polys, from.n) {
         return basis(q, to, gb, |f, polys, _| Step::Basis(buchberger::groebner(f, to, polys, None)));
     }
-    lift(q, to, |f, _| match polys.iter().map(|g| g.modulo(f, from.n)).collect::<Option<Vec<_>>>() {
+    let modulo = |f: &Zp| polys.iter().map(|g| g.modulo(f, from.n)).collect::<Option<Vec<_>>>();
+    if matches!(to.order, Order::Lex) && to.n >= 2 {
+        if let Ok(b) = rur(to, |f| modulo(f).map(|gb| fglm::fglm(f, from, &gb, to).unwrap_or_default())) {
+            return b.map(|b| export(q, &b)).transpose();
+        }
+    }
+    lift(q, to, |f, _| match modulo(f) {
         Some(polys) => fglm::fglm(f, from, &polys, to).map_or(Step::Fails, Step::Basis),
         None => Step::Bad,
     })
+}
+
+/// The lex basis over the rationals of a zero-dimensional ideal in shape
+/// position, x_i + r_i(x_n) for i < n and f(x_n) with f squarefree, whose
+/// lex bases modulo primes `lex` gives (None for a bad prime). It is lifted
+/// through its rational univariate representation, f and the h_i = r_i f'
+/// mod f, whose coefficients are far smaller than those of the r_i. With f
+/// and the h_i known, the r_i modulo a prime are h_i / f' mod f, which takes
+/// no FGLM, and they are lifted in turn. None if the modular method gives
+/// up; Err if a prime shows the ideal is not in shape position, or the
+/// first one that f is not squarefree.
+fn rur(to: &Ring, lex: impl Fn(&Zp) -> Option<Vec<Poly<u64>>>) -> Result<Option<Vec<QTerms>>, ()> {
+    let n = to.n;
+    let (mut shape, mut first) = (true, true);
+    let rep = lifted(to, |f, _| {
+        let Some(g) = lex(f) else { return Step::Bad };
+        let Some((m, r)) = in_shape(&g, n) else {
+            shape = false;
+            return Step::Fails;
+        };
+        let p = f.modulus();
+        let dm = derivative(f, &m);
+        if std::mem::take(&mut first) && nmod_poly::invmod(&dm, &m, p).is_none() {
+            shape = false;
+            return Step::Fails;
+        }
+        // Each h_i with the term x_n^D, so that all have the leading
+        // monomial of f.
+        let h = r.iter().map(|r| {
+            let mut h = nmod_poly::mulmod(r, &dm, &m, p);
+            h.push(1);
+            univariate(&h, n)
+        });
+        Step::Basis(std::iter::once(univariate(&m, n)).chain(h).collect())
+    });
+    let Some(rep) = rep else { return if shape { Ok(None) } else { Err(()) } };
+    let d = rep[0][0].0[n - 1] as usize;
+    let f = Dense::new(&rep[0], d + 1, n);
+    let h: Vec<Dense> = rep[1..].iter().map(|t| Dense::new(t, d, n)).collect();
+    Ok(lifted(to, |fp, _| {
+        let (Some(m), Some(h)) = (f.modulo(fp), h.iter().map(|h| h.modulo(fp)).collect::<Option<Vec<_>>>()) else { return Step::Bad };
+        let p = fp.modulus();
+        match nmod_poly::invmod(&derivative(fp, &m), &m, p) {
+            Some(s) => Step::Basis(shaped(&m, h.iter().map(|h| nmod_poly::mulmod(h, &s, &m, p)), n)),
+            None => Step::Bad,
+        }
+    }))
+}
+
+/// The lex basis `g` modulo p as f and the r_i if it is in shape position,
+/// x_i + r_i(x_n) for i < n and f(x_n) with f of positive degree D, dense
+/// from the constant term up: D + 1 coefficients for f, D for each r_i.
+fn in_shape(g: &[Poly<u64>], n: usize) -> Option<(Vec<u64>, Vec<Vec<u64>>)> {
+    let lm_is = |p: &Poly<u64>, i: usize, k: u32| p.lm(n).iter().enumerate().all(|(j, &x)| x == if j == i { k } else { 0 });
+    let d = g.last()?.lm(n)[n - 1];
+    if g.len() != n || d == 0 || !lm_is(&g[n - 1], n - 1, d) || !(0..n - 1).all(|i| lm_is(&g[i], i, 1)) {
+        return None;
+    }
+    // The other terms are in the staircase, the powers of x_n below D.
+    let dense = |p: &Poly<u64>, skip: usize, len: usize| {
+        let mut v = vec![0; len];
+        (skip..p.len()).for_each(|j| v[p.exp(j, n)[n - 1] as usize] = p.c[j]);
+        v
+    };
+    Some((dense(&g[n - 1], 0, d as usize + 1), g[..n - 1].iter().map(|p| dense(p, 1, d as usize)).collect()))
+}
+
+/// The lex basis in shape position with f = `m` and the r_i (see
+/// `in_shape`).
+fn shaped(m: &[u64], r: impl Iterator<Item = Vec<u64>>, n: usize) -> Vec<Poly<u64>> {
+    let mut out: Vec<Poly<u64>> = r
+        .enumerate()
+        .map(|(i, r)| {
+            let t = univariate(&r, n);
+            let mut e = vec![0; n];
+            e[i] = 1;
+            e.extend(t.e);
+            Poly { c: std::iter::once(1).chain(t.c).collect(), e }
+        })
+        .collect();
+    out.push(univariate(m, n));
+    out
+}
+
+/// The polynomial in the last of n variables with the coefficients `v`,
+/// from the constant term up.
+fn univariate(v: &[u64], n: usize) -> Poly<u64> {
+    let mut p = Poly { c: Vec::new(), e: Vec::new() };
+    for (k, &c) in v.iter().enumerate().rev().filter(|&(_, &c)| c != 0) {
+        p.c.push(c);
+        p.e.resize(p.e.len() + n - 1, 0);
+        p.e.push(k as u32);
+    }
+    p
+}
+
+/// The derivative of the polynomial `m` modulo p, dense from the constant
+/// term up.
+fn derivative(f: &Zp, m: &[u64]) -> Vec<u64> {
+    m.iter().enumerate().skip(1).map(|(k, c)| f.mul(&(k as u64 % f.modulus()), c)).collect()
+}
+
+/// A polynomial in the last variable over the rationals, dense from the
+/// constant term up: integer coefficients over a common denominator.
+struct Dense {
+    num: Vec<Integer>,
+    den: Integer,
+}
+
+impl Dense {
+    /// The terms of `t` of degree below `len`, in n variables.
+    fn new(t: &QTerms, len: usize, n: usize) -> Dense {
+        let t: Vec<&(Vec<u32>, Rational)> = t.iter().filter(|(e, _)| (e[n - 1] as usize) < len).collect();
+        let den = t.iter().fold(Integer::one(), |d, (_, c)| d.lcm(&c.denominator()));
+        let mut num = vec![Integer::zero(); len];
+        for (e, c) in t {
+            num[e[n - 1] as usize] = &c.numerator() * &den.divexact(&c.denominator());
+        }
+        Dense { num, den }
+    }
+
+    /// The polynomial modulo p; None if p divides the denominator.
+    fn modulo(&self, f: &Zp) -> Option<Vec<u64>> {
+        let p = f.modulus();
+        let d = self.den.mod_u64(p);
+        (d != 0).then(|| {
+            let u = f.inv(&d);
+            self.num.iter().map(|a| f.mul(&a.mod_u64(p), &u)).collect()
+        })
+    }
 }
 
 /// Whether the basis `gb` is that of the unit ideal or of a zero-dimensional
@@ -199,7 +339,12 @@ fn primes() -> impl Iterator<Item = u64> {
 /// The basis over the rationals `q`, in the order of `ring`, whose
 /// reductions modulo primes `step` computes; it is told whether the prime
 /// checks a candidate.
-fn lift(q: &Rc<Ctx>, ring: &Ring, mut step: impl FnMut(&Zp, bool) -> Step) -> Result<Option<Vec<Terms>>, Error> {
+fn lift(q: &Rc<Ctx>, ring: &Ring, step: impl FnMut(&Zp, bool) -> Step) -> Result<Option<Vec<Terms>>, Error> {
+    lifted(ring, step).map(|c| export(q, &c)).transpose()
+}
+
+/// As `lift`, with the rational coefficients.
+fn lifted(ring: &Ring, mut step: impl FnMut(&Zp, bool) -> Step) -> Option<Vec<QTerms>> {
     let n = ring.n;
     let mut groups: Vec<Lift> = Vec::new();
     let mut candidate: Option<(Vec<Vec<u32>>, Vec<QTerms>)> = None;
@@ -214,7 +359,7 @@ fn lift(q: &Rc<Ctx>, ring: &Ring, mut step: impl FnMut(&Zp, bool) -> Step) -> Re
                 g
             }
             Step::Bad => continue,
-            Step::Fails => return Ok(None),
+            Step::Fails => return None,
         };
         let lms: Vec<Vec<u32>> = g.iter().map(|x| x.lm(n).to_vec()).collect();
         // A prime with the leading monomials of the candidate checks it; one
@@ -222,7 +367,7 @@ fn lift(q: &Rc<Ctx>, ring: &Ring, mut step: impl FnMut(&Zp, bool) -> Step) -> Re
         if let Some((clms, c)) = &candidate {
             if *clms == lms {
                 match agrees(c, &g, &f, n) {
-                    Some(true) => return Ok(Some(export(q, c)?)),
+                    Some(true) => return candidate.map(|(_, c)| c),
                     Some(false) => candidate = None,
                     None => continue,
                 }
@@ -242,7 +387,7 @@ fn lift(q: &Rc<Ctx>, ring: &Ring, mut step: impl FnMut(&Zp, bool) -> Step) -> Re
             candidate = groups[k].reconstruct().map(|c| (groups[k].lms.clone(), c));
         }
     }
-    Ok(None)
+    None
 }
 
 /// A polynomial over the rationals: its terms, exponents and coefficient,

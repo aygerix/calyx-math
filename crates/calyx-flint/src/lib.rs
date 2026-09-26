@@ -20,6 +20,7 @@ pub mod polroots;
 mod modular;
 pub mod mpfr;
 mod nmod;
+pub mod nmod_poly;
 pub mod quadrature;
 mod rational;
 mod real;
