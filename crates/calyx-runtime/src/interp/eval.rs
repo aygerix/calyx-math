@@ -736,8 +736,9 @@ impl Interp {
                     vals.push(self.eval(x, f)?);
                 }
                 // hom< D -> C | images >: the images of the generators of D, for
-                // the structures whose homomorphisms are given that way.
-                if matches!(kind, MapKind::Hom | MapKind::Iso) && !is_graph(&vals) {
+                // the structures whose homomorphisms are given that way. No
+                // images at all is theirs to reject too.
+                if matches!(kind, MapKind::Hom | MapKind::Iso) && (vals.is_empty() || !is_graph(&vals)) {
                     let images = match &vals[..] {
                         [Value::Seq(s)] => s.elems.iter().cloned().collect(),
                         _ => vals.clone(),

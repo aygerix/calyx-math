@@ -12,3 +12,6 @@ F := GF(7); G := GF(49);
 h := hom< F -> G | >;
 h;
 h(3);
+// No images for a homomorphism of abelian groups.
+G := AdditiveGroup(Integers(6));
+m := hom< G -> G | >;

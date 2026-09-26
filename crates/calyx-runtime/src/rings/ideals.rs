@@ -271,6 +271,9 @@ impl Interp {
         if let Some(m) = crate::intrinsics::mpoly::polynomial_hom(self, domain, codomain, images)? {
             return Ok(Some(m));
         }
+        if images.is_empty() && matches!(domain.as_struct(), Some(StructKind::AbGroup(_))) {
+            return Err(RuntimeError::runtime("Bad images for this hom constructor").in_context("hom< ... >"));
+        }
         Ok(None)
     }
 
