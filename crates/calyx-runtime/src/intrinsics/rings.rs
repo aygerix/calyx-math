@@ -4,7 +4,7 @@
 use std::rc::Rc;
 
 use calyx_flint::Integer;
-use calyx_flint::gr::{Elem, MonomialOrder, Truth};
+use calyx_flint::gr::{Elem, Truth};
 
 use super::{boolv, intv, none, one};
 use crate::error::{RResult, RuntimeError};
@@ -211,25 +211,6 @@ fn polynomial_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(it.poly_ring(&base, global)?)
 }
 
-fn parse_order(s: &str) -> RResult<MonomialOrder> {
-    Ok(match s {
-        "lex" => MonomialOrder::Lex,
-        "glex" => MonomialOrder::DegLex,
-        "grevlex" => MonomialOrder::DegRevLex,
-        _ => return Err(RuntimeError::runtime(format!("Unsupported monomial order \"{s}\""))),
-    })
-}
-
-fn mpolynomial_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let base = a.args[0].clone();
-    let n = a.usize(1)?;
-    if n == 0 {
-        return Err(RuntimeError::runtime("The rank must be positive"));
-    }
-    let order = if a.args.len() > 2 { parse_order(&a.str(2)?)? } else { MonomialOrder::Lex };
-    one(it.mpoly_ring(&base, n, order)?)
-}
-
 fn base_ring(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let r = match &a.args[0] {
         Value::Elt(e) => e.ring_rc(),
@@ -253,10 +234,14 @@ fn ngens(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 
 fn generator(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (st, r) = ring_arg(a, 0)?;
-    let i = a.usize(1)?;
-    if i == 0 || i > r.ngens() {
-        return Err(RuntimeError::runtime(format!("Generator index must be in the range [1..{}]", r.ngens())));
-    }
+    let (k, n) = (a.int(1)?, r.ngens());
+    let Some(i) = k.to_i64().filter(|&k| k >= 1 && k as usize <= n).map(|k| k as usize) else {
+        return Err(RuntimeError::runtime(match &r.kind {
+            RingKind::UPoly { .. } | RingKind::MPoly { .. } => format!("Value for name index ({k}) should be in the range [1..{n}]"),
+            RingKind::Finite(_) => format!("Argument 2 ({k}) should be in the range [1 .. {n}]"),
+            _ => format!("Generator index must be in the range [1..{n}]"),
+        }));
+    };
     let g = match &r.kind {
         RingKind::MPoly { .. } => r.ctx.mpoly_gen(i - 1)?,
         RingKind::Residue(_) => Elem::one(&r.ctx)?,
@@ -276,10 +261,18 @@ fn assign_names(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
             _ => return Err(RuntimeError::runtime("Names must be strings")),
         }
     }
-    if out.len() > r.ngens() {
-        return Err(RuntimeError::runtime(format!("Too many names ({} given, {} generators)", out.len(), r.ngens())));
+    let n = r.ngens();
+    match &r.kind {
+        RingKind::MPoly { .. } if out.len() > n => return Err(RuntimeError::runtime(format!("Argument 2 should have length at most {n}"))),
+        RingKind::UPoly { .. } | RingKind::Finite(_) if out.len() != n => return Err(RuntimeError::runtime(format!("Argument 2 must have length {n}"))),
+        _ if out.len() > n => return Err(RuntimeError::runtime(format!("Too many names ({} given, {n} generators)", out.len()))),
+        _ => {}
     }
-    *r.names.borrow_mut() = out;
+    // Names not given stay as they were.
+    let mut names = r.names.borrow_mut();
+    for (i, s) in out.into_iter().enumerate() {
+        if i < names.len() { names[i] = s } else { names.push(s) }
+    }
     none()
 }
 
@@ -521,8 +514,6 @@ pub fn register(it: &mut Interp) {
     for name in ["PolynomialRing", "PolynomialAlgebra"] {
         it.def_params(name, "R::Rng -> RngUPol", &[("Global", Value::Bool(true))], "The univariate polynomial ring over R.", polynomial_ring);
     }
-    it.def_params("PolynomialRing", "R::Rng, n::RngIntElt -> RngMPol", &[("Global", Value::Bool(false))], "The polynomial ring in n variables over R.", mpolynomial_ring);
-    it.def_params("PolynomialRing", "R::Rng, n::RngIntElt, order::MonStgElt -> RngMPol", &[("Global", Value::Bool(false))], "The polynomial ring in n variables over R with the given monomial order.", mpolynomial_ring);
     for name in ["BaseRing", "CoefficientRing"] {
         it.def(name, "P::RngUPol -> Rng", "The coefficient ring of P.", base_ring);
         it.def(name, "P::RngMPol -> Rng", "The coefficient ring of P.", base_ring);

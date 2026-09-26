@@ -123,13 +123,25 @@ impl Interp {
             if matches!(op, Cmpeq | Cmpne) {
                 return Ok(Some(Value::Bool(op == Cmpne)));
             }
-            // Elements of a polynomial quotient compare only within it.
-            let res = |v: &Value| matches!(v, Value::Elt(e) if matches!(e.ring().kind, RingKind::UPolyRes { .. }));
-            if matches!(op, Eq | Ne) && (res(a) || res(b)) {
-                let types = format!("Argument types given: {}, {}", self.type_name_ext(a), self.type_name_ext(b));
-                return Err(RuntimeError::runtime(format!("Bad argument types\n{types}")).in_context(op.intrinsic_name()));
-            }
-            return Ok(None);
+            // Elements of distinct multivariate polynomial rings are
+            // incompatible; they and the elements of a polynomial quotient
+            // compare only within their ring.
+            let kind = |v: &Value| match v {
+                Value::Elt(e) => match e.ring().kind {
+                    RingKind::MPoly { .. } => 2,
+                    RingKind::UPolyRes { .. } => 1,
+                    _ => 0,
+                },
+                _ => 0,
+            };
+            let msg = match (kind(a), kind(b)) {
+                (2, 2) if op != Mod => "Arguments are not compatible",
+                (1 | 2, _) | (_, 1 | 2) if matches!(op, Eq | Ne) => "Bad argument types",
+                _ => return Ok(None),
+            };
+            let types = format!("Argument types given: {}, {}", self.type_name_ext(a), self.type_name_ext(b));
+            let e = RuntimeError::runtime(format!("{msg}\n{types}"));
+            return Err(if self.depth > 0 { e } else { e.in_context(op.intrinsic_name()) });
         };
         let Value::Struct(st) = &r else { return Ok(None) };
         if !matches!(st.kind, StructKind::Ring(_)) {

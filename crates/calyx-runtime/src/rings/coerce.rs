@@ -78,7 +78,6 @@ impl Interp {
                 (RingKind::Complex(_), RingKind::Complex(_)) => true,
                 (RingKind::Finite(f), RingKind::Finite(g)) => ff_embeds(f, g),
                 (RingKind::UPoly { base: b1, .. }, RingKind::UPoly { base: b2, .. }) => self.auto_coerces(b1, b2),
-                (RingKind::MPoly { base: b1, rank: r1, .. }, RingKind::MPoly { base: b2, rank: r2, .. }) => r1 <= r2 && self.auto_coerces(b1, b2),
                 (_, RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. } | RingKind::UPolyRes { base, .. }) => self.auto_coerces(from, base),
                 _ => false,
             },
@@ -183,14 +182,20 @@ impl Interp {
             x
         };
         let ctx = r.ctx.clone();
-        // A constant polynomial coerces by force like its constant term.
-        if forced && !matches!(r.kind, RingKind::UPoly { .. }) {
-            if let Value::Elt(e) = x {
-                if let RingKind::UPoly { base, .. } | RingKind::UPolyRes { base, .. } = &e.ring().kind {
-                    if e.x.poly_len() <= 1 {
-                        let c = if e.x.poly_len() == 0 { Elem::zero(e.x.ctx().base().expect("a polynomial")) } else { e.x.poly_coeff(0) };
-                        let v = self.elem_to_value(&base.clone(), c);
-                        return self.to_ring_elem(st, &v, true);
+        // A constant polynomial coerces by force like its constant term, into
+        // the coefficient ring of a polynomial ring (univariate polynomials
+        // map to univariate ones coefficient by coefficient).
+        if let (true, Value::Elt(e)) = (forced, x) {
+            let univariate = |k: &RingKind| matches!(k, RingKind::UPoly { .. } | RingKind::UPolyRes { .. });
+            if !(matches!(r.kind, RingKind::UPoly { .. }) && univariate(&e.ring().kind)) {
+                if let Some(v) = self.poly_constant(e) {
+                    let (RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. }) = &r.kind else { return self.to_ring_elem(st, &v, true) };
+                    if let Some(c) = self.to_structure_elem(&base.clone(), &v, true)? {
+                        let mut y = Elem::zero(&ctx);
+                        return Ok(match r.kind {
+                            RingKind::UPoly { .. } => Elem::poly_from_coeffs(&ctx, &[c]).ok(),
+                            _ => Elem::mpoly_set_scalar(&mut y, &c).ok().map(|_| y),
+                        });
                     }
                 }
             }
@@ -277,8 +282,32 @@ impl Interp {
                 };
                 Ok(Some(crate::intrinsics::upoly::res_reduce(&modulus, y)?))
             }
-            RingKind::MPoly { base, .. } => {
-                let base = base.clone();
+            RingKind::MPoly { base, rank, .. } => {
+                let (base, rank) = (base.clone(), *rank);
+                // By force, a polynomial of another ring of the same rank maps
+                // variable to variable, coefficient by coefficient; otherwise
+                // elements of the coefficient ring are constants.
+                if let Value::Elt(e) = x {
+                    if let RingKind::MPoly { base: b2, rank: r2, .. } = &e.ring().kind {
+                        let px = e.parent_value();
+                        if forced && !self.auto_coerces(&px, &base) {
+                            if *r2 != rank {
+                                return Ok(None);
+                            }
+                            let b2 = b2.clone();
+                            let mut terms = Vec::with_capacity(e.x.mpoly_len());
+                            for i in 0..e.x.mpoly_len() {
+                                let (c, exps) = e.x.mpoly_term(i);
+                                let c = self.elem_to_value(&b2, c);
+                                match self.to_structure_elem(&base, &c, true)? {
+                                    Some(c) => terms.push((c, exps)),
+                                    None => return Ok(None),
+                                }
+                            }
+                            return Ok(Elem::mpoly_from_terms(&ctx, &terms).ok());
+                        }
+                    }
+                }
                 Ok(match self.to_structure_elem(&base, x, forced)? {
                     Some(c) => {
                         let mut e = Elem::zero(&ctx);
@@ -365,6 +394,15 @@ impl Interp {
                         }
                     }
                 }
+                // Explain failed coercions between multivariate rings.
+                if let (Value::Elt(e), StructKind::Ring(r)) = (x, &st.kind) {
+                    if let (RingKind::MPoly { rank, .. }, RingKind::MPoly { rank: r2, .. }) = (&r.kind, &e.ring().kind) {
+                        if rank != r2 {
+                            return Ok(Err(Some(format!("LHS rank ({rank}) does not equal RHS rank ({r2})"))));
+                        }
+                        return Ok(Err(Some("Coefficient cannot be coerced".into())));
+                    }
+                }
                 // Explain failed coercions of rationals.
                 if let (Value::Rat(q), StructKind::Ring(r)) = (x, &st.kind) {
                     let den = q.denominator();
@@ -380,18 +418,35 @@ impl Interp {
         }
     }
 
+    /// The constant term of a constant polynomial, as an element of the
+    /// coefficient ring.
+    pub fn poly_constant(&mut self, e: &super::Elt) -> Option<Value> {
+        let base = e.ring().base()?.clone();
+        let c = match e.ring().kind {
+            RingKind::MPoly { .. } => match e.x.mpoly_len() {
+                0 => Elem::zero(e.x.ctx().base()?),
+                1 => match e.x.mpoly_term(0) {
+                    (c, exps) if exps.iter().all(|&k| k == 0) => c,
+                    _ => return None,
+                },
+                _ => return None,
+            },
+            _ => match e.x.poly_len() {
+                0 => Elem::zero(e.x.ctx().base()?),
+                1 => e.x.poly_coeff(0),
+                _ => return None,
+            },
+        };
+        Some(self.elem_to_value(&base, c))
+    }
+
     /// Coerce a ring element into the integers, rationals or reals (`Z ! x`).
     pub fn coerce_ring_elt_down(&mut self, target: &StructKind, e: &super::Elt) -> Option<Value> {
         // Constant polynomials behave like their coefficient.
-        if let RingKind::UPoly { base, .. } | RingKind::UPolyRes { base, .. } = &e.ring().kind {
-            if e.x.poly_len() <= 1 {
-                let base = base.clone();
-                let c = if e.x.poly_len() == 0 { Elem::zero(e.x.ctx().base().unwrap()) } else { e.x.poly_coeff(0) };
-                let v = self.elem_to_value(&base, c);
-                let t = Value::Struct(Struct::new(target.clone()));
-                return self.try_coerce(&t, &v).ok()?.ok();
-            }
-            return None;
+        if e.ring().base().is_some() {
+            let v = self.poly_constant(e)?;
+            let t = Value::Struct(Struct::new(target.clone()));
+            return self.try_coerce(&t, &v).ok()?.ok();
         }
         match target {
             StructKind::Integers | StructKind::Rationals => {

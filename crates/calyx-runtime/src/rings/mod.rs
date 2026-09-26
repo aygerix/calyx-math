@@ -290,6 +290,8 @@ pub struct RingCache {
     residue: FxHashMap<Integer, Value>,
     finite: FxHashMap<(Integer, u64), Value>,
     upoly: FxHashMap<String, Value>,
+    /// Global multivariate polynomial rings by coefficient ring and rank.
+    mpoly: FxHashMap<(String, usize), Value>,
     complex: FxHashMap<u64, Value>,
     /// Ideals of the integers by generator.
     pub(crate) ideals: FxHashMap<Integer, Value>,
@@ -385,11 +387,20 @@ impl Interp {
         self.new_ring(RingKind::UPolyRes { base, preimage: p.clone(), modulus }, pr.ctx.clone())
     }
 
-    /// The multivariate polynomial ring of the given rank over `base`.
-    pub fn mpoly_ring(&mut self, base: &Value, rank: usize, order: MonomialOrder) -> RResult<Value> {
+    /// The multivariate polynomial ring of the given rank over `base` (with
+    /// `global`, the one lexicographical ring shared by all such requests).
+    pub fn mpoly_ring(&mut self, base: &Value, rank: usize, order: MonomialOrder, global: bool) -> RResult<Value> {
+        let key = structure_key(base).filter(|_| global).map(|k| (k, rank));
+        if let Some(r) = key.as_ref().and_then(|k| self.rings.mpoly.get(k)) {
+            return Ok(r.clone());
+        }
         let bctx = self.ctx_of(base).ok_or_else(|| RuntimeError::runtime("Polynomial rings over this ring are not supported"))?;
         let ctx = Ctx::mpoly(&bctx, rank, order);
-        Ok(self.new_ring(RingKind::MPoly { base: base.clone(), rank, order }, ctx))
+        let r = self.new_ring(RingKind::MPoly { base: base.clone(), rank, order }, ctx);
+        if let Some(k) = key {
+            self.rings.mpoly.insert(k, r.clone());
+        }
+        Ok(r)
     }
 
     /// The complex field with the given precision in bits.
