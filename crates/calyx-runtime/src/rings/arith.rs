@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::rc::Rc;
 
-use calyx_flint::gr::{CtxKind, Elem, GrError, MonomialOrder, Truth};
+use calyx_flint::gr::{CtxKind, Elem, GrError, Truth};
 use calyx_syntax::ast::BinOp;
 
 use super::finite;
@@ -14,16 +14,6 @@ use crate::error::{RResult, RuntimeError};
 use crate::interp::Interp;
 use crate::ops::div_by_zero;
 use crate::value::{Struct, StructKind, Value};
-
-/// Compare exponent vectors in a monomial order.
-fn monomial_cmp(order: MonomialOrder, a: &[u64], b: &[u64]) -> Ordering {
-    let deg = |e: &[u64]| e.iter().sum::<u64>();
-    match order {
-        MonomialOrder::Lex => a.cmp(b),
-        MonomialOrder::DegLex => deg(a).cmp(&deg(b)).then_with(|| a.cmp(b)),
-        MonomialOrder::DegRevLex => deg(a).cmp(&deg(b)).then_with(|| b.iter().rev().cmp(a.iter().rev())),
-    }
-}
 
 /// Arithmetic and comparison of inline ring elements with each other and
 /// with integers. `None` leaves the operation to the generic path, which
@@ -321,10 +311,9 @@ impl Interp {
             }
             RingKind::MPoly { base, order, .. } => {
                 let (m, n) = (x.mpoly_len(), y.mpoly_len());
-                for i in 0..m.min(n) {
-                    let (a, ea) = x.mpoly_term(i);
-                    let (b, eb) = y.mpoly_term(i);
-                    match monomial_cmp(*order, &ea, &eb) {
+                let (xs, ys) = (crate::intrinsics::mpoly::ordered_terms(ring, &x), crate::intrinsics::mpoly::ordered_terms(ring, &y));
+                for ((a, ea), (b, eb)) in xs.into_iter().zip(ys) {
+                    match order.cmp(&ea, &eb) {
                         Ordering::Equal => {}
                         o => return Ok(Some(o)),
                     }

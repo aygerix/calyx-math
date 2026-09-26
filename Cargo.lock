@@ -62,6 +62,7 @@ name = "calyx-runtime"
 version = "0.1.0"
 dependencies = [
  "calyx-flint",
+ "calyx-groebner",
  "calyx-syntax",
  "indexmap",
  "regex",

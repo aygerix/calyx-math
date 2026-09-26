@@ -1,7 +1,8 @@
 //! Printing of rings and their elements in Magma's format.
 
 use calyx_flint::Integer;
-use calyx_flint::gr::{CtxKind, Elem, MonomialOrder, Truth};
+use calyx_flint::gr::{CtxKind, Elem, Truth};
+use calyx_groebner::{Order, OrderArg};
 
 use super::{Elt, Ring, RingKind, finite};
 use crate::error::RResult;
@@ -57,6 +58,25 @@ fn power(name: &str, k: u64) -> String {
         1 => name.to_string(),
         _ => format!("{name}^{k}"),
     }
+}
+
+fn join<T: std::fmt::Display>(xs: impl Iterator<Item = T>) -> String {
+    xs.map(|x| x.to_string()).collect::<Vec<_>>().join(", ")
+}
+
+/// A monomial order as the tuple of MonomialOrder at the Magma level, whose
+/// sequences Magma escapes as `\[ 1, 2 ]`.
+fn order_tuple(o: &Order) -> String {
+    let (name, args) = o.tuple();
+    let mut parts = vec![format!("\"{name}\"")];
+    for arg in args {
+        parts.push(match arg {
+            OrderArg::Int(k) => k.to_string(),
+            OrderArg::Seq(q) => format!("\\[ {} ]", join(q.iter())),
+            OrderArg::Other => unreachable!("an order argument"),
+        });
+    }
+    parts.join(", ")
 }
 
 /// A polynomial in `name` with integer coefficients (constant term first).
@@ -202,8 +222,7 @@ pub fn format_ring_elt(it: &mut Interp, e: &Elt, level: Level) -> RResult<String
             let base = base.clone();
             let names: Vec<String> = (1..=*rank).map(|i| ring.gen_name(i)).collect();
             let mut terms = Vec::new();
-            for i in 0..e.x.mpoly_len() {
-                let (c, exps) = e.x.mpoly_term(i);
+            for (c, exps) in crate::intrinsics::mpoly::ordered_terms(&ring, &e.x) {
                 let mono: Vec<String> = exps.iter().enumerate().filter(|(_, k)| **k > 0).map(|(j, k)| power(&names[j], *k)).collect();
                 terms.push(coef_term(it, &base, c, &mono.join("*"), level)?);
             }
@@ -243,12 +262,14 @@ impl Interp {
                     let m = self.format_res_modulus(r, modulus)?;
                     format!("Univariate Quotient Polynomial Algebra in {} over {b}\nwith modulus {m}", r.gen_name(1))
                 }
-                RingKind::MPoly { base, rank, order } => {
+                RingKind::MPoly { base, rank, order, grading } => {
                     let b = self.format_flat(&base.clone(), level)?;
-                    match order {
-                        MonomialOrder::Lex => format!("PolynomialRing({b}, {rank})"),
-                        MonomialOrder::DegLex => format!("PolynomialRing({b}, {rank}, \"glex\")"),
-                        MonomialOrder::DegRevLex => format!("PolynomialRing({b}, {rank}, \"grevlex\")"),
+                    match (order, grading) {
+                        (o, Some(w)) => format!("PolynomialRing({b}, [ {} ], <{}>)", join(w.iter()), order_tuple(o)),
+                        (Order::Lex, None) => format!("PolynomialRing({b}, {rank})"),
+                        (Order::GLex, None) => format!("PolynomialRing({b}, {rank}, \"glex\")"),
+                        (Order::GRevLex, None) => format!("PolynomialRing({b}, {rank}, \"grevlex\")"),
+                        (o, None) => format!("PolynomialRing({b}, {rank}, <{}>)", order_tuple(o)),
                     }
                 }
                 RingKind::Complex(b) => format!("ComplexField({})", calyx_flint::digits_for_bits(*b)),
@@ -266,18 +287,17 @@ impl Interp {
                 let b = self.format_flat(&base.clone(), Level::Minimal)?;
                 vec![if r.has_names() { format!("Univariate Polynomial Ring in {} over {b}", r.gen_name(1)) } else { format!("Univariate Polynomial Ring over {b}") }]
             }
-            RingKind::MPoly { base, rank, order } => {
+            RingKind::MPoly { base, rank, order, grading } => {
                 let b = self.format_flat(&base.clone(), Level::Minimal)?;
-                let mut lines = vec![format!("Polynomial ring of rank {rank} over {b}")];
+                let graded = if grading.is_some() { "Graded " } else { "" };
+                let mut lines = vec![format!("{graded}Polynomial ring of rank {rank} over {b}")];
                 if !minimal {
-                    let o = match order {
-                        MonomialOrder::Lex => "Lexicographical",
-                        MonomialOrder::DegLex => "Graded Lexicographical",
-                        MonomialOrder::DegRevLex => "Graded Reverse Lexicographical",
-                    };
                     let vars: Vec<String> = (1..=*rank).map(|i| r.gen_name(i)).collect();
-                    lines.push(format!("Order: {o}"));
+                    lines.push(format!("Order: {}", order.describe()));
                     lines.push(format!("Variables: {}", vars.join(", ")));
+                    if let Some(w) = grading {
+                        lines.push(format!("Variable weights: [{}]", join(w.iter())));
+                    }
                 }
                 lines
             }

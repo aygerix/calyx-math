@@ -65,7 +65,8 @@ pub(crate) fn norm_unit(it: &mut Interp, base: &Value, c: &Elem) -> RResult<Elem
             }
             RingKind::MPoly { base: b2, .. } => {
                 let b2 = b2.clone();
-                let u = norm_unit(it, &b2, &c.mpoly_term(0).0)?;
+                let lc = crate::intrinsics::mpoly::leading(&r, c).expect("a non-zero polynomial").0;
+                let u = norm_unit(it, &b2, &lc)?;
                 let mut e = Elem::zero(&ctx);
                 e.mpoly_set_scalar(&u)?;
                 return Ok(e);
