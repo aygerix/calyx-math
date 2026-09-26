@@ -1,0 +1,69 @@
+# Build, clippy and the test suite on every push and pull request.
+# No `cargo fmt --check`: the code is formatted by hand (see CLAUDE.md).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  FLINT_VERSION: 3.6.0
+
+jobs:
+  test:
+    name: test (${{ matrix.profile }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [release, debug]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GMP and MPFR
+        run: sudo apt-get update && sudo apt-get install -y libgmp-dev libmpfr-dev
+
+      - name: Cache FLINT
+        id: flint
+        uses: actions/cache@v4
+        with:
+          path: ~/flint
+          key: flint-${{ env.FLINT_VERSION }}-ubuntu-24.04
+
+      - name: Build FLINT
+        if: steps.flint.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL "https://github.com/flintlib/flint/releases/download/v$FLINT_VERSION/flint-$FLINT_VERSION.tar.gz" | tar xz
+          cd "flint-$FLINT_VERSION"
+          ./configure --prefix="$HOME/flint" --disable-static
+          make -j"$(nproc)"
+          make install
+
+      - name: Use FLINT
+        run: |
+          echo "PKG_CONFIG_PATH=$HOME/flint/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$HOME/flint/lib" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.profile }}
+
+      - name: Build
+        run: cargo build ${{ matrix.profile == 'release' && '--release' || '' }}
+
+      - name: Clippy
+        if: matrix.profile == 'release'
+        run: cargo clippy --release --all-targets
+
+      - name: Test
+        run: cargo test ${{ matrix.profile == 'release' && '--release' || '' }} --no-fail-fast
