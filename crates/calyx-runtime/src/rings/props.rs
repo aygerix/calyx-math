@@ -145,6 +145,26 @@ pub fn ring_props(v: &Value) -> Option<RingProps> {
                     cardinality: None,
                 }
             }
+            // The cardinality of an affine algebra needs a Gröbner basis
+            // (`intrinsics/poly_ideals/affine.rs` finds it); whether it is a
+            // field or a domain needs primality of ideals, which calyx lacks
+            // for now.
+            RingKind::MPolyRes { base, .. } => {
+                let b = ring_props(base)?;
+                RingProps {
+                    field: false,
+                    ordered: false,
+                    domain: false,
+                    ufd: false,
+                    has_gcd: false,
+                    exact: b.exact,
+                    euclidean: Some(false),
+                    magma_euclidean: false,
+                    pid: None,
+                    characteristic: b.characteristic,
+                    cardinality: None,
+                }
+            }
         },
         _ => return None,
     })

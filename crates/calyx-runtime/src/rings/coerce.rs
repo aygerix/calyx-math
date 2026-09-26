@@ -86,14 +86,14 @@ impl Interp {
             (Reals(_), Reals(_)) => true,
             (Rationals | Reals(_), Ring(r)) => match &r.kind {
                 RingKind::Complex(_) => true,
-                RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. } | RingKind::UPolyRes { base, .. } => self.auto_coerces(from, base),
+                RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. } | RingKind::UPolyRes { base, .. } | RingKind::MPolyRes { base, .. } => self.auto_coerces(from, base),
                 _ => false,
             },
             (Ring(a), Ring(b)) => match (&a.kind, &b.kind) {
                 (RingKind::Complex(_), RingKind::Complex(_)) => true,
                 (RingKind::Finite(_), RingKind::Finite(_)) => finite::is_subfield(finite::field_struct(from).unwrap(), finite::field_struct(to).unwrap()),
                 (RingKind::UPoly { base: b1, .. }, RingKind::UPoly { base: b2, .. }) => self.auto_coerces(b1, b2),
-                (_, RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. } | RingKind::UPolyRes { base, .. }) => self.auto_coerces(from, base),
+                (_, RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. } | RingKind::UPolyRes { base, .. } | RingKind::MPolyRes { base, .. }) => self.auto_coerces(from, base),
                 _ => false,
             },
             _ => false,
@@ -301,12 +301,18 @@ impl Interp {
                 };
                 Ok(Some(crate::intrinsics::upoly::res_reduce(&modulus, y)?))
             }
+            RingKind::MPolyRes { .. } => crate::intrinsics::poly_ideals::coerce_into(self, st, x, forced),
             RingKind::MPoly { base, rank, .. } => {
                 let (base, rank) = (base.clone(), *rank);
                 // By force, a polynomial of another ring of the same rank maps
-                // variable to variable, coefficient by coefficient; otherwise
-                // elements of the coefficient ring are constants.
+                // variable to variable, coefficient by coefficient (and an
+                // element of a quotient of such a ring by its representative);
+                // otherwise elements of the coefficient ring are constants.
                 if let Value::Elt(e) = x {
+                    if let (true, RingKind::MPolyRes { affine, .. }) = (forced, &e.ring().kind) {
+                        let rep = make_elt(&affine.preimage, e.x.clone());
+                        return self.to_ring_elem(st, &rep, true);
+                    }
                     if let RingKind::MPoly { base: b2, rank: r2, .. } = &e.ring().kind {
                         let px = e.parent_value();
                         if forced && !self.auto_coerces(&px, &base) {
@@ -463,7 +469,7 @@ impl Interp {
     pub fn poly_constant(&mut self, e: &super::Elt) -> Option<Value> {
         let base = e.ring().base()?.clone();
         let c = match e.ring().kind {
-            RingKind::MPoly { .. } => match e.x.mpoly_len() {
+            RingKind::MPoly { .. } | RingKind::MPolyRes { .. } => match e.x.mpoly_len() {
                 0 => Elem::zero(e.x.ctx().base()?),
                 1 => match e.x.mpoly_term(0) {
                     (c, exps) if exps.iter().all(|&k| k == 0) => c,

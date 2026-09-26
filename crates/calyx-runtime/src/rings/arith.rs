@@ -110,6 +110,9 @@ impl Interp {
                 if let (Mul, RingKind::UPolyRes { modulus, .. }) = (op, &x.ring().kind) {
                     r = crate::intrinsics::upoly::res_reduce(modulus, r).map_err(|e| arith_err(e, "*"))?;
                 }
+                if let (Mul, RingKind::MPolyRes { affine, .. }) = (op, &x.ring().kind) {
+                    r = affine.reduce(r).map_err(|e| e.in_context("*"))?;
+                }
                 return Ok(Some(make_elt(&x.parent, r)));
             }
         }
@@ -140,11 +143,14 @@ impl Interp {
                 Value::Elt(e) => match e.ring().kind {
                     RingKind::MPoly { .. } => 2,
                     RingKind::UPolyRes { .. } => 1,
+                    RingKind::MPolyRes { .. } => 3,
                     _ => 0,
                 },
                 _ => 0,
             };
             let msg = match (kind(a), kind(b)) {
+                (3, 3) => "Arguments are not compatible",
+                (3, _) | (_, 3) => "Bad argument types",
                 (2, 2) if op != Mod => "Arguments are not compatible",
                 (1 | 2, _) | (_, 1 | 2) if matches!(op, Eq | Ne) => "Bad argument types",
                 _ if finite::field_struct(&pa).is_some() && finite::field_struct(&pb).is_some() => {
@@ -175,9 +181,15 @@ impl Interp {
                 let r = x.mul(&y).map_err(|e| arith_err(e, name))?;
                 match &ring.kind {
                     RingKind::UPolyRes { modulus, .. } => crate::intrinsics::upoly::res_reduce(modulus, r).map_err(|e| arith_err(e, name))?,
+                    RingKind::MPolyRes { affine, .. } => affine.reduce(r).map_err(|e| e.in_context(name))?,
                     _ => r,
                 }
             }
+            Div if matches!(ring.kind, RingKind::MPolyRes { .. }) => {
+                let RingKind::MPolyRes { affine, .. } = &ring.kind else { unreachable!() };
+                affine.divide(&x, &y).map_err(|e| e.in_context("/"))?
+            }
+            IntDiv | Mod if matches!(ring.kind, RingKind::MPolyRes { .. }) => return Ok(None),
             Div if matches!(ring.kind, RingKind::UPolyRes { .. }) => crate::intrinsics::upoly::res_div(crate::intrinsics::upoly::res_modulus(ring), &x, &y)?,
             IntDiv | Mod if matches!(ring.kind, RingKind::UPolyRes { .. }) => return Ok(None),
             Div => {
@@ -309,7 +321,8 @@ impl Interp {
                 }
                 Ordering::Equal
             }
-            RingKind::MPoly { base, order, .. } => {
+            RingKind::MPoly { base, .. } | RingKind::MPolyRes { base, .. } => {
+                let order = crate::intrinsics::mpoly::order_of(ring);
                 let (m, n) = (x.mpoly_len(), y.mpoly_len());
                 let (xs, ys) = (crate::intrinsics::mpoly::ordered_terms(ring, &x), crate::intrinsics::mpoly::ordered_terms(ring, &y));
                 for ((a, ea), (b, eb)) in xs.into_iter().zip(ys) {
@@ -335,6 +348,9 @@ impl Interp {
         let (Value::Elt(x), Value::Int(k)) = (a, b) else { return Ok(None) };
         if let RingKind::UPolyRes { modulus, .. } = &x.ring().kind {
             return Ok(Some(make_elt(&x.parent, crate::intrinsics::upoly::res_pow(modulus, &x.x, k)?)));
+        }
+        if let RingKind::MPolyRes { affine, .. } = &x.ring().kind {
+            return Ok(Some(make_elt(&x.parent, affine.pow(&x.x, k)?)));
         }
         if k.sign() < 0 && matches!(x.ring().kind, RingKind::UPoly { .. }) {
             return Err(crate::intrinsics::arg_ge(2, k, 0).in_context("^"));

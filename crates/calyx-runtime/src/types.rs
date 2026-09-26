@@ -115,6 +115,8 @@ builtin_types! {
     // Polynomial rings (#40, #41).
     RNG_UPOL_RES = "RngUPolRes": [RNG],
     RNG_UPOL_RES_ELT = "RngUPolResElt": [RNG_ELT],
+    RNG_MPOL_RES = "RngMPolRes": [RNG],
+    RNG_MPOL_RES_ELT = "RngMPolResElt": [RNG_ELT],
 
     // Real and complex fields (#42).
 }
@@ -184,6 +186,7 @@ impl TypeRegistry {
 
             // Polynomial rings (#40, #41).
             (t::RNG_UPOL_RES, t::RNG_UPOL_RES_ELT),
+            (t::RNG_MPOL_RES, t::RNG_MPOL_RES_ELT),
 
             // Real and complex fields (#42).
         ];

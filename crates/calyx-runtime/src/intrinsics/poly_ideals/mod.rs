@@ -1,6 +1,7 @@
 //! Ideals of multivariate polynomial rings (the handbook's Polynomial Rings
 //! and Ideals: Creation of Ideals and Accessing their Bases, and First
-//! Operations on Ideals; `elimination` has the sections after them).
+//! Operations on Ideals; `elimination` has the sections after them, and
+//! `affine` the quotients by ideals).
 //!
 //! An ideal of a polynomial ring P is a structure of type RngMPol, like P
 //! (`StructKind::MPolIdeal`), with its basis: the generators as given,
@@ -31,10 +32,14 @@ use super::{arg_ge, boolv, one};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
 use crate::print::{Level, Printer};
+use crate::rings::ideals::coercion_map;
 use crate::rings::{Elt, Ring, RingKind, make_elt, ring_of};
 use crate::value::*;
 
+mod affine;
 mod elimination;
+
+pub use affine::{Affine, affine_algebra, cardinality as affine_cardinality, coerce_into, fmt_affine, format_affine, quo_constructor};
 
 /// An ideal of a multivariate polynomial ring.
 pub struct MPolIdeal {
@@ -359,10 +364,6 @@ fn operand_arg(a: &CallArgs, i: usize) -> (Rc<Struct>, Option<Rc<MPolIdeal>>) {
 /// Argument `i` as by `operand_arg`, with its basis.
 fn ideal_arg(a: &CallArgs, i: usize) -> (Rc<Struct>, Vec<Elem>) {
     ideal_parts(&a.args[i]).expect("a polynomial ring or ideal")
-}
-
-fn coercion_map(domain: Value, codomain: Value) -> Value {
-    Value::Map(Rc::new(MapObj { kind: MapKind::Map, domain, codomain, imp: MapImpl::Coercion }))
 }
 
 // ----- Gröbner bases ---------------------------------------------------------------
@@ -709,11 +710,12 @@ fn in_radical(r: &Ring, f: &Elem, gens: &[Elem]) -> RResult<bool> {
 
 // ----- construction ----------------------------------------------------------------
 
-/// The basis of `ideal<P | ...>`: elements coercing into P, ideals of P,
-/// and sets and sequences of these. Polynomials of another ring of the
-/// same rank coerce as by `!`, variable to variable.
-fn generators(it: &mut Interp, pst: &Rc<Struct>, right: &[Value]) -> RResult<Vec<Elem>> {
-    let invalid = |i: usize| RuntimeError::runtime(format!("Rhs argument {} is invalid for this constructor", i + 1)).in_context("ideal< ... >");
+/// The basis of `ideal<P | ...>` (or of the constructor `ctx`): elements
+/// coercing into P, ideals of P, and sets and sequences of these.
+/// Polynomials of another ring of the same rank coerce as by `!`, variable
+/// to variable.
+fn generators(it: &mut Interp, pst: &Rc<Struct>, right: &[Value], ctx: &str) -> RResult<Vec<Elem>> {
+    let invalid = |i: usize| RuntimeError::runtime(format!("Rhs argument {} is invalid for this constructor", i + 1)).in_context(ctx);
     let mut out = Vec::new();
     for (i, v) in right.iter().enumerate() {
         let items: Vec<Value> = match v {
@@ -729,7 +731,7 @@ fn generators(it: &mut Interp, pst: &Rc<Struct>, right: &[Value]) -> RResult<Vec
                 out.extend(gs);
                 continue;
             }
-            let forced = matches!(x, Value::Elt(e) if matches!(e.ring().kind, RingKind::MPoly { .. }));
+            let forced = matches!(x, Value::Elt(e) if matches!(e.ring().kind, RingKind::MPoly { .. } | RingKind::MPolyRes { .. }));
             out.push(it.to_ring_elem(pst, x, forced)?.ok_or_else(|| invalid(i))?);
         }
     }
@@ -741,7 +743,7 @@ fn generators(it: &mut Interp, pst: &Rc<Struct>, right: &[Value]) -> RResult<Vec
 pub fn ideal_constructor(it: &mut Interp, base: &Value, right: &[Value]) -> RResult<Option<Vec<Value>>> {
     let Some((pst, _)) = ring_of(base).filter(|(_, r)| matches!(r.kind, RingKind::MPoly { .. })) else { return Ok(None) };
     let pst = pst.clone();
-    let gens = generators(it, &pst, right)?;
+    let gens = generators(it, &pst, right, "ideal< ... >")?;
     let ideal = ideal_value(&pst, gens, false);
     Ok(Some(vec![ideal.clone(), coercion_map(ideal, base.clone())]))
 }
@@ -861,6 +863,31 @@ fn ideal_subset(pst: &Rc<Struct>, a: &Operand, b: &Operand) -> RResult<bool> {
 /// among the operands, or on the rings themselves as ideals).
 pub fn ideal_binop(it: &mut Interp, op: BinOp, a: &Value, b: &Value) -> RResult<Option<Value>> {
     let is_ideal = |v: &Value| matches!(v.as_struct(), Some(StructKind::MPolIdeal(_)));
+    // An affine algebra is its own unit ideal, which Magma compares only with
+    // ideals of the same algebra: a quotient of the same ring by an equal
+    // ideal.
+    let algebra = |v: &Value| ring_of(v).and_then(|(_, r)| affine::affine_of(r).cloned());
+    match (op, algebra(a), algebra(b)) {
+        (BinOp::Eq | BinOp::Ne | BinOp::Subset | BinOp::Notsubset | BinOp::Cmpeq | BinOp::Cmpne, Some(x), Some(y)) => {
+            let same = affine::algebras_equal(&x, &y).map_err(|e| e.in_context(op.intrinsic_name()))?;
+            if !same && !matches!(op, BinOp::Cmpeq | BinOp::Cmpne) {
+                // Magma's subset reports it as a failed requirement.
+                let e = RuntimeError::runtime("Ideals are not in the same quotient ring");
+                return Err(if matches!(op, BinOp::Eq | BinOp::Ne) { super::bare(e) } else { super::require(e) });
+            }
+            return Ok(Some(Value::Bool(same == matches!(op, BinOp::Eq | BinOp::Subset | BinOp::Cmpeq))));
+        }
+        (BinOp::Eq | BinOp::Ne, Some(_), None) if is_ideal(b) => return Err(it.bad_types(op, a, b)),
+        (BinOp::Eq | BinOp::Ne, None, Some(_)) if is_ideal(a) => return Err(it.bad_types(op, a, b)),
+        _ => {}
+    }
+    // P / J: the quotient ring.
+    if op == BinOp::Div {
+        return match (operand(a), operand(b)) {
+            (Some((r, None)), Some((s, y))) if struct_eq(&r, &s) => Ok(Some(affine::quotient_of(it, &r, &y)?)),
+            _ => Ok(None),
+        };
+    }
     if op == BinOp::Pow {
         return match (operand(a), b) {
             (Some(_), Value::Int(k)) => Ok(Some(ideal_pow(it, a, k)?)),
@@ -1480,6 +1507,7 @@ pub fn register(it: &mut Interp) {
     it.def("Saturation", "I::RngMPol, J::RngMPol -> RngMPol", "The saturation I : J^∞ of the ideal I by the ideal J.", saturation_by);
     it.def("Saturation", "I::RngMPol -> RngMPol", "The saturation of the ideal I by the ideal of the variables.", saturation);
     elimination::register(it);
+    affine::register(it);
 }
 
 #[cfg(test)]

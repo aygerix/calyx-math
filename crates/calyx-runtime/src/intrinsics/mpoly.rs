@@ -47,10 +47,10 @@ fn ring_arg(a: &CallArgs, i: usize) -> (Rc<Struct>, Rc<Ring>) {
     }
 }
 
-/// The rank of a multivariate polynomial ring.
+/// The rank of a multivariate polynomial ring (or of an affine algebra).
 fn rank(r: &Ring) -> usize {
     match &r.kind {
-        RingKind::MPoly { rank, .. } => *rank,
+        RingKind::MPoly { rank, .. } | RingKind::MPolyRes { rank, .. } => *rank,
         _ => unreachable!("a multivariate polynomial ring"),
     }
 }
@@ -109,10 +109,12 @@ fn terms(f: &Elem) -> Vec<(Elem, Vec<u64>)> {
     (0..f.mpoly_len()).map(|i| f.mpoly_term(i)).collect()
 }
 
-/// The monomial order of a multivariate polynomial ring.
-fn order_of(r: &Ring) -> &Order {
+/// The monomial order of a multivariate polynomial ring (or of the ring of
+/// an affine algebra).
+pub fn order_of(r: &Ring) -> &Order {
     match &r.kind {
         RingKind::MPoly { order, .. } => order,
+        RingKind::MPolyRes { affine, .. } => order_of(affine.poly_ring()),
         _ => unreachable!("a multivariate polynomial ring"),
     }
 }
@@ -582,6 +584,7 @@ pub(super) fn weights(r: &Ring) -> Vec<u64> {
     match &r.kind {
         RingKind::MPoly { grading: Some(w), .. } => w.to_vec(),
         RingKind::MPoly { rank, .. } => vec![1; *rank],
+        RingKind::MPolyRes { affine, .. } => weights(affine.poly_ring()),
         _ => unreachable!("a multivariate polynomial ring"),
     }
 }
@@ -1521,6 +1524,19 @@ pub fn register(it: &mut Interp) {
         it.def("Interpolation", &format!("I::[RngElt], V::[RngMPolElt], {v} -> RngMPolElt"), "The polynomial of least degree in the variable taking the values V at the points I.", interpolation);
         it.def("Reductum", &format!("f::RngMPolElt, {v} -> RngMPolElt"), "f without its term in the largest power of the variable.", reductum);
     }
+    // Elements of affine algebras are their normal forms, whose terms these
+    // functions see.
+    it.def("Coefficients", "f::RngMPolResElt -> [RngElt]", "The coefficients of the terms of the normal form of f, largest first.", coefficients);
+    it.def("LeadingCoefficient", "f::RngMPolResElt -> RngElt", "The coefficient of the leading term of the normal form of f.", leading_coefficient);
+    it.def("Length", "f::RngMPolResElt -> RngIntElt", "The number of terms of the normal form of f.", length);
+    it.def("Monomials", "f::RngMPolResElt -> [RngMPolResElt]", "The monomials of the normal form of f, largest first.", monomials);
+    it.def("LeadingMonomial", "f::RngMPolResElt -> RngMPolResElt", "The monomial of the leading term of the normal form of f.", leading_monomial);
+    it.def("Terms", "f::RngMPolResElt -> [RngMPolResElt]", "The terms of the normal form of f, largest first.", terms_of);
+    it.def("LeadingTerm", "f::RngMPolResElt -> RngMPolResElt", "The leading term of the normal form of f.", leading_term);
+    it.def("TotalDegree", "f::RngMPolResElt -> RngIntElt", "The largest total degree of a monomial of the normal form of f (-1 for zero).", total_degree);
+    it.def("Degree", "f::RngMPolResElt -> RngIntElt", "The largest weighted degree of a term of the normal form of f.", weighted_degree);
+    it.def("Degree", "f::RngMPolResElt, i::RngIntElt -> RngIntElt", "The degree of the normal form of f in the i-th variable (-1 for zero).", degree);
+    it.def("Evaluate", "f::RngMPolResElt, s::[RngElt] -> RngElt", "The value of the normal form of f at the sequence s.", evaluate);
     it.def("Coefficients", "f::RngMPolElt -> [RngElt]", "The coefficients of the terms of f, largest first.", coefficients);
     it.def("LeadingCoefficient", "f::RngMPolElt -> RngElt", "The coefficient of the leading term of f.", leading_coefficient);
     it.def("TrailingCoefficient", "f::RngMPolElt -> RngElt", "The coefficient of the trailing term of f.", trailing_coefficient);

@@ -66,6 +66,11 @@ pub enum RingKind {
     /// field). The elements are the remainders modulo `f`, in the context
     /// of `P`.
     UPolyRes { base: Value, preimage: Rc<Struct>, modulus: Elem },
+    /// The quotient `P/J` of a multivariate polynomial ring P of the given
+    /// rank over `base` by an ideal J, an affine algebra
+    /// (`intrinsics/poly_ideals/affine.rs`). The elements are the normal
+    /// forms modulo J, in the context of P.
+    MPolyRes { base: Value, rank: usize, affine: Rc<crate::intrinsics::poly_ideals::Affine> },
     /// The complex field with the given precision in bits.
     Complex(u64),
 }
@@ -137,6 +142,7 @@ impl Ring {
             RingKind::UPoly { .. } => t::RNG_UPOL,
             RingKind::MPoly { .. } => t::RNG_MPOL,
             RingKind::UPolyRes { .. } => t::RNG_UPOL_RES,
+            RingKind::MPolyRes { .. } => t::RNG_MPOL_RES,
             RingKind::Complex(_) => t::FLD_COM,
         }
     }
@@ -148,6 +154,7 @@ impl Ring {
             RingKind::UPoly { .. } => t::RNG_UPOL_ELT,
             RingKind::MPoly { .. } => t::RNG_MPOL_ELT,
             RingKind::UPolyRes { .. } => t::RNG_UPOL_RES_ELT,
+            RingKind::MPolyRes { .. } => t::RNG_MPOL_RES_ELT,
             RingKind::Complex(_) => t::FLD_COM_ELT,
         }
     }
@@ -170,7 +177,7 @@ impl Ring {
             RingKind::Residue(_) => 1,
             RingKind::Finite(_) => 1,
             RingKind::UPoly { .. } => 1,
-            RingKind::MPoly { rank, .. } => *rank,
+            RingKind::MPoly { rank, .. } | RingKind::MPolyRes { rank, .. } => *rank,
             RingKind::UPolyRes { .. } => 1,
             RingKind::Complex(_) => 1,
         }
@@ -202,7 +209,7 @@ impl Ring {
     /// The coefficient ring of a polynomial ring (or of a quotient of one).
     pub fn base(&self) -> Option<&Value> {
         match &self.kind {
-            RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. } | RingKind::UPolyRes { base, .. } => Some(base),
+            RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. } | RingKind::UPolyRes { base, .. } | RingKind::MPolyRes { base, .. } => Some(base),
             _ => None,
         }
     }
@@ -423,6 +430,18 @@ impl Interp {
         let StructKind::Ring(pr) = &p.kind else { unreachable!("a polynomial ring") };
         let base = pr.base().expect("a polynomial ring").clone();
         self.new_ring(RingKind::UPolyRes { base, preimage: p.clone(), modulus }, pr.ctx.clone())
+    }
+
+    /// The affine algebra `affine` (a quotient of the multivariate
+    /// polynomial ring `p`), with the names of the variables of `p`.
+    pub fn mpoly_res(&mut self, p: &Rc<Struct>, affine: Rc<crate::intrinsics::poly_ideals::Affine>) -> Value {
+        let StructKind::Ring(pr) = &p.kind else { unreachable!("a polynomial ring") };
+        let RingKind::MPoly { base, rank, .. } = &pr.kind else { unreachable!("a multivariate polynomial ring") };
+        let q = self.new_ring(RingKind::MPolyRes { base: base.clone(), rank: *rank, affine }, pr.ctx.clone());
+        if let Some(StructKind::Ring(qr)) = q.as_struct() {
+            *qr.names.borrow_mut() = pr.names.borrow().clone();
+        }
+        q
     }
 
     /// The multivariate polynomial ring of the given rank over `base` (with

@@ -34,7 +34,7 @@ fn has_factorization(r: &Value) -> bool {
             RingKind::Finite(_) => true,
             RingKind::Residue(m) => m.is_prime(),
             RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. } => has_factorization(base),
-            RingKind::Complex(_) | RingKind::UPolyRes { .. } => false,
+            RingKind::Complex(_) | RingKind::UPolyRes { .. } | RingKind::MPolyRes { .. } => false,
         },
         _ => false,
     }
