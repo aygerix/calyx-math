@@ -115,6 +115,9 @@ impl Interp {
 
     /// Operators on ideals of the integers and of residue class rings.
     pub fn ideal_binop(&mut self, op: BinOp, a: &Value, b: &Value) -> RResult<Option<Value>> {
+        if let Some(v) = crate::intrinsics::upoly::ideal_binop(self, op, a, b)? {
+            return Ok(Some(v));
+        }
         let is_ideal = |v: &Value| matches!(v.as_struct(), Some(StructKind::ResIdeal(..)));
         if is_ideal(a) || is_ideal(b) {
             return match (res_ideal_parts(a), res_ideal_parts(b)) {
@@ -199,6 +202,9 @@ impl Interp {
     /// `ideal<R | ...>`: the ideal and its inclusion into R. `None` if R is
     /// not a ring calyx builds ideals of.
     pub fn ideal_constructor(&mut self, base: &Value, right: &[Value]) -> RResult<Option<Vec<Value>>> {
+        if let Some(v) = crate::intrinsics::upoly::ideal_constructor(self, base, right)? {
+            return Ok(Some(v));
+        }
         if let Some((ring, 1)) = res_ideal_parts(base).map(|(r, d)| (r, d.to_u64().unwrap_or(0))) {
             let g = self.res_generators(&ring, right, "ideal< ... >")?;
             return Ok(Some(vec![self.res_ideal(&ring, &g)]));
@@ -234,6 +240,9 @@ impl Interp {
 
     /// `quo<R | ...>`: the quotient ring and the quotient map.
     pub fn quo_constructor(&mut self, base: &Value, right: &[Value]) -> RResult<Option<Vec<Value>>> {
+        if let Some(v) = crate::intrinsics::upoly::quo_constructor(self, base, right)? {
+            return Ok(Some(v));
+        }
         if !matches!(base.as_struct(), Some(StructKind::Integers)) {
             return Ok(None);
         }

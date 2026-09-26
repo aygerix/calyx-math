@@ -116,7 +116,7 @@ fn irreducible(e: &Value) -> RResult<bool> {
 
 fn elt_irreducible(e: &Rc<Elt>) -> RResult<bool> {
     match &e.ring().kind {
-        RingKind::Residue(_) => Err(not_possible()),
+        RingKind::Residue(_) | RingKind::UPolyRes { .. } => Err(not_possible()),
         RingKind::Finite(_) | RingKind::Complex(_) => Ok(false),
         RingKind::UPoly { .. } | RingKind::MPoly { .. } => {
             if truth(e.x.is_zero()) {

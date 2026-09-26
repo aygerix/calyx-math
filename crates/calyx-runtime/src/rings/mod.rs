@@ -56,6 +56,11 @@ pub enum RingKind {
     UPoly { base: Value, global: bool },
     /// Multivariate polynomials over `base`.
     MPoly { base: Value, rank: usize, order: MonomialOrder },
+    /// The quotient `P/(f)` of the univariate polynomial ring `preimage`
+    /// over `base` by a non-constant `modulus` (monic, or normalized over a
+    /// field). The elements are the remainders modulo `f`, in the context
+    /// of `P`.
+    UPolyRes { base: Value, preimage: Rc<Struct>, modulus: Elem },
     /// The complex field with the given decimal precision.
     Complex(u32),
 }
@@ -98,6 +103,7 @@ impl Ring {
             RingKind::Finite(_) => t::FLD_FIN,
             RingKind::UPoly { .. } => t::RNG_UPOL,
             RingKind::MPoly { .. } => t::RNG_MPOL,
+            RingKind::UPolyRes { .. } => t::RNG_UPOL_RES,
             RingKind::Complex(_) => t::FLD_COM,
         }
     }
@@ -108,6 +114,7 @@ impl Ring {
             RingKind::Finite(_) => t::FLD_FIN_ELT,
             RingKind::UPoly { .. } => t::RNG_UPOL_ELT,
             RingKind::MPoly { .. } => t::RNG_MPOL_ELT,
+            RingKind::UPolyRes { .. } => t::RNG_UPOL_RES_ELT,
             RingKind::Complex(_) => t::FLD_COM_ELT,
         }
     }
@@ -131,6 +138,7 @@ impl Ring {
             RingKind::Finite(_) => 1,
             RingKind::UPoly { .. } => 1,
             RingKind::MPoly { rank, .. } => *rank,
+            RingKind::UPolyRes { .. } => 1,
             RingKind::Complex(_) => 1,
         }
     }
@@ -153,10 +161,10 @@ impl Ring {
         Some(self.factored.get_or_init(|| m.factor().map(|f| f.factors).unwrap_or_default().into()).clone())
     }
 
-    /// The coefficient ring of a polynomial ring.
+    /// The coefficient ring of a polynomial ring (or of a quotient of one).
     pub fn base(&self) -> Option<&Value> {
         match &self.kind {
-            RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. } => Some(base),
+            RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. } | RingKind::UPolyRes { base, .. } => Some(base),
             _ => None,
         }
     }
@@ -365,6 +373,13 @@ impl Interp {
         Ok(r)
     }
 
+    /// The quotient of the univariate polynomial ring `p` by `modulus`.
+    pub fn upoly_res(&mut self, p: &Rc<Struct>, modulus: Elem) -> Value {
+        let StructKind::Ring(pr) = &p.kind else { unreachable!("a polynomial ring") };
+        let base = pr.base().expect("a polynomial ring").clone();
+        self.new_ring(RingKind::UPolyRes { base, preimage: p.clone(), modulus }, pr.ctx.clone())
+    }
+
     /// The multivariate polynomial ring of the given rank over `base`.
     pub fn mpoly_ring(&mut self, base: &Value, rank: usize, order: MonomialOrder) -> RResult<Value> {
         let bctx = self.ctx_of(base).ok_or_else(|| RuntimeError::runtime("Polynomial rings over this ring are not supported"))?;
@@ -389,6 +404,7 @@ impl Interp {
         let size = match &r.kind {
             RingKind::Residue(m) => m.clone(),
             RingKind::Finite(f) => f.order(),
+            RingKind::UPolyRes { .. } => return crate::intrinsics::upoly::enumerate_res(self, st, r),
             _ => return Err(RuntimeError::runtime(crate::error::NOT_ITERABLE)),
         };
         let n = size.to_u64().filter(|&n| n <= 1 << 26).ok_or_else(|| RuntimeError::runtime("The ring is too large to enumerate"))?;
@@ -447,6 +463,9 @@ impl Interp {
             StructKind::Integers => Some(Ctx::integers()),
             StructKind::Rationals => Some(Ctx::rationals()),
             StructKind::Reals(d) => Some(self.real_ctx(*d)),
+            // The elements of a polynomial quotient ring are reduced by the
+            // ring, not by FLINT.
+            StructKind::Ring(r) if matches!(r.kind, RingKind::UPolyRes { .. }) => None,
             StructKind::Ring(r) => Some(r.ctx.clone()),
             _ => None,
         }

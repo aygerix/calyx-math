@@ -109,6 +109,26 @@ pub fn ring_props(v: &Value) -> Option<RingProps> {
                     cardinality: None,
                 }
             }
+            // A quotient P/(f) is a domain when f is irreducible (and then a
+            // field over a field).
+            RingKind::UPolyRes { base, modulus, .. } => {
+                let b = ring_props(base)?;
+                let domain = crate::intrinsics::upoly::res_is_domain(modulus);
+                let field = b.field && domain;
+                RingProps {
+                    field,
+                    ordered: false,
+                    domain,
+                    ufd: field,
+                    has_gcd: field,
+                    exact: b.exact,
+                    euclidean: Some(field),
+                    magma_euclidean: field,
+                    pid: Some(field),
+                    characteristic: b.characteristic,
+                    cardinality: b.cardinality.map(|q| q.pow(modulus.poly_len() as u64 - 1)),
+                }
+            }
             RingKind::MPoly { base, .. } => {
                 let b = ring_props(base)?;
                 RingProps {

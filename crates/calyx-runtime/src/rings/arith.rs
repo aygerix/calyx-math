@@ -102,7 +102,12 @@ impl Interp {
                     Sub => x.x.sub(&y.x),
                     _ => x.x.mul(&y.x),
                 };
-                return Ok(Some(make_elt(&x.parent, r.map_err(|e| arith_err(e, op.intrinsic_name()))?)));
+                let mut r = r.map_err(|e| arith_err(e, op.intrinsic_name()))?;
+                // Products in a polynomial quotient ring are reduced.
+                if let (Mul, RingKind::UPolyRes { modulus, .. }) = (op, &x.ring().kind) {
+                    r = crate::intrinsics::upoly::res_reduce(modulus, r).map_err(|e| arith_err(e, "*"))?;
+                }
+                return Ok(Some(make_elt(&x.parent, r)));
             }
         }
         let (a, b) = (&small::expand(a), &small::expand(b));
@@ -117,6 +122,12 @@ impl Interp {
         let Some(r) = self.common_ring(&pa, &pb)? else {
             if matches!(op, Cmpeq | Cmpne) {
                 return Ok(Some(Value::Bool(op == Cmpne)));
+            }
+            // Elements of a polynomial quotient compare only within it.
+            let res = |v: &Value| matches!(v, Value::Elt(e) if matches!(e.ring().kind, RingKind::UPolyRes { .. }));
+            if matches!(op, Eq | Ne) && (res(a) || res(b)) {
+                let types = format!("Argument types given: {}, {}", self.type_name_ext(a), self.type_name_ext(b));
+                return Err(RuntimeError::runtime(format!("Bad argument types\n{types}")).in_context(op.intrinsic_name()));
             }
             return Ok(None);
         };
@@ -134,7 +145,15 @@ impl Interp {
         let v = match op {
             Add => x.add(&y).map_err(|e| arith_err(e, name))?,
             Sub => x.sub(&y).map_err(|e| arith_err(e, name))?,
-            Mul => x.mul(&y).map_err(|e| arith_err(e, name))?,
+            Mul => {
+                let r = x.mul(&y).map_err(|e| arith_err(e, name))?;
+                match &ring.kind {
+                    RingKind::UPolyRes { modulus, .. } => crate::intrinsics::upoly::res_reduce(modulus, r).map_err(|e| arith_err(e, name))?,
+                    _ => r,
+                }
+            }
+            Div if matches!(ring.kind, RingKind::UPolyRes { .. }) => crate::intrinsics::upoly::res_div(crate::intrinsics::upoly::res_modulus(ring), &x, &y)?,
+            IntDiv | Mod if matches!(ring.kind, RingKind::UPolyRes { .. }) => return Ok(None),
             Div => {
                 // Magma reports a polynomial divided by zero or another
                 // non-unit constant in one way.
@@ -233,7 +252,7 @@ impl Interp {
                 CtxKind::FqZech { .. } => x.zech_log().map(|k| k + 1).unwrap_or(0).cmp(&y.zech_log().map(|k| k + 1).unwrap_or(0)),
                 _ => x.fq_coords().iter().rev().cmp(y.fq_coords().iter().rev()),
             },
-            RingKind::UPoly { base, .. } => {
+            RingKind::UPoly { base, .. } | RingKind::UPolyRes { base, .. } => {
                 let (m, n) = (x.poly_len(), y.poly_len());
                 if m != n {
                     return Ok(Some(m.cmp(&n)));
@@ -273,6 +292,9 @@ impl Interp {
     /// `a ^ k` for a ring element `a` and an integer `k`.
     fn ring_pow(&mut self, a: &Value, b: &Value) -> RResult<Option<Value>> {
         let (Value::Elt(x), Value::Int(k)) = (a, b) else { return Ok(None) };
+        if let RingKind::UPolyRes { modulus, .. } = &x.ring().kind {
+            return Ok(Some(make_elt(&x.parent, crate::intrinsics::upoly::res_pow(modulus, &x.x, k)?)));
+        }
         if k.sign() < 0 && matches!(x.ring().kind, RingKind::UPoly { .. }) {
             return Err(crate::intrinsics::arg_ge(2, k, 0).in_context("^"));
         }

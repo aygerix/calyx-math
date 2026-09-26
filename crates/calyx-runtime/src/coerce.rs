@@ -74,7 +74,7 @@ impl Interp {
                 let reason = msg.unwrap_or_else(|| "Illegal coercion".to_string());
                 // Polynomial rings report just the reason (a plain failure
                 // without the blank line).
-                if crate::rings::ring_of(s).is_some_and(|(_, r)| matches!(r.kind, crate::rings::RingKind::UPoly { .. })) {
+                if crate::rings::ring_of(s).is_some_and(|(_, r)| matches!(r.kind, crate::rings::RingKind::UPoly { .. } | crate::rings::RingKind::UPolyRes { .. })) {
                     let style = if msg_given { crate::error::ErrStyle::Normal } else { crate::error::ErrStyle::Plain };
                     return Err(crate::error::ErrorInfo { style, ..crate::error::ErrorInfo::runtime(reason) }.into());
                 }
@@ -132,6 +132,11 @@ impl Interp {
                 StructKind::ExtendedReals => match x {
                     Value::Int(_) | Value::Rat(_) | Value::Real(_) | Value::Infinity(_) => Ok(Ok(x.clone())),
                     _ => fail(),
+                },
+                StructKind::UPolIdeal(g) => match crate::intrinsics::upoly::ideal_member(self, &g.parent, &g.x, x)? {
+                    Some((v, true)) => Ok(Ok(v)),
+                    Some(_) => Ok(Err(Some("Element is not in the ideal".into()))),
+                    None => fail(),
                 },
                 // An element of the ring that lies in the ideal.
                 StructKind::ResIdeal(r, d) => {
@@ -820,6 +825,7 @@ impl Interp {
                 StructKind::ExtendedReals => TypeVal::Cat(t::EXT_RE_ELT),
                 StructKind::IntIdeal(_) => TypeVal::Cat(t::RNG_INT_ELT),
                 StructKind::ResIdeal(..) => TypeVal::Cat(t::RNG_INT_RES_ELT),
+                StructKind::UPolIdeal(_) => TypeVal::Cat(t::RNG_UPOL_ELT),
                 StructKind::AbGroup(_) => TypeVal::Cat(t::GRP_AB_ELT),
             },
             Value::Seq(s) => match s.universe.clone() {
@@ -867,13 +873,13 @@ impl Interp {
             // Univariate polynomial types show their coefficient ring;
             // multivariate ones do not.
             Value::Elt(e) => match (&e.ring().kind, e.ring().base()) {
-                (crate::rings::RingKind::UPoly { .. }, Some(b)) => TypeVal::Ext(v.type_id(), Rc::from(vec![TypeArg::Type(TypeVal::Cat(b.type_id()))])),
+                (crate::rings::RingKind::UPoly { .. } | crate::rings::RingKind::UPolyRes { .. }, Some(b)) => TypeVal::Ext(v.type_id(), Rc::from(vec![TypeArg::Type(TypeVal::Cat(b.type_id()))])),
                 _ => TypeVal::Cat(v.type_id()),
             },
             Value::Struct(s) => match &s.kind {
                 StructKind::PowerSeq(u) => tmp(u, t::POW_SEQ_ENUM),
                 StructKind::PowerSet(u) => tmp(u, t::POW_SET_ENUM),
-                StructKind::Ring(r) if matches!(r.kind, crate::rings::RingKind::UPoly { .. }) => TypeVal::Ext(v.type_id(), Rc::from(vec![TypeArg::Type(TypeVal::Cat(r.base().unwrap().type_id()))])),
+                StructKind::Ring(r) if matches!(r.kind, crate::rings::RingKind::UPoly { .. } | crate::rings::RingKind::UPolyRes { .. }) => TypeVal::Ext(v.type_id(), Rc::from(vec![TypeArg::Type(TypeVal::Cat(r.base().unwrap().type_id()))])),
                 _ => TypeVal::Cat(v.type_id()),
             },
             _ => TypeVal::Cat(v.type_id()),
@@ -925,6 +931,7 @@ impl Interp {
                 StructKind::ExtendedReals => TypeVal::Cat(t::EXT_RE_ELT),
                 StructKind::IntIdeal(_) => TypeVal::Cat(t::RNG_INT_ELT),
                 StructKind::ResIdeal(..) => TypeVal::Cat(t::RNG_INT_RES_ELT),
+                StructKind::UPolIdeal(_) => TypeVal::Cat(t::RNG_UPOL_ELT),
                 StructKind::AbGroup(_) => TypeVal::Cat(t::GRP_AB_ELT),
             },
             Value::Seq(s) => s.universe.as_ref().map(|u| self.static_element_type(u)).unwrap_or(TypeVal::Cat(t::ANY)),

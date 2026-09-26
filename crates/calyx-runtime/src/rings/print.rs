@@ -119,7 +119,7 @@ pub fn format_ring_elt(it: &mut Interp, e: &Elt, level: Level) -> RResult<String
             }
             int_poly(&e.x.fq_coords(), &name)
         }
-        RingKind::UPoly { base, .. } => {
+        RingKind::UPoly { base, .. } | RingKind::UPolyRes { base, .. } => {
             let base = base.clone();
             let name = gen_name(e, 1);
             let mut terms = Vec::new();
@@ -181,6 +181,11 @@ impl Interp {
                     let b = self.format_flat(&base.clone(), level)?;
                     format!("PolynomialRing({b})")
                 }
+                RingKind::UPolyRes { base, modulus, .. } => {
+                    let b = self.format_flat(&base.clone(), level)?;
+                    let m = self.format_res_modulus(r, modulus)?;
+                    format!("Univariate Quotient Polynomial Algebra in {} over {b}\nwith modulus {m}", r.gen_name(1))
+                }
                 RingKind::MPoly { base, rank, order } => {
                     let b = self.format_flat(&base.clone(), level)?;
                     match order {
@@ -219,8 +224,30 @@ impl Interp {
                 }
                 lines
             }
+            RingKind::UPolyRes { base, modulus, .. } => {
+                let b = self.format_flat(&base.clone(), Level::Default)?;
+                let m = self.format_res_modulus(r, modulus)?;
+                vec![format!("Univariate Quotient Polynomial Algebra in {} over {b}", r.gen_name(1)), format!("with modulus {m}")]
+            }
             RingKind::Complex(d) => vec![format!("Complex field of precision {d}")],
         })
+    }
+
+    /// The modulus of a polynomial quotient ring, in the name of its
+    /// generator.
+    fn format_res_modulus(&mut self, r: &Ring, f: &Elem) -> RResult<String> {
+        let RingKind::UPolyRes { base, .. } = &r.kind else { unreachable!() };
+        let base = base.clone();
+        let name = r.gen_name(1);
+        let mut terms = Vec::new();
+        for k in (0..f.poly_len()).rev() {
+            let c = f.poly_coeff(k);
+            if c.is_zero() == Truth::True {
+                continue;
+            }
+            terms.push(term(&coeff_text(self, &base, c, k > 0, Level::Default)?, &power(&name, k as u64)));
+        }
+        Ok(join_terms(&terms))
     }
 
     /// Print an element of a ring given as a FLINT element of the structure

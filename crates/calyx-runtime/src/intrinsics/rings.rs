@@ -397,7 +397,7 @@ fn prime_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
                     let p = f.p.clone();
                     it.finite_field(&p, 1)?
                 }
-                RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. } => {
+                RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. } | RingKind::UPolyRes { base, .. } => {
                     let base = base.clone();
                     of(it, &base)?
                 }

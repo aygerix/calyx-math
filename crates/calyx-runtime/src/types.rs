@@ -108,6 +108,8 @@ builtin_types! {
     // Finite fields and nearfields (#39, #43).
 
     // Polynomial rings (#40, #41).
+    RNG_UPOL_RES = "RngUPolRes": [RNG],
+    RNG_UPOL_RES_ELT = "RngUPolResElt": [RNG_ELT],
 
     // Real and complex fields (#42).
 }
@@ -173,6 +175,7 @@ impl TypeRegistry {
             // Finite fields and nearfields (#39, #43).
 
             // Polynomial rings (#40, #41).
+            (t::RNG_UPOL_RES, t::RNG_UPOL_RES_ELT),
 
             // Real and complex fields (#42).
         ];

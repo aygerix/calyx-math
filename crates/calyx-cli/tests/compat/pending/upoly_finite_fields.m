@@ -64,5 +64,5 @@ JacobiSymbol(r + 1, r^2 + 1);
 F9<v> := GF(9); U<u> := PolynomialRing(F9);
 JacobiSymbol(u + v, u^2 + v), JacobiSymbol(u^2 + v, u + 1), JacobiSymbol(u^3 + v*u + 1, u^2 + u + v^3);
 // The symbol against every prime polynomial of degree 2 agrees with
-// squares modulo them.
-&and[JacobiSymbol(t^3 + t + 5, g) eq (IsSquare(quo<P | g> ! (t^3 + t + 5)) select 1 else -1) : g in PrimePolynomials(P, 2)];
+// Euler's criterion modulo them.
+&and[JacobiSymbol(t^3 + t + 5, g) eq (Modexp(t^3 + t + 5, 24, g) eq 1 select 1 else -1) : g in PrimePolynomials(P, 2)];

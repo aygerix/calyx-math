@@ -493,6 +493,9 @@ impl Interp {
                 _ if crate::rings::props::ring_props(v).is_some() => {
                     return Ok(match crate::rings::props::ring_props(v).unwrap().cardinality {
                         Some(n) => Value::Int(n),
+                        None if crate::rings::ring_of(v).is_some_and(|(_, r)| matches!(r.kind, crate::rings::RingKind::UPolyRes { .. })) => {
+                            return Err(RuntimeError::runtime("Cardinality is infinite or not feasibly computable").in_context("#"));
+                        }
                         None => Value::Infinity(true),
                     });
                 }
