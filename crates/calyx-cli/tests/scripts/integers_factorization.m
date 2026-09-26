@@ -1,3 +1,5 @@
+// A copy of compat/pending/integers_factorization.m, so that calyx's output, checked against
+// Magma 2.22, is kept until #24 records the output of 2.29.
 // Factorization and the individual factoring methods (trial division,
 // Pollard rho, p-1, p+1, SQUFOF, ECM with a fixed curve, MPQS), stored
 // factors, ECM group orders, divisors, coprime bases, partial

@@ -1,5 +1,6 @@
 // Residue class rings: creation, invariants and the functions of their
-// elements.
+// elements. 2.22 lacks ResidueClassRing of a factorization sequence, which
+// the handbook documents.
 R := Integers(12);
 One(R), Identity(R), Zero(R), Representative(R), elt<R | 29>;
 Characteristic(R), #R, Modulus(R);

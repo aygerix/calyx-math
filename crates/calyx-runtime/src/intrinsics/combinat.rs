@@ -209,3 +209,46 @@ pub fn register(it: &mut Interp) {
         generalized_fibonacci_number,
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn partitions_are_complete_and_ordered() {
+        for n in 0..=25u64 {
+            let parts: Vec<u64> = (1..=n).rev().collect();
+            let ps = partitions_of(n, &parts, None);
+            assert_eq!(Integer::from_u64(ps.len() as u64), Integer::partitions(n), "#Partitions({n})");
+            assert!(ps.iter().all(|p| p.iter().sum::<u64>() == n && p.windows(2).all(|w| w[0] >= w[1])), "Partitions({n})");
+            assert!(ps.windows(2).all(|w| w[0] > w[1]), "Partitions({n}) in reverse lexicographic order");
+            for k in 0..=n {
+                assert_eq!(partitions_of(n, &parts, Some(k)).len(), ps.iter().filter(|p| p.len() as u64 == k).count(), "Partitions({n}, {k})");
+            }
+        }
+        // Parts from a set: the coefficients of 1/((1 - x^7)(1 - x^5)(1 - x^3)).
+        let parts = [7u64, 5, 3];
+        let mut ways = [0usize; 61];
+        ways[0] = 1;
+        for p in parts {
+            for i in p as usize..=60 {
+                ways[i] += ways[i - p as usize];
+            }
+        }
+        for n in 0..=60 {
+            assert_eq!(partitions_of(n, &parts, None).len(), ways[n as usize], "RestrictedPartitions({n}, {{3, 5, 7}})");
+        }
+    }
+
+    #[test]
+    fn fibonacci_numbers_follow_the_recurrence_both_ways() {
+        let int = Integer::from_i64;
+        assert_eq!([-2, -1, 0, 1, 2].map(fibonacci_any), [-1, 1, 0, 1, 1].map(int));
+        let (g0, g1) = (int(3), int(-7));
+        assert_eq!((generalized_fibonacci(&g0, &g1, 0), generalized_fibonacci(&g0, &g1, 1)), (g0.clone(), g1.clone()));
+        for n in -80..=80 {
+            assert_eq!(fibonacci_any(n + 2), &fibonacci_any(n + 1) + &fibonacci_any(n), "Fibonacci({n})");
+            assert_eq!(generalized_fibonacci(&g0, &g1, n + 2), &generalized_fibonacci(&g0, &g1, n + 1) + &generalized_fibonacci(&g0, &g1, n), "G({n})");
+        }
+    }
+}

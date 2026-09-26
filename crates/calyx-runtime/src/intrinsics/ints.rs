@@ -873,3 +873,57 @@ pub fn primitive_root(m: &Integer) -> Option<Integer> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use std::cmp::Ordering;
+
+    use super::*;
+
+    /// A xorshift generator, so that the cases are the same on every run.
+    fn next(s: &mut u64) -> u64 {
+        *s ^= *s << 13;
+        *s ^= *s >> 7;
+        *s ^= *s << 17;
+        *s
+    }
+
+    /// A random integer of at most `bits` bits, of either sign.
+    fn random_int(s: &mut u64, bits: u64) -> Integer {
+        let mut x = Integer::zero();
+        for _ in 0..bits.div_ceil(64) {
+            x = &x.mul_2exp(64) + &Integer::from_u64(next(s));
+        }
+        let x = x.fdiv_2exp(64 * bits.div_ceil(64) - bits);
+        if next(s) % 2 == 0 { -x } else { x }
+    }
+
+    #[test]
+    fn xgcd_is_a_bezout_identity() {
+        let mut s = 0x9e37_79b9_7f4a_7c15;
+        for i in 0..3000 {
+            let bits = [3, 8, 30, 64, 100, 300][i % 6];
+            let c = random_int(&mut s, [1, 1, 5, 40][i % 4]);
+            let (a, b) = (&random_int(&mut s, bits) * &c, &random_int(&mut s, bits) * &c);
+            let (g, x, y) = a.xgcd(&b);
+            assert_eq!(g, a.gcd(&b), "Xgcd({a}, {b})");
+            assert_eq!(&(&a * &x) + &(&b * &y), g, "Xgcd({a}, {b})");
+            if !a.is_zero() && !b.is_zero() {
+                assert!(x.cmp_abs(&b.divexact(&g)) != Ordering::Greater && y.cmp_abs(&a.divexact(&g)) != Ordering::Greater, "Xgcd({a}, {b})");
+            }
+        }
+    }
+
+    #[test]
+    fn xgcd_of_a_sequence_is_a_bezout_identity() {
+        let mut s = 0x2545_f491_4f6c_dd1d;
+        for i in 0..1000 {
+            let c = random_int(&mut s, [1, 3, 20][i % 3]);
+            let a: Vec<Integer> = (0..1 + i % 8).map(|j| if (i + j) % 7 == 0 { Integer::zero() } else { &random_int(&mut s, [4, 20, 70][i % 3]) * &c }).collect();
+            let (g, x) = xgcd_seq_of(&a);
+            assert_eq!(g, a.iter().fold(Integer::zero(), |g, v| g.gcd(v)), "Xgcd({a:?})");
+            assert_eq!(x.len(), a.len());
+            assert_eq!(a.iter().zip(&x).fold(Integer::zero(), |t, (v, m)| &t + &(v * m)), g, "Xgcd({a:?})");
+        }
+    }
+}

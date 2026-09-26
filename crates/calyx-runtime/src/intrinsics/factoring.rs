@@ -104,15 +104,7 @@ fn factorization(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     }
     let sign = Value::int(n.sign() as i64);
     let mut m = n.abs();
-    // Stored factors are tried first.
     let mut fact = Fact::new();
-    for p in &it.stored_factors {
-        let (k, r) = m.remove(p);
-        if k > 0 {
-            fact.push((p.clone(), k));
-            m = r;
-        }
-    }
     // Negative limits count as not given, as in Magma.
     let given = |name: &str| param_int(a, name).filter(|b| b.sign() >= 0).map(|b| b.to_u64().unwrap_or(u64::MAX));
     let stages = Stages {
@@ -131,7 +123,7 @@ fn factorization(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let proof = proof(a);
     let (rng, stored) = (&mut it.rng, &mut it.stored_factors);
     let (f, rest) = split_with(&r, proof, &mut |x: &Integer| {
-        let (d, by_ecm_or_mpqs) = stages.split(x, rng)?;
+        let (d, by_ecm_or_mpqs) = stages.split(x, rng, stored)?;
         // The primes that ECM and MPQS split off are stored for later calls.
         if by_ecm_or_mpqs {
             for y in [d.clone(), x.divexact(&d)] {
@@ -165,11 +157,12 @@ struct Stages {
 
 impl Stages {
     /// A proper divisor of the composite m (prime to 6 and not a perfect
-    /// power) from the first stage that finds one: SQUFOF, Pollard rho, ECM
-    /// and MPQS. Unless both ECM and MPQS are bounded, whatever it takes
-    /// follows: ECM without end when MPQS may not be used, or else FLINT's
-    /// factorization. With the divisor comes whether ECM or MPQS found it.
-    fn split(&self, m: &Integer, rng: &mut crate::random::Rng) -> Option<(Integer, bool)> {
+    /// power) from the first stage that finds one: SQUFOF, Pollard rho, the
+    /// stored factors, ECM and MPQS. Unless both ECM and MPQS are bounded,
+    /// whatever it takes follows: ECM without end when MPQS may not be used,
+    /// or else FLINT's factorization. With the divisor comes whether ECM or
+    /// MPQS found it.
+    fn split(&self, m: &Integer, rng: &mut crate::random::Rng, stored: &[Integer]) -> Option<(Integer, bool)> {
         let digits = m.to_string().len() as u64;
         if digits <= self.squfof && m.bits() <= 125 {
             if let Some(d) = squfof(m, 200_000) {
@@ -178,6 +171,10 @@ impl Stages {
         }
         if let Some(d) = pollard_rho(m, &int(1), &int(1), self.rho) {
             return Some((d, false));
+        }
+        // The stored factors are tried before ECM and MPQS.
+        if let Some(p) = stored.iter().find(|p| p.bits() <= m.bits() && m.is_divisible_by(p)) {
+            return Some((p.clone(), false));
         }
         // MPQS is not used below 26 digits.
         let mpqs = digits > 25 && self.mpqs.is_none_or(|l| digits <= l);
@@ -1321,6 +1318,7 @@ pub fn register(it: &mut Interp) {
 
 #[cfg(test)]
 mod tests {
+    use super::super::factseq::fact_int;
     use super::*;
 
     #[test]
@@ -1348,18 +1346,119 @@ mod tests {
         let mut rng = crate::random::Rng::new(1);
         // Both ECM and MPQS bounded: nothing splits a 29-digit semiprime.
         let bounded = Stages { squfof: 24, rho: 8191, ecm: Some(0), mpqs: Some(0) };
-        assert_eq!(split_with(&n, true, &mut |x: &Integer| bounded.split(x, &mut rng).map(|r| r.0)), (Fact::new(), vec![n.clone()]));
-        assert_eq!(split_with(&n.pow(2), true, &mut |x: &Integer| bounded.split(x, &mut rng).map(|r| r.0)).1, vec![n.clone(), n.clone()]);
+        assert_eq!(split_with(&n, true, &mut |x: &Integer| bounded.split(x, &mut rng, &[]).map(|r| r.0)), (Fact::new(), vec![n.clone()]));
+        assert_eq!(split_with(&n.pow(2), true, &mut |x: &Integer| bounded.split(x, &mut rng, &[]).map(|r| r.0)).1, vec![n.clone(), n.clone()]);
+        // A stored factor splits it all the same.
+        let stored = [int(1000003), q.clone()];
+        assert_eq!(split_with(&n, true, &mut |x: &Integer| bounded.split(x, &mut rng, &stored).map(|r| r.0)), (vec![(p.clone(), 1), (q.clone(), 1)], vec![]));
         // Either one unbounded: the factorization is complete.
         for (ecm, mpqs) in [(None, Some(0)), (Some(0), None), (None, None)] {
             let stages = Stages { squfof: 24, rho: 8191, ecm, mpqs };
-            let (f, rest) = split_with(&n, true, &mut |x: &Integer| stages.split(x, &mut rng).map(|r| r.0));
+            let (f, rest) = split_with(&n, true, &mut |x: &Integer| stages.split(x, &mut rng, &[]).map(|r| r.0));
             assert_eq!(f, vec![(p.clone(), 1), (q.clone(), 1)]);
             assert!(rest.is_empty());
         }
         // SQUFOF alone splits 24 digits.
         let m = &int(300000000077) * &int(700000000009);
         let squfof_only = Stages { squfof: 24, rho: 0, ecm: Some(0), mpqs: Some(0) };
-        assert!(split_with(&m, true, &mut |x: &Integer| squfof_only.split(x, &mut rng).map(|r| r.0)).1.is_empty());
+        assert!(split_with(&m, true, &mut |x: &Integer| squfof_only.split(x, &mut rng, &[]).map(|r| r.0)).1.is_empty());
+    }
+
+    /// A xorshift generator, so that the cases are the same on every run.
+    fn next(s: &mut u64) -> u64 {
+        *s ^= *s << 13;
+        *s ^= *s >> 7;
+        *s ^= *s << 17;
+        *s
+    }
+
+    /// A random factorization: up to four primes, of 2 to `bits` bits, with
+    /// exponents up to 3.
+    fn random_fact(s: &mut u64, bits: u32) -> Fact {
+        let mut f = Fact::new();
+        for _ in 0..next(s) % 5 {
+            let b = 2 + next(s) as u32 % (bits - 1);
+            f = fact_mul(&f, &vec![(Integer::from_u64(next(s) >> (64 - b)).next_prime(), 1 + next(s) % 3)]);
+        }
+        f
+    }
+
+    #[test]
+    fn trial_division_splits_off_the_primes_up_to_the_bound() {
+        let mut s = 0x9e37_79b9_7f4a_7c15;
+        for i in 0..600 {
+            let f = random_fact(&mut s, [8, 14, 20, 40][i % 4]);
+            let n = &fact_int(&f) * &int([1, -1][i % 2]);
+            let bound = [1u64, 2, 3, 10, 97, 100, 1000, 10000, 70000][i % 9];
+            let (g, r) = trial_division(&n, bound);
+            assert_eq!(&fact_int(&g) * &r, n.abs(), "TrialDivision({n}, {bound})");
+            let small: Fact = f.iter().filter(|(p, _)| p.to_u64().is_some_and(|p| p <= bound)).cloned().collect();
+            assert_eq!(g, small, "TrialDivision({n}, {bound})");
+        }
+    }
+
+    #[test]
+    fn the_stages_factor_completely() {
+        let stages = Stages { squfof: 24, rho: 8191, ecm: None, mpqs: None };
+        let mut rng = crate::random::Rng::new(7);
+        let mut s = 0x2545_f491_4f6c_dd1d;
+        for i in 0..150 {
+            let f = random_fact(&mut s, [16, 24, 32, 48][i % 4]);
+            let n = fact_int(&f);
+            let (g, rest) = split_with(&n, true, &mut |x: &Integer| stages.split(x, &mut rng, &[]).map(|r| r.0));
+            assert!(rest.is_empty() && g == f, "Factorization({n})");
+        }
+    }
+
+    #[test]
+    fn coprime_bases_are_coprime_and_generate() {
+        let mut s = 0x0123_4567_89ab_cdef;
+        for i in 0..400 {
+            // Products of a few shared factors, so that the elements meet.
+            let shared: Vec<Integer> = (0..4).map(|_| int(2 + (next(&mut s) % 60) as i64)).collect();
+            let xs: Vec<Integer> = (0..1 + i % 5).map(|_| (0..3).fold(int(1), |x, _| &x * &shared[next(&mut s) as usize % 4])).collect();
+            let basis = coprime_basis(&xs);
+            for (j, (b, _)) in basis.iter().enumerate() {
+                assert!(*b > int(1) && basis[j + 1..].iter().all(|(c, _)| b.gcd(c).is_one()), "CoprimeBasis({xs:?})");
+            }
+            for x in &xs {
+                let rest = basis.iter().fold(x.clone(), |x, (b, _)| x.remove(b).1);
+                assert!(rest.is_one(), "CoprimeBasis({xs:?}) leaves {rest} of {x}");
+            }
+        }
+    }
+
+    #[test]
+    fn partial_factorizations_multiply_back() {
+        let mut s = 0x1357_9bdf_2468_ace0;
+        for i in 0..300 {
+            let shared: Vec<Integer> = (0..5).map(|_| Integer::from_u64(next(&mut s) >> 40).next_prime()).collect();
+            let xs: Vec<Integer> = (0..1 + i % 6).map(|_| (0..1 + next(&mut s) % 4).fold(int(1), |x, _| &x * &shared[next(&mut s) as usize % 5])).collect();
+            let pf = partial_factorization(&xs);
+            let mut cofactors: Vec<Integer> = Vec::new();
+            for (x, (squares, rest)) in xs.iter().zip(&pf) {
+                assert!(squares.iter().all(|(_, e)| e % 2 == 0), "PartialFactorization({xs:?})");
+                assert_eq!(&fact_int(squares) * &fact_int(rest), x.abs(), "PartialFactorization({xs:?})");
+                cofactors.extend(rest.iter().map(|(c, _)| c.clone()));
+            }
+            cofactors.sort();
+            cofactors.dedup();
+            for (j, c) in cofactors.iter().enumerate() {
+                assert!(cofactors[j + 1..].iter().all(|d| c.gcd(d).is_one()), "PartialFactorization({xs:?})");
+            }
+        }
+    }
+
+    #[test]
+    fn cyclotomic_values_multiply_to_powers_less_one() {
+        for b in 2..=12u64 {
+            let b = Integer::from_u64(b);
+            for k in 1..=40u64 {
+                let product = super::super::factseq::divisors_of(&factor(&Integer::from_u64(k)))
+                    .iter()
+                    .fold(int(1), |t, d| &t * &cyclotomic_value(d.to_u64().unwrap(), &b));
+                assert_eq!(product, &b.pow(k) - &int(1), "{b}^{k} - 1");
+            }
+        }
     }
 }

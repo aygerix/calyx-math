@@ -1,0 +1,245 @@
+360
+84
+RngIntElt
+[ <2, 3>, <5, 1> ]
+RngIntEltFact
+[ <3, 1> ]
+[]
+
+>> SeqFact([<5, 1>, <2, 3>]);
+          ^
+Runtime error in 'SeqFact': Sequence not a factorization list (must be a 
+sequence of ordered <prime, exponent> tuples)
+
+
+>> SeqFact([<4, 1>]);
+          ^
+Runtime error in 'SeqFact': Sequence not a factorization list (must be a 
+sequence of ordered <prime, exponent> tuples)
+
+
+>> SeqFact([<2, 0>]);
+          ^
+Runtime error in 'SeqFact': Sequence not a factorization list (must be a 
+sequence of ordered <prime, exponent> tuples)
+
+
+>> SeqFact([<2, -1>]);
+          ^
+Runtime error in 'SeqFact': Sequence not a factorization list (must be a 
+sequence of ordered <prime, exponent> tuples)
+
+
+>> SeqFact([<2, 1>, <2, 1>]);
+          ^
+Runtime error in 'SeqFact': Sequence not a factorization list (must be a 
+sequence of ordered <prime, exponent> tuples)
+
+
+>> SeqFact([2, 3]);
+          ^
+Runtime error in 'SeqFact': Bad argument types
+Argument types given: SeqEnum[RngIntElt]
+
+[ <2, 3>, <3, 2>, <5, 1> ]
+RngIntEltFact
+[ <2, 3>, <3, 2>, <5, 1> ]
+Set of integer factorization sequences
+[ <2, 2>, <3, 1>, <37, 1> ]
+[ <2, 2>, <3, 1>, <23, 1> ]
+[ <2, 5>, <3, 3>, <5, 1>, <7, 1> ]
+
+>> f + g; f - g; f * g; f / g; f ^ 2; f ^ 0; g - f;
+                          ^
+Runtime error in '/': Division was not exact
+
+[ <2, 6>, <3, 4>, <5, 2> ]
+[]
+[ <2, 2>, <3, 1>, <23, 1> ]
+
+>> g / f;
+     ^
+Runtime error in '/': Division was not exact
+
+
+>> f / Factorization(7);
+     ^
+Runtime error in '/': Division was not exact
+
+
+>> f ^ -1;
+     ^
+Runtime error in '^': Exponent must be non-negative
+
+
+>> f - f;
+     ^
+Runtime error in '-': Result is 0
+
+
+>> Factorization(1) - Factorization(1);
+                    ^
+Runtime error in '-': Result is 0
+
+[ <19, 2> ]
+
+>> f * 2;
+     ^
+Runtime error in '*': Bad argument types
+Argument types given: RngIntEltFact[Tup], RngIntElt
+
+false
+true
+true
+true
+
+>> f eq g; f eq f; f ne g; f eq [<2, 3>, <3, 2>, <5, 1>]; f eq 360;
+                                                            ^
+Runtime error in 'eq': Bad argument types
+Argument types given: RngIntEltFact[Tup], RngIntElt
+
+[ <2, 3>, <3, 2>, <5, 1>, <7, 1> ]
+[ <2, 2>, <3, 1> ]
+[]
+[ <2, 3>, <3, 2>, <5, 1> ]
+[ <2, 1>, <5, 1> ]
+[ <2, 1>, <3, 1> ]
+[]
+[]
+[ <2, 1> ]
+[ <2, 1>, <3, 1> ]
+0
+-1
+1
+[ 1, 2, 3, 4, 6, 7, 12, 14, 21, 28, 42, 84 ]
+[ 2, 3, 5 ]
+24
+1170
+false
+true
+false
+true
+true
+false
+true
+false
+true
+false
+true
+false
+true
+false
+true [ <2, 1>, <3, 1> ]
+true []
+false
+true
+true
+3
+<3, 2>
+3
+[ 2, 3, 5 ]
+360
+
+>> f[4];
+    ^
+Runtime error in '[]': Sequence index 4 should be in the range 1 to 3
+
+[ <7, 1>, <3, 2>, <5, 1>, <7, 1> ]
+[ <7, 1>, <3, 2>, <5, 1>, <2, 2>, <3, 1>, <7, 1> ]
+[ <5, 1>, <3, 2>, <7, 1> ]
+true
+false
+false
+[ <3, 2>, <5, 1>, <7, 1> ]
+Cartesian Product<Integer Ring, Integer Ring>
+<3, 2> 2
+RngIntEltFact
+[ <7, 1>, <3, 2>, <5, 1> ]
+RngIntEltFact
+SeqEnum
+SeqEnum
+RngIntEltFact
+RngIntEltFact
+RngIntEltFact
+RngIntEltFact
+true
+[
+    [ <2, 2>, <3, 1> ],
+    []
+]
+{
+    [ <2, 2>, <3, 1> ]
+}
+{ <2, 2>, <3, 1> }
+true
+<2, 3>
+<5, 1>
+3
+Cartesian Product<Integer Ring, Integer Ring>
+Set of integer factorization sequences
+RngIntEltFact
+true
+true
+true
+true
+true
+
+>> NumberOfDivisors([<2, 3>]); SumOfDivisors([<2, 3>]); MoebiusMu([<2, 3>]); D
+                   ^
+Runtime error in 'NumberOfDivisors': Bad argument types
+Argument types given: SeqEnum[Tup]
+
+
+>> NumberOfDivisors([<2, 3>]); SumOfDivisors([<2, 3>]); MoebiusMu([<2, 3>]); D
+                                            ^
+Runtime error in 'SumOfDivisors': Bad argument types
+Argument types given: SeqEnum[Tup]
+
+
+>> NumberOfDivisors([<2, 3>]); SumOfDivisors([<2, 3>]); MoebiusMu([<2, 3>]); D
+                                                                 ^
+Runtime error in 'MoebiusMu': Bad argument types
+Argument types given: SeqEnum[Tup]
+
+
+>> ebiusMu([<2, 3>]); DivisorSigma(1, [<2, 3>]);
+                                  ^
+Runtime error in 'DivisorSigma': Bad argument types
+Argument types given: RngIntElt, SeqEnum[Tup]
+
+
+>> Facint(Factorization(360)[1..2]);
+         ^
+Runtime error in 'Facint': Bad argument types
+Argument types given: SeqEnum[Tup]
+
+SeqEnum
+SeqEnum
+SeqEnum
+[ <2, 2>, <3, 1>, <5, 1> ]
+RngIntEltFact
+[ <2, 2>, <3, 1>, <29, 1> ]
+[]
+{}
+[
+    [],
+    [ <2, 1> ]
+]
+[
+    [ <2, 1>, <3, 1> ],
+    [ <2, 2> ],
+    [ <3, 1> ]
+]
+1
+1
+1
+1
+-3 2
+[ <3, 1> ]
+[ <2, 1> ]
+true []
+[ <3, 1>, <3, 1> ]
+9
+false
+false
+[ <2, 1>, <3, 1>, <3, 1> ]

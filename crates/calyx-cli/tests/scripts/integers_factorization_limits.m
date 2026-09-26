@@ -1,3 +1,5 @@
+// A copy of compat/pending/integers_factorization_limits.m, so that calyx's output, checked against
+// Magma 2.22, is kept until #24 records the output of 2.29.
 // Factorization with its stages bounded: composites stay unfactored (the
 // third value, with multiplicities) only when both ECMLimit and MPQSLimit
 // are given. SQUFOF works on composites of at most SQUFOFLimit digits, MPQS

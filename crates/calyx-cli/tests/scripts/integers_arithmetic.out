@@ -1,0 +1,343 @@
+5
+-5
+7
+-1
+12
+1024
+7/2
+2
+FldRatElt
+1/4
+1
+-8
+
+>> 0^-1;
+    ^
+Runtime error in '^': Illegal negative power of zero element
+
+3
+-4
+-4
+3
+1
+1
+-1
+-1
+
+>> 7 div 0;
+     ^
+Runtime error in 'div': Division by zero
+
+
+>> 7 mod 0;
+     ^
+Runtime error in 'mod': Division by zero
+
+8
+5
+20
+10
+FldRatElt
+3
+1
+27
+3
+-3
+0
+
+>> ExactQuotient(12, 5);
+                ^
+Runtime error in 'ExactQuotient': Argument 1 is not exactly divisible by 
+argument 2
+
+
+>> ExactQuotient(12, 0);
+                ^
+Runtime error in 'ExactQuotient': Division by zero
+
+40
+-40
+5
+5
+-6
+0
+-1
+
+>> ShiftLeft(5, -1);
+            ^
+Runtime error in 'ShiftLeft': Argument 2 (-1) should be >= 0
+
+
+>> ShiftRight(5, -1);
+             ^
+Runtime error in 'ShiftRight': Argument 2 (-1) should be >= 0
+
+1
+3
+0
+5
+
+>> ModByPowerOf2(5, -1);
+                ^
+Runtime error in 'ModByPowerOf2': Argument 2 (-1) should be >= 0
+
+-1
+-6
+5
+8
+0
+14
+-2
+6
+2
+1180591620717411303425
+true
+true
+true
+false
+true
+false
+Integer Ring
+RngIntElt
+RngIntElt
+true
+true
+true
+true 1
+false
+true
+false
+true
+false
+false
+false
+true
+false
+true
+true
+false
+false
+false
+true
+true
+false
+false
+true
+true
+false
+false
+true
+true
+true
+false
+true
+true
+
+>> IsDivisibleBy(12, 0);
+                ^
+Runtime error in 'IsDivisibleBy': Division by zero
+
+true 4
+false
+true 0
+false
+true
+false
+true
+true
+false
+
+>> IsSquarefree(0);
+               ^
+Runtime error in 'IsSquarefree': Argument 1 is not non-zero
+
+true 2 3
+true 2 6
+false
+
+>> IsPower(8); IsPower(64); IsPower(10); IsPower(1); IsPower(0); IsPower(-8); 
+                                                ^
+Runtime error in 'IsPower': Argument 1 (1) should be >= 2
+
+
+>> IsPower(8); IsPower(64); IsPower(10); IsPower(1); IsPower(0); IsPower(-8); 
+                                                            ^
+Runtime error in 'IsPower': Argument 1 (0) should be >= 2
+
+
+>> IsPower(8); IsPower(64); IsPower(10); IsPower(1); IsPower(0); IsPower(-8); 
+                                                                        ^
+Runtime error in 'IsPower': Argument 1 (-8) should be >= 2
+
+
+>> er(0); IsPower(-8); IsPower(-64); IsPower(-4);
+                              ^
+Runtime error in 'IsPower': Argument 1 (-64) should be >= 2
+
+
+>> er(0); IsPower(-8); IsPower(-64); IsPower(-4);
+                                            ^
+Runtime error in 'IsPower': Argument 1 (-4) should be >= 2
+
+true 4
+false
+true -2
+false
+true 1
+true 0
+true 16
+false
+false
+{ 10000000259, 10000000643 }
+true
+true
+false
+true
+false
+true
+true
+true
+false
+false
+5
+9 2
+3
+2 3
+-1 1
+4 1
+
+>> Maximum([]);
+          ^
+Runtime error in 'Maximum': Argument 1 is not non-empty
+
+5
+-5
+-5
+5
+7
+$.1 - 3
+Univariate Polynomial Ring over Integer Ring
+$.1 + 3
+5
+5
+0
+0
+10
+9
+3
+2
+0
+
+>> Ilog2(0);
+        ^
+Runtime error in 'Ilog2': Argument 1 (0) should be >= 1
+
+
+>> Ilog2(-4);
+        ^
+Runtime error in 'Ilog2': Argument 1 (-4) should be >= 1
+
+
+>> Ilog(1, 10);
+       ^
+Runtime error in 'Ilog': Argument 1 (1) should be >= 2
+
+
+>> Ilog(10, 0);
+       ^
+Runtime error in 'Ilog': Argument 2 (0) should be >= 1
+
+
+>> Ilog(-10, 100);
+       ^
+Runtime error in 'Ilog': Argument 1 (-10) should be >= 2
+
+3 2
+-4 3
+-4 -3
+3 -2
+
+>> Quotrem(17, 0);
+          ^
+Runtime error in 'Quotrem': Division by zero
+
+3
+0
+3
+
+>> Valuation(24, 2); Valuation(24, 5); Valuation(-24, 2); Valuation(24, 4); Va
+                                                                   ^
+Runtime error in 'Valuation': Argument 2 (4) should be prime
+
+
+>> Valuation(24, 4); Valuation(24, 6);
+                              ^
+Runtime error in 'Valuation': Argument 2 (6) should be prime
+
+Infinity
+
+>> Valuation(24, 1);
+            ^
+Runtime error in 'Valuation': Argument 2 (1) should be prime
+
+
+>> Valuation(24, 0);
+            ^
+Runtime error in 'Valuation': Argument 2 is not positive
+
+
+>> Valuation(24, -2);
+            ^
+Runtime error in 'Valuation': Argument 2 is not positive
+
+2 8
+10
+4
+
+>> Iroot(100, 2); Iroot(100, 3); Iroot(0, 3); Iroot(1000, 3); Iroot(2^100, 7);
+                                      ^
+Runtime error in 'Iroot': Argument 1 (0) should be >= 1
+
+10
+19972
+
+>> Iroot(-8, 3);
+        ^
+Runtime error in 'Iroot': Argument 1 (-8) should be >= 1
+
+
+>> Iroot(100, 0);
+        ^
+Runtime error in 'Iroot': Argument 2 (0) should be >= 2
+
+
+>> Iroot(100, -1);
+        ^
+Runtime error in 'Iroot': Argument 2 (-1) should be >= 2
+
+-1
+0
+1
+5
+-5
+5
+-5
+2 6
+1 1
+3 2
+
+>> ; SquarefreeFactorization(12); SquarefreeFactorization(0);
+                                                         ^
+Runtime error in 'SquarefreeFactorization': Argument 1 is not non-zero
+
+-3 2
+0
+1
+9
+10
+1125899906842624
+
+>> Isqrt(-1);
+        ^
+Runtime error in 'Isqrt': Argument 1 is not non-negative
+

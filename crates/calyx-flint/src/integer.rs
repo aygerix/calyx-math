@@ -437,7 +437,16 @@ impl Integer {
             }
             let sign = f.sign;
             sys::fmpz_factor_clear(&mut f);
+            // FLINT may list a prime more than once (p^2 and p from
+            // different splits), so equal primes are merged.
             factors.sort_by(|a, b| a.0.cmp(&b.0));
+            factors.dedup_by(|b, a| {
+                let same = a.0 == b.0;
+                if same {
+                    a.1 += b.1;
+                }
+                same
+            });
             Some(Factorization { sign, factors })
         }
     }

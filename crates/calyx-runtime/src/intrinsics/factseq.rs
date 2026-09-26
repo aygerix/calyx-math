@@ -530,3 +530,108 @@ pub fn register(it: &mut Interp) {
     it.def("IsSquare", &format!("f::{F} -> BoolElt, {F}"), "Whether f stands for a square, and its square root.", fact_is_square);
     it.def("IsSquarefree", &format!("f::{F} -> BoolElt"), "Whether f stands for a squarefree integer.", fact_is_squarefree);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A xorshift generator, so that the cases are the same on every run.
+    fn next(s: &mut u64) -> u64 {
+        *s ^= *s << 13;
+        *s ^= *s >> 7;
+        *s ^= *s << 17;
+        *s
+    }
+
+    /// A random factorization of up to four primes of at most `bits` bits.
+    fn random_fact(s: &mut u64, bits: u32) -> Fact {
+        let mut f = Fact::new();
+        for _ in 0..next(s) % 5 {
+            let p = Integer::from_u64(next(s) >> (64 - bits)).next_prime();
+            f = fact_mul(&f, &vec![(p, 1 + next(s) % 3)]);
+        }
+        f
+    }
+
+    fn gcd(a: u64, b: u64) -> u64 {
+        if b == 0 { a } else { gcd(b, a % b) }
+    }
+
+    #[test]
+    fn factorizations_multiply_back() {
+        let mut s = 0x9e37_79b9_7f4a_7c15;
+        for i in 0..200 {
+            let f = random_fact(&mut s, [8, 16, 24, 32][i % 4]);
+            let n = fact_int(&f);
+            let g = factor(&n);
+            assert!(g.windows(2).all(|w| w[0].0 < w[1].0) && g.iter().all(|(p, e)| p.is_prime() && *e > 0), "Factorization({n})");
+            assert_eq!(g, f, "Factorization({n})");
+            assert_eq!(factor(&-&n), f, "Factorization(-{n})");
+        }
+        // FLINT lists 102229 twice here, as 102229^2 and 102229.
+        let p = Integer::from_u64(102229);
+        assert_eq!(factor(&(&p.pow(3) * &Integer::from_u64(912337))), vec![(p, 3), (Integer::from_u64(912337), 1)]);
+    }
+
+    #[test]
+    fn factorization_arithmetic_matches_the_integers() {
+        let mut s = 0x2545_f491_4f6c_dd1d;
+        for i in 0..600 {
+            let bits = [4, 6, 16][i % 3];
+            let (f, g) = (random_fact(&mut s, bits), random_fact(&mut s, bits));
+            let (a, b) = (fact_int(&f), fact_int(&g));
+            assert_eq!(fact_mul(&f, &g), factor(&(&a * &b)), "{a} * {b}");
+            assert_eq!(fact_merge(&f, &g, u64::min), factor(&a.gcd(&b)), "Gcd({a}, {b})");
+            assert_eq!(fact_merge(&f, &g, u64::max), factor(&a.lcm(&b)), "Lcm({a}, {b})");
+            let (x, y) = squarefree_split(&f);
+            assert!(x.iter().all(|(_, e)| *e == 1) && &fact_int(&x) * &fact_int(&y).pow(2) == a, "SquarefreeFactorization({a})");
+        }
+    }
+
+    #[test]
+    fn divisor_functions_match_brute_force() {
+        for n in 1..=1500u64 {
+            let f = factor(&Integer::from_u64(n));
+            let divs: Vec<u64> = (1..=n).filter(|d| n % d == 0).collect();
+            assert_eq!(divisors_of(&f), divs.iter().map(|&d| Integer::from_u64(d)).collect::<Vec<_>>(), "Divisors({n})");
+            for k in 0..3 {
+                assert_eq!(sigma(&f, k), Integer::from_u64(divs.iter().map(|d| d.pow(k as u32)).sum()), "DivisorSigma({k}, {n})");
+            }
+            let units: Vec<u64> = (1..=n).filter(|&a| gcd(a, n) == 1).collect();
+            assert_eq!(phi(&f), Integer::from_u64(units.len() as u64), "EulerPhi({n})");
+            assert_eq!(fact_int(&factored_phi(&f)), phi(&f), "FactoredEulerPhi({n})");
+            if n <= 400 {
+                // The exponent of the unit group.
+                let order = |a: u64| {
+                    let (mut x, mut k) = (a % n, 1);
+                    while x != 1 % n {
+                        x = x * a % n;
+                        k += 1;
+                    }
+                    k
+                };
+                let lambda = units.iter().fold(1, |l, &a| l / gcd(l, order(a)) * order(a));
+                assert_eq!(fact_int(&factored_lambda(&f)), Integer::from_u64(lambda), "CarmichaelLambda({n})");
+            }
+        }
+    }
+
+    #[test]
+    fn phi_inverse_is_complete() {
+        // phi(n) >= sqrt(n/2), so phi(n) = m needs n <= 2 m^2.
+        let top = 250u64;
+        let bound = 2 * top * top;
+        let mut phis: Vec<u64> = (0..=bound).collect();
+        for p in 2..=bound {
+            if phis[p as usize] == p {
+                for k in (p..=bound).step_by(p as usize) {
+                    phis[k as usize] = phis[k as usize] / p * (p - 1);
+                }
+            }
+        }
+        for m in 1..=top {
+            let want: Vec<Integer> = (1..=bound).filter(|&n| phis[n as usize] == m).map(Integer::from_u64).collect();
+            assert_eq!(phi_inverse(&Integer::from_u64(m)), want, "EulerPhiInverse({m})");
+        }
+    }
+}

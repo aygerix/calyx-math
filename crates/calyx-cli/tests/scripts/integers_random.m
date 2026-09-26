@@ -1,3 +1,5 @@
+// A copy of compat/pending/integers_random.m, so that calyx's output, checked against
+// Magma 2.22, is kept until #24 records the output of 2.29.
 // Random integers and primes: only properties of the random values are
 // printed, plus the errors for bad arguments. RandomPrime(0) and
 // RandomPrime(1) return 0, and RandomPrime(n, a, b, x) wants n >= 1, as the
