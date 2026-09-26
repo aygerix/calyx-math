@@ -38,6 +38,8 @@ AbsoluteValue(<FldRatElt> x) -> FldRatElt
 Ceiling(<FldRatElt> x) -> RngIntElt
 Denominator(<FldRatElt> x) -> RngIntElt
 DickmanRho(<FldRatElt> u) -> FldReElt
+DicksonFirst(<RngIntElt> n, <RngElt> a) -> RngUPolElt
+DicksonSecond(<RngIntElt> n, <RngElt> a) -> RngUPolElt
 Evaluate(<RngUPolElt> f, <RngElt> r) -> RngElt
 Floor(<FldRatElt> x) -> RngIntElt
 GCD(<FldRatElt> x, <FldRatElt> y) -> FldRatElt
@@ -46,6 +48,7 @@ GCD(<FldRatElt> x, <RngIntElt> y) -> FldRatElt
 Gcd(<FldRatElt> x, <FldRatElt> y) -> FldRatElt
 Gcd(<RngIntElt> x, <FldRatElt> y) -> FldRatElt
 Gcd(<FldRatElt> x, <RngIntElt> y) -> FldRatElt
+GegenbauerPolynomial(<RngIntElt> n, <RngElt> m) -> RngUPolElt
 GreatestCommonDivisor(<FldRatElt> x, <FldRatElt> y) -> FldRatElt
 GreatestCommonDivisor(<RngIntElt> x, <FldRatElt> y) -> FldRatElt
 GreatestCommonDivisor(<FldRatElt> x, <RngIntElt> y) -> FldRatElt
@@ -60,6 +63,7 @@ IsSquare(<FldRatElt> x) -> BoolElt, FldRatElt
 IsUnit(<FldRatElt> x) -> BoolElt
 IsZero(<FldRatElt> x) -> BoolElt
 IsZeroDivisor(<RngElt> x) -> BoolElt
+LaguerrePolynomial(<RngIntElt> n, <RngElt> m) -> RngUPolElt
 Numerator(<FldRatElt> x) -> RngIntElt
 Round(<FldRatElt> x) -> RngIntElt
 Sign(<FldRatElt> x) -> RngIntElt
