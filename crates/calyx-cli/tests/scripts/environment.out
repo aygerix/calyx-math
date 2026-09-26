@@ -35,6 +35,8 @@ true
 true
 Abs(<FldRatElt> x) -> FldRatElt
 AbsoluteValue(<FldRatElt> x) -> FldRatElt
+Arg(<FldRatElt> x) -> FldReElt
+Argument(<FldRatElt> x) -> FldReElt
 Ceiling(<FldRatElt> x) -> RngIntElt
 Denominator(<FldRatElt> x) -> RngIntElt
 DickmanRho(<FldRatElt> u) -> FldReElt
@@ -52,6 +54,8 @@ GegenbauerPolynomial(<RngIntElt> n, <RngElt> m) -> RngUPolElt
 GreatestCommonDivisor(<FldRatElt> x, <FldRatElt> y) -> FldRatElt
 GreatestCommonDivisor(<RngIntElt> x, <FldRatElt> y) -> FldRatElt
 GreatestCommonDivisor(<FldRatElt> x, <RngIntElt> y) -> FldRatElt
+Im(<FldRatElt> x) -> FldReElt
+Imaginary(<FldRatElt> x) -> FldReElt
 IsIdempotent(<RngElt> x) -> BoolElt
 IsIntegral(<FldRatElt> x) -> BoolElt
 IsIrreducible(<RngElt> x) -> BoolElt
@@ -64,8 +68,18 @@ IsUnit(<FldRatElt> x) -> BoolElt
 IsZero(<FldRatElt> x) -> BoolElt
 IsZeroDivisor(<RngElt> x) -> BoolElt
 LaguerrePolynomial(<RngIntElt> n, <RngElt> m) -> RngUPolElt
+Modulus(<FldRatElt> x) -> FldReElt
 Numerator(<FldRatElt> x) -> RngIntElt
+PolarToComplex(<RngIntElt> m, <FldRatElt> a) -> FldComElt
+PolarToComplex(<FldRatElt> m, <RngIntElt> a) -> FldComElt
+PolarToComplex(<FldRatElt> m, <FldRatElt> a) -> FldComElt
+PolarToComplex(<FldRatElt> m, <FldReElt> a) -> FldComElt
+PolarToComplex(<FldReElt> m, <FldRatElt> a) -> FldComElt
+Re(<FldRatElt> x) -> FldReElt
+Real(<FldRatElt> x) -> FldReElt
+Root(<FldRatElt> x, <RngIntElt> n) -> FldReElt
 Round(<FldRatElt> x) -> RngIntElt
 Sign(<FldRatElt> x) -> RngIntElt
 Sqrt(<FldRatElt> x) -> FldReElt
+SquareRoot(<FldRatElt> x) -> FldReElt
 Truncate(<FldRatElt> x) -> RngIntElt
