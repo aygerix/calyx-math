@@ -13,6 +13,9 @@ impl Ctx {
     /// For GF(2^n) with n up to 64 (without Zech logarithms), its words:
     /// the field defined by the modulus.
     pub fn fq_gf2_field(&self) -> Option<crate::gf2x::Gf2Field> {
+        if let CtxKind::FqPacked { p: 2, degree: 1..=64 } = *self.kind() {
+            return self.fq_companion()?.fq_gf2_field();
+        }
         let CtxKind::FqNmod { p: 2, degree: n @ 1..=64 } = *self.kind() else { return None };
         let nctx = fq_ctx_ptr::<sys::fq_nmod_ctx_struct>(self);
         let f = unsafe { &(*nctx).modulus[0] };
@@ -162,6 +165,7 @@ impl Elem {
             CtxKind::FqNmod { degree, .. } => {
                 nmod_words(unsafe { &*(self.as_ptr() as *const sys::nmod_poly_struct) }, degree as usize)
             }
+            CtxKind::FqPacked { .. } => crate::packed::coords(self),
             CtxKind::FqZech { degree, .. } => {
                 let zctx = fq_ctx_ptr::<sys::fq_zech_ctx_struct>(self.ctx());
                 let nctx = unsafe { (*zctx).fq_nmod_ctx };
@@ -184,6 +188,7 @@ impl Elem {
         let mut e = Elem::zero(ctx);
         match *ctx.kind() {
             CtxKind::Nmod(_) => return Elem::from_word(ctx, coords.first().copied().unwrap_or(0)),
+            CtxKind::FqPacked { .. } => return crate::packed::from_coords(ctx, coords),
             CtxKind::FqNmod { degree, .. } => {
                 let a = e.as_mut_ptr() as *mut sys::nmod_poly_struct;
                 for (i, &c) in coords.iter().enumerate().take(degree as usize).rev() {
@@ -218,6 +223,9 @@ impl Elem {
     /// The coordinates of an element of GF(2^n) with n up to 64 (without
     /// Zech logarithms) as bits, for `gf2x::Gf2Field`.
     pub fn fq_gf2_bits(&self) -> Option<u64> {
+        if let CtxKind::FqPacked { p: 2, degree: 1..=64 } = *self.ctx().kind() {
+            return Some(unsafe { *(self.as_ptr() as *const u64) });
+        }
         let CtxKind::FqNmod { p: 2, degree: 1..=64 } = *self.ctx().kind() else { return None };
         let a = unsafe { &*(self.as_ptr() as *const sys::nmod_poly_struct) };
         Some((0..a.length as usize).fold(0, |b, i| b | ((unsafe { *a.coeffs.add(i) } as u64 & 1) << i)))
@@ -225,6 +233,11 @@ impl Elem {
 
     /// The element of GF(2^n) with n up to 64 with the given bits.
     pub fn fq_from_gf2_bits(ctx: &Rc<Ctx>, bits: u64) -> Elem {
+        if let CtxKind::FqPacked { p: 2, degree: n @ 1..=64 } = *ctx.kind() {
+            let mut e = Elem::zero(ctx);
+            unsafe { *(e.as_mut_ptr() as *mut u64) = bits & u64::MAX >> (64 - n) };
+            return e;
+        }
         let coords: Vec<u64> = (0..64).map(|i| bits >> i & 1).collect();
         Elem::fq_from_coords_u64(ctx, &coords)
     }

@@ -1,11 +1,14 @@
 //! Polynomials over GF(2) packed into words (bit i of word w is the
 //! coefficient of x^(64w + i)) and multiplied without carries: the kernels
-//! of the searches for irreducible polynomials over GF(2).
+//! of the searches for irreducible polynomials over GF(2), and of the
+//! fields GF(2^n) with n up to 512 (`Gf2Field` in a word, `Gf2Words` in up
+//! to eight).
 //!
-//! The moduli are sparse, x^n plus terms of low degree or few terms, so
-//! reduction multiplies the part above x^n by the low terms only. Products
-//! of words use the processor's carry-less multiplication when it has one
-//! (checked at run time), else a table in software.
+//! The moduli of the searches are sparse, x^n plus terms of low degree or
+//! few terms, so reduction multiplies the part above x^n by the low terms
+//! only; the fields reduce by Barrett's method. Products of words use the
+//! processor's carry-less multiplication when it has one (checked at run
+//! time), else a table in software.
 
 /// Carry-less products of words, as (low word, high word).
 trait Clmul {
@@ -533,6 +536,250 @@ impl Gf2Field {
     }
 }
 
+/// GF(2)[x]/(f) for f of degree n with 64(W - 1) < n <= 64W and W from 1 to
+/// 8 (GF(2^n) when f is irreducible): elements are W words of bits.
+/// Products are reduced by Barrett's method as in `Gf2Field`, and inverses
+/// found by the extended Euclidean algorithm on shifts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Gf2Words<const W: usize> {
+    n: u32,
+    /// f - x^n and floor(x^(2n) / f) - x^n, both of degree below n; g lies
+    /// in its first gw words.
+    g: [u64; W],
+    mu: [u64; W],
+    gw: usize,
+    hw: bool,
+}
+
+/// `$k.$f::<Hw>(args)` for a `Gf2Words`, as `field_dispatch` does for a
+/// `Gf2Field`.
+macro_rules! words_dispatch {
+    ($k:ident.$f:ident($($a:ident: $t:ty),*) -> $r:ty) => {{
+        #[cfg(target_arch = "x86_64")]
+        if $k.hw {
+            #[target_feature(enable = "pclmulqdq")]
+            unsafe fn hw<const W: usize>(k: &Gf2Words<W>, $($a: $t),*) -> $r {
+                k.$f::<Hw>($($a),*)
+            }
+            return unsafe { hw($k, $($a),*) };
+        }
+        #[cfg(target_arch = "aarch64")]
+        if $k.hw {
+            #[target_feature(enable = "aes")]
+            unsafe fn hw<const W: usize>(k: &Gf2Words<W>, $($a: $t),*) -> $r {
+                k.$f::<Hw>($($a),*)
+            }
+            return unsafe { hw($k, $($a),*) };
+        }
+        $k.$f::<Soft>($($a),*)
+    }};
+}
+
+/// Words for a product of two elements of `Gf2Words` (2W), and one more
+/// read by the shifts.
+const PRODUCT: usize = 17;
+
+impl<const W: usize> Gf2Words<W> {
+    /// The ring for f = x^n + g, with g given by its words (of degree below
+    /// n).
+    pub fn new(n: u32, g: &[u64]) -> Gf2Words<W> {
+        let nu = n as usize;
+        assert!((1..=8).contains(&W) && nu > 64 * (W - 1) && nu <= 64 * W && g.len() <= W, "a modulus of degree 64(W - 1) + 1 to 64W");
+        let mut gs = [0u64; W];
+        gs[..g.len()].copy_from_slice(g);
+        assert!(nu == 64 * W || gs[W - 1] >> (nu % 64) == 0, "g of degree below n");
+        // floor(x^(2n) / f) = x^n + floor(x^n g / f), by long division.
+        let mut r = vec![0u64; 2 * W + 1];
+        xor_shl(&mut r, &gs, nu);
+        let mut mu = [0u64; W];
+        for i in (nu..2 * nu).rev() {
+            if r[i / 64] >> (i % 64) & 1 == 1 {
+                r[i / 64] ^= 1 << (i % 64);
+                xor_shl(&mut r, &gs, i - nu);
+                mu[(i - nu) / 64] |= 1 << ((i - nu) % 64);
+            }
+        }
+        let gw = gs.iter().rposition(|&x| x != 0).map_or(0, |i| i + 1);
+        Gf2Words { n, g: gs, mu, gw, hw: has_clmul() }
+    }
+
+    pub fn degree(&self) -> u32 {
+        self.n
+    }
+
+    /// The terms of the modulus below x^n, as bits.
+    pub fn modulus_low(&self) -> &[u64; W] {
+        &self.g
+    }
+
+    /// p mod f, for p of degree below 2n - 1.
+    #[inline(always)]
+    fn reduce<C: Clmul>(&self, p: &[u64; PRODUCT]) -> [u64; W] {
+        let (s, b) = (self.n as usize / 64, self.n % 64);
+        let shr = |t: &[u64; PRODUCT], i: usize| if b == 0 { t[i + s] } else { t[i + s] >> b | t[i + s + 1] << (64 - b) };
+        // a = floor(p / x^n), and the quotient q = a + floor(a mu / x^n).
+        let mut a = [0u64; W];
+        for (i, x) in a.iter_mut().enumerate() {
+            *x = shr(p, i);
+        }
+        let mut t = [0u64; PRODUCT];
+        for i in 0..W {
+            for j in 0..W {
+                let (lo, hi) = C::mul(a[i], self.mu[j]);
+                t[i + j] ^= lo;
+                t[i + j + 1] ^= hi;
+            }
+        }
+        let (mut q, mut r) = (a, [0u64; W]);
+        for i in 0..W {
+            q[i] ^= shr(&t, i);
+            r[i] = p[i];
+        }
+        // p - q f = p + q g modulo x^n.
+        for j in 0..self.gw {
+            for i in 0..W - j {
+                let (lo, hi) = C::mul(q[i], self.g[j]);
+                r[i + j] ^= lo;
+                if i + j + 1 < W {
+                    r[i + j + 1] ^= hi;
+                }
+            }
+        }
+        if b != 0 {
+            r[W - 1] &= (1 << b) - 1;
+        }
+        r
+    }
+
+    #[inline(always)]
+    fn mul_with<C: Clmul>(&self, a: &[u64; W], b: &[u64; W]) -> [u64; W] {
+        let mut p = [0u64; PRODUCT];
+        for i in 0..W {
+            for j in 0..W {
+                let (lo, hi) = C::mul(a[i], b[j]);
+                p[i + j] ^= lo;
+                p[i + j + 1] ^= hi;
+            }
+        }
+        self.reduce::<C>(&p)
+    }
+
+    #[inline(always)]
+    fn sqr_with<C: Clmul>(&self, a: &[u64; W]) -> [u64; W] {
+        let mut p = [0u64; PRODUCT];
+        for i in 0..W {
+            (p[2 * i], p[2 * i + 1]) = C::sqr(a[i]);
+        }
+        self.reduce::<C>(&p)
+    }
+
+    #[inline(always)]
+    fn pow_with<C: Clmul>(&self, a: &[u64; W], e: &[u64]) -> [u64; W] {
+        let Some(top) = e.iter().rposition(|&x| x != 0) else {
+            let mut one = [0u64; W];
+            one[0] = 1;
+            return one;
+        };
+        let mut r = *a;
+        for i in (0..64 * top + 63 - e[top].leading_zeros() as usize).rev() {
+            r = self.sqr_with::<C>(&r);
+            if e[i / 64] >> (i % 64) & 1 == 1 {
+                r = self.mul_with::<C>(&r, a);
+            }
+        }
+        r
+    }
+
+    #[inline(always)]
+    fn sqr_n_with<C: Clmul>(&self, a: &[u64; W], k: u64) -> [u64; W] {
+        let mut r = *a;
+        for _ in 0..k {
+            r = self.sqr_with::<C>(&r);
+        }
+        r
+    }
+
+    #[inline(always)]
+    fn trace_with<C: Clmul>(&self, a: &[u64; W]) -> u64 {
+        let (mut t, mut s) = (*a, *a);
+        for _ in 1..self.n {
+            t = self.sqr_with::<C>(&t);
+            for i in 0..W {
+                s[i] ^= t[i];
+            }
+        }
+        s[0] & 1
+    }
+
+    /// a*b.
+    pub fn mul(&self, a: &[u64; W], b: &[u64; W]) -> [u64; W] {
+        words_dispatch!(self.mul_with(a: &[u64; W], b: &[u64; W]) -> [u64; W])
+    }
+
+    /// a^2.
+    pub fn sqr(&self, a: &[u64; W]) -> [u64; W] {
+        words_dispatch!(self.sqr_with(a: &[u64; W]) -> [u64; W])
+    }
+
+    /// a^e for the exponent with the given words (least significant first).
+    pub fn pow(&self, a: &[u64; W], e: &[u64]) -> [u64; W] {
+        words_dispatch!(self.pow_with(a: &[u64; W], e: &[u64]) -> [u64; W])
+    }
+
+    /// a^(2^k).
+    pub fn sqr_n(&self, a: &[u64; W], k: u64) -> [u64; W] {
+        words_dispatch!(self.sqr_n_with(a: &[u64; W], k: u64) -> [u64; W])
+    }
+
+    /// The absolute trace, the sum of the a^(2^i) for i below n (in a
+    /// field, 0 or 1).
+    pub fn trace(&self, a: &[u64; W]) -> u64 {
+        words_dispatch!(self.trace_with(a: &[u64; W]) -> u64)
+    }
+
+    /// The inverse of a, if it is a unit. The extended Euclidean algorithm
+    /// on shifts keeps u = g1 a and v = g2 a modulo f, from (a, f) until u =
+    /// 1; the degrees of g1 and g2 stay at most n, so W + 1 words hold them.
+    pub fn inv(&self, a: &[u64; W]) -> Option<[u64; W]> {
+        let n = self.n as usize;
+        let (mut u, mut v, mut g1, mut g2) = ([0u64; 9], [0u64; 9], [0u64; 9], [0u64; 9]);
+        u[..W].copy_from_slice(a);
+        v[..W].copy_from_slice(&self.g);
+        v[n / 64] |= 1 << (n % 64);
+        g1[0] = 1;
+        let (mut du, mut dv) = (degree(&u[..=W], n)?, n);
+        while du > 0 {
+            if du < dv {
+                std::mem::swap(&mut u, &mut v);
+                std::mem::swap(&mut g1, &mut g2);
+                std::mem::swap(&mut du, &mut dv);
+            }
+            xor_shl_within(&mut u, &v, du - dv, W + 1);
+            xor_shl_within(&mut g1, &g2, du - dv, W + 1);
+            du = degree(&u[..=W], du)?;
+        }
+        if g1[n / 64] >> (n % 64) & 1 == 1 {
+            g1[n / 64] ^= 1 << (n % 64);
+            for i in 0..W {
+                g1[i] ^= self.g[i];
+            }
+        }
+        let mut r = [0u64; W];
+        r.copy_from_slice(&g1[..W]);
+        Some(r)
+    }
+}
+
+/// dst ^= src * x^e over the first w words, dropping what goes past them.
+#[inline(always)]
+fn xor_shl_within(dst: &mut [u64; 9], src: &[u64; 9], e: usize, w: usize) {
+    let (ws, bs) = (e / 64, e % 64);
+    for i in (ws..w).rev() {
+        let hi = if bs > 0 && i > ws { src[i - ws - 1] >> (64 - bs) } else { 0 };
+        dst[i] ^= src[i - ws] << bs | hi;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -666,5 +913,115 @@ mod tests {
             let words: Vec<usize> = low.iter().map(|&e| n - e).filter(|&e| e < n).chain([0]).collect();
             assert_eq!(is_irreducible_sparse(n, &low), is_irreducible_sparse(n, &words), "{n} {low:?}");
         }
+    }
+
+    struct Lcg(u64);
+
+    impl Lcg {
+        fn next(&mut self) -> u64 {
+            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            self.0 ^ self.0 >> 29
+        }
+
+        /// A polynomial of degree below n, in w words.
+        fn below(&mut self, n: usize, w: usize) -> Vec<u64> {
+            (0..w).map(|i| if 64 * (i + 1) <= n { self.next() } else if 64 * i < n { self.next() & ((1 << (n % 64)) - 1) } else { 0 }).collect()
+        }
+    }
+
+    /// a*b mod f by shifts, for f = x^n + g.
+    fn mulmod_words_naive(a: &[u64], b: &[u64], n: usize, g: &[u64]) -> Vec<u64> {
+        let w = n.div_ceil(64);
+        let mut p = vec![0u64; 2 * w + 1];
+        for i in 0..64 * w {
+            if b[i / 64] >> (i % 64) & 1 == 1 {
+                xor_shl(&mut p, a, i);
+            }
+        }
+        for i in (n..2 * n).rev() {
+            if p[i / 64] >> (i % 64) & 1 == 1 {
+                p[i / 64] ^= 1 << (i % 64);
+                xor_shl(&mut p, g, i - n);
+            }
+        }
+        p.truncate(w);
+        p
+    }
+
+    /// Products against the naive ones, with and without the processor's
+    /// instruction; and, when f is irreducible, inverses, Fermat's little
+    /// theorem, the Frobenius map and traces.
+    fn words_agree<const W: usize>(n: usize, g: &[u64], rng: &mut Lcg) {
+        let g = &(0..W).map(|i| g.get(i).copied().unwrap_or(0)).collect::<Vec<_>>();
+        let k = Gf2Words::<W>::new(n as u32, g);
+        let soft = Gf2Words { hw: false, ..k.clone() };
+        let field = flint_irreducible(n, &(0..n).filter(|&i| g[i / 64] >> (i % 64) & 1 == 1).collect::<Vec<_>>());
+        let mut one = [0u64; W];
+        one[0] = 1;
+        let qm1: Vec<u64> = (0..W).map(|i| if 64 * (i + 1) <= n { u64::MAX } else { (1 << (n % 64)) - 1 }).collect();
+        for _ in 0..40 {
+            let a: [u64; W] = rng.below(n, W).try_into().unwrap();
+            let b: [u64; W] = rng.below(n, W).try_into().unwrap();
+            let want = mulmod_words_naive(&a, &b, n, g);
+            assert_eq!(k.mul(&a, &b).to_vec(), want, "{n} {g:x?}");
+            assert_eq!(soft.mul(&a, &b).to_vec(), want);
+            assert_eq!(k.sqr(&a), k.mul(&a, &a));
+            assert_eq!(soft.sqr(&a), k.sqr(&a));
+            assert_eq!(k.pow(&a, &[5]), k.mul(&k.sqr(&k.sqr(&a)), &a));
+            if field && a != [0; W] {
+                let i = k.inv(&a).unwrap();
+                assert_eq!(k.mul(&a, &i), one, "{n} {a:x?}");
+                assert_eq!(k.pow(&a, &qm1), one);
+                assert_eq!(k.sqr_n(&a, n as u64), a);
+                let t = (1..n as u64).fold(a, |s, j| {
+                    let c = k.sqr_n(&a, j);
+                    std::array::from_fn(|i| s[i] ^ c[i])
+                });
+                assert!(t == [0; W] || t == one);
+                assert_eq!(k.trace(&a), t[0]);
+            }
+        }
+        if field {
+            assert_eq!(k.inv(&[0; W]), None);
+        }
+    }
+
+    /// x^n + g irreducible with g of degree n - 1 and many terms.
+    fn dense_irreducible(n: usize, rng: &mut Lcg) -> Vec<u64> {
+        for _ in 0..20 * n {
+            let mut g = rng.below(n, n.div_ceil(64));
+            g[0] |= 1;
+            g[(n - 1) / 64] |= 1 << ((n - 1) % 64);
+            if flint_irreducible(n, &(0..n).filter(|&i| g[i / 64] >> (i % 64) & 1 == 1).collect::<Vec<_>>()) {
+                return g;
+            }
+        }
+        panic!("no irreducible of degree {n}");
+    }
+
+    #[test]
+    fn word_fields_agree() {
+        let mut rng = Lcg(0x5eed_0f_f1e1d5);
+        macro_rules! check {
+            ($w:literal: $($n:expr),*) => {
+                for n in [$($n),*] {
+                    let sparse = [least_low_term(n).unwrap()];
+                    words_agree::<$w>(n, &sparse, &mut rng);
+                    let dense = dense_irreducible(n, &mut rng);
+                    words_agree::<$w>(n, &dense, &mut rng);
+                    // Reducible: products only.
+                    let any = rng.below(n, $w);
+                    words_agree::<$w>(n, &any, &mut rng);
+                }
+            };
+        }
+        check!(1: 2, 3, 31, 63, 64);
+        check!(2: 65, 100, 127, 128);
+        check!(3: 129, 150, 192);
+        check!(4: 193, 256);
+        check!(5: 300);
+        check!(6: 333);
+        check!(7: 400);
+        check!(8: 449, 512);
     }
 }
