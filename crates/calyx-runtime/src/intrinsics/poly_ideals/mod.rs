@@ -1,6 +1,6 @@
 //! Ideals of multivariate polynomial rings (the handbook's Polynomial Rings
 //! and Ideals: Creation of Ideals and Accessing their Bases, and First
-//! Operations on Ideals).
+//! Operations on Ideals; `elimination` has the sections after them).
 //!
 //! An ideal of a polynomial ring P is a structure of type RngMPol, like P
 //! (`StructKind::MPolIdeal`), with its basis: the generators as given,
@@ -33,6 +33,8 @@ use crate::interp::{CallArgs, Interp};
 use crate::print::{Level, Printer};
 use crate::rings::{Elt, Ring, RingKind, make_elt, ring_of};
 use crate::value::*;
+
+mod elimination;
 
 /// An ideal of a multivariate polynomial ring.
 pub struct MPolIdeal {
@@ -1457,6 +1459,7 @@ pub fn register(it: &mut Interp) {
     }
     it.def("Saturation", "I::RngMPol, J::RngMPol -> RngMPol", "The saturation I : J^∞ of the ideal I by the ideal J.", saturation_by);
     it.def("Saturation", "I::RngMPol -> RngMPol", "The saturation of the ideal I by the ideal of the variables.", saturation);
+    elimination::register(it);
 }
 
 #[cfg(test)]
