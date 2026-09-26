@@ -1755,6 +1755,7 @@ pub fn register(it: &mut Interp) {
     it.def("Evaluate", "f::RngMPolElt, s::Tup -> RngElt", "The value of f at the tuple s.", evaluate);
     it.def("ExactQuotient", "f::RngMPolElt, g::RngMPolElt -> RngMPolElt", "f / g for g dividing f.", exact_quotient);
     it.def("IsDivisibleBy", "f::RngMPolElt, g::RngMPolElt -> BoolElt, RngMPolElt", "Whether g divides f, and the quotient.", is_divisible_by);
+    it.def("IsAlgebraicallyDependent", "S::{RngMPolElt} -> BoolElt", "Whether the polynomials of S are algebraically dependent.", is_algebraically_dependent);
     it.def("Reductum", "f::RngMPolElt -> RngMPolElt", "f without its leading term.", reductum);
 
     // Greatest common divisors, factorization, resultants.
