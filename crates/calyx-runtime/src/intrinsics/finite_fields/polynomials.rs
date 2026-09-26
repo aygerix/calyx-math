@@ -116,10 +116,17 @@ pub(super) fn primitive_polynomial(it: &mut Interp, a: &mut CallArgs) -> RResult
     let m = a.small_ge(1, 2)?;
     let ctx = ff(&k).0.ctx.clone();
     let px = Ctx::poly(&ctx);
-    // The defining polynomial of the default field when it is primitive.
+    // The defining polynomial of the default field when it is primitive:
+    // Conway polynomials are, as are the moduli of fields with Zech
+    // logarithms; otherwise its generator is tested.
     if degree(&k) == 1 {
-        let cs = irreducible_over(it, &k, m)?;
-        if poly_is_primitive(&k, &Elem::poly_from_coeffs(&px, &cs)?)? {
+        let d = it.default_field(&ff(&k).1.p.clone(), m)?;
+        let (dr, df) = ff(&d);
+        let primitive = df.conway
+            || matches!(dr.ctx.kind(), calyx_flint::gr::CtxKind::FqZech { .. })
+            || dr.ctx.generator().is_ok_and(|g| finite::is_primitive(&d, &g));
+        if primitive {
+            let cs = finite::int_poly_in(&df.modulus.clone(), &ctx);
             return one(poly_value(it, &k, &cs)?);
         }
     }
