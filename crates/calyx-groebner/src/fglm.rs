@@ -1,5 +1,5 @@
-//! The change of order of the Gröbner basis of a zero-dimensional ideal over
-//! GF(p), p < 2^31, by the algorithm of Faugère, Gianni, Lazard and Mora.
+//! The change of order of the Gröbner basis of a zero-dimensional ideal by
+//! the algorithm of Faugère, Gianni, Lazard and Mora.
 //!
 //! The quotient by the ideal has for basis the monomials that no leading
 //! monomial of the Gröbner basis divides, the staircase; its elements are
@@ -15,6 +15,10 @@
 //! basis, or a variable times another on the border, and then its normal
 //! form follows from those of smaller monomials. They are found as they are
 //! needed, and kept.
+//!
+//! Over GF(p), p < 2^31, the vectors are of words, reduced mod p only as
+//! often as the sums of products would overflow; over the other fields
+//! they are of the field's elements.
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
@@ -27,6 +31,206 @@ use crate::poly::{Poly, Ring, divides, mask};
 /// Marks an index on the border rather than in the staircase.
 const BORDER: u32 = 1 << 31;
 
+/// The arithmetic of the vectors over the staircase.
+trait Lin {
+    /// An entry of a vector.
+    type E: Clone;
+    /// A coefficient of a polynomial.
+    type C: Clone;
+    /// A vector to which multiples of vectors are added; an entry is exact
+    /// once read.
+    type Acc;
+    fn zero(&self) -> Self::E;
+    fn one(&self) -> Self::E;
+    fn is_zero(&self, x: &Self::E) -> bool;
+    fn neg(&self, x: &Self::E) -> Self::E;
+    fn mul(&self, x: &Self::E, y: &Self::E) -> Self::E;
+    /// `x - y z`.
+    fn sub_mul(&self, x: &Self::E, y: &Self::E, z: &Self::E) -> Self::E;
+    fn inv(&self, x: &Self::E) -> Self::E;
+    /// The entry -c for a coefficient c.
+    fn neg_coef(&self, c: &Self::C) -> Self::E;
+    /// The coefficient -x for an entry x.
+    fn coef(&self, x: &Self::E) -> Self::C;
+    fn one_coef(&self) -> Self::C;
+    fn acc(&self, v: &[Self::E]) -> Self::Acc;
+    fn zeros(&self, d: usize) -> Self::Acc;
+    /// Add `x` to the entry `i`, at most once for each entry.
+    fn add_at(&self, acc: &mut Self::Acc, i: usize, x: &Self::E);
+    /// Subtract `x` times `row` from the entries from `from` on.
+    fn sub_row(&self, acc: &mut Self::Acc, from: usize, x: &Self::E, row: &[Self::E]);
+    /// The entry `i`.
+    fn get(&self, acc: &mut Self::Acc, i: usize) -> Self::E;
+    fn finish(&self, acc: Self::Acc) -> Vec<Self::E>;
+}
+
+/// Vectors of words over GF(p), p < 2^31, reduced when a batch of products
+/// has been added.
+struct Words<'a> {
+    field: &'a Zp,
+    md: Modulus,
+    batch: usize,
+}
+
+impl Lin for Words<'_> {
+    type E = u32;
+    type C = u64;
+    /// The entries, and the products added since they were reduced.
+    type Acc = (Vec<u64>, usize);
+
+    fn zero(&self) -> u32 {
+        0
+    }
+
+    fn one(&self) -> u32 {
+        1
+    }
+
+    fn is_zero(&self, x: &u32) -> bool {
+        *x == 0
+    }
+
+    fn neg(&self, x: &u32) -> u32 {
+        if *x == 0 { 0 } else { (self.md.p - *x as u64) as u32 }
+    }
+
+    fn mul(&self, x: &u32, y: &u32) -> u32 {
+        self.md.reduce(*x as u64 * *y as u64) as u32
+    }
+
+    fn sub_mul(&self, x: &u32, y: &u32, z: &u32) -> u32 {
+        self.md.reduce(*x as u64 + (self.md.p - *y as u64) * *z as u64) as u32
+    }
+
+    fn inv(&self, x: &u32) -> u32 {
+        self.field.inv(&(*x as u64)) as u32
+    }
+
+    fn neg_coef(&self, c: &u64) -> u32 {
+        self.neg(&(*c as u32))
+    }
+
+    fn coef(&self, x: &u32) -> u64 {
+        self.neg(x) as u64
+    }
+
+    fn one_coef(&self) -> u64 {
+        1
+    }
+
+    fn acc(&self, v: &[u32]) -> (Vec<u64>, usize) {
+        (v.iter().map(|&x| x as u64).collect(), 0)
+    }
+
+    fn zeros(&self, d: usize) -> (Vec<u64>, usize) {
+        (vec![0; d], 0)
+    }
+
+    fn add_at(&self, acc: &mut (Vec<u64>, usize), i: usize, x: &u32) {
+        // A residue more than the products fits: see Modulus::batch.
+        acc.0[i] += *x as u64;
+    }
+
+    fn sub_row(&self, acc: &mut (Vec<u64>, usize), from: usize, x: &u32, row: &[u32]) {
+        let y = self.md.p - *x as u64;
+        for (a, &r) in acc.0[from..].iter_mut().zip(row) {
+            *a += y * r as u64;
+        }
+        acc.1 += 1;
+        if acc.1 == self.batch {
+            acc.0.iter_mut().for_each(|a| *a = self.md.reduce(*a));
+            acc.1 = 0;
+        }
+    }
+
+    fn get(&self, acc: &mut (Vec<u64>, usize), i: usize) -> u32 {
+        let x = self.md.reduce(acc.0[i]);
+        acc.0[i] = x;
+        x as u32
+    }
+
+    fn finish(&self, acc: (Vec<u64>, usize)) -> Vec<u32> {
+        acc.0.into_iter().map(|a| self.md.reduce(a) as u32).collect()
+    }
+}
+
+/// Vectors of the elements of a field.
+struct Elements<'a, F: Field>(&'a F);
+
+impl<F: Field> Lin for Elements<'_, F> {
+    type E = F::E;
+    type C = F::E;
+    type Acc = Vec<F::E>;
+
+    fn zero(&self) -> F::E {
+        self.0.zero()
+    }
+
+    fn one(&self) -> F::E {
+        self.0.one()
+    }
+
+    fn is_zero(&self, x: &F::E) -> bool {
+        self.0.is_zero(x)
+    }
+
+    fn neg(&self, x: &F::E) -> F::E {
+        self.0.neg(x)
+    }
+
+    fn mul(&self, x: &F::E, y: &F::E) -> F::E {
+        self.0.mul(x, y)
+    }
+
+    fn sub_mul(&self, x: &F::E, y: &F::E, z: &F::E) -> F::E {
+        self.0.sub_mul(x, y, z)
+    }
+
+    fn inv(&self, x: &F::E) -> F::E {
+        self.0.inv(x)
+    }
+
+    fn neg_coef(&self, c: &F::E) -> F::E {
+        self.0.neg(c)
+    }
+
+    fn coef(&self, x: &F::E) -> F::E {
+        self.0.neg(x)
+    }
+
+    fn one_coef(&self) -> F::E {
+        self.0.one()
+    }
+
+    fn acc(&self, v: &[F::E]) -> Vec<F::E> {
+        v.to_vec()
+    }
+
+    fn zeros(&self, d: usize) -> Vec<F::E> {
+        vec![self.0.zero(); d]
+    }
+
+    fn add_at(&self, acc: &mut Vec<F::E>, i: usize, x: &F::E) {
+        acc[i] = self.0.add(&acc[i], x);
+    }
+
+    fn sub_row(&self, acc: &mut Vec<F::E>, from: usize, x: &F::E, row: &[F::E]) {
+        for (a, r) in acc[from..].iter_mut().zip(row) {
+            if !self.0.is_zero(r) {
+                *a = self.0.sub_mul(a, x, r);
+            }
+        }
+    }
+
+    fn get(&self, acc: &mut Vec<F::E>, i: usize) -> F::E {
+        acc[i].clone()
+    }
+
+    fn finish(&self, acc: Vec<F::E>) -> Vec<F::E> {
+        acc
+    }
+}
+
 /// How the normal form of a monomial on the border is found: it is the
 /// leading monomial of a basis element, or a variable times another
 /// monomial on the border.
@@ -37,10 +241,9 @@ enum How {
 }
 
 /// The quotient by the ideal, with the normal forms found so far.
-struct Quotient<'a> {
-    md: Modulus,
-    batch: usize,
-    gb: &'a [Poly<u64>],
+struct Quotient<'a, L: Lin> {
+    lin: &'a L,
+    gb: &'a [Poly<L::C>],
     n: usize,
     /// The size of the staircase.
     d: usize,
@@ -51,10 +254,10 @@ struct Quotient<'a> {
     next: Vec<u32>,
     how: Vec<How>,
     /// The normal forms of the monomials on the border, empty until found.
-    nf: Vec<Vec<u32>>,
+    nf: Vec<Vec<L::E>>,
 }
 
-impl Quotient<'_> {
+impl<L: Lin> Quotient<'_, L> {
     /// Whether the normal form of the monomial at `q` (from `next`) is yet
     /// to be found.
     fn missing(&self, q: u32) -> bool {
@@ -63,38 +266,28 @@ impl Quotient<'_> {
 
     /// The normal form of x_k times the element with normal form `w`, whose
     /// products with x_k have their normal forms found.
-    fn times(&self, k: usize, w: &[u32]) -> Vec<u32> {
-        let (d, md) = (self.d, self.md);
-        let mut acc = vec![0u64; d];
-        let mut count = 0;
-        for (s, &x) in w.iter().enumerate() {
-            if x == 0 {
+    fn times(&self, k: usize, w: &[L::E]) -> Vec<L::E> {
+        let (d, lin) = (self.d, self.lin);
+        let mut acc = lin.zeros(d);
+        for (s, x) in w.iter().enumerate() {
+            if lin.is_zero(x) {
                 continue;
             }
             let q = self.next[k * d + s];
             if q & BORDER == 0 {
-                // No two monomials of the staircase have the same product, so
-                // this adds at most one residue to each entry.
-                acc[q as usize] += x as u64;
+                // No two monomials of the staircase have the same product.
+                lin.add_at(&mut acc, q as usize, x);
                 continue;
             }
-            let x = x as u64;
-            for (a, &y) in acc.iter_mut().zip(&self.nf[(q & !BORDER) as usize]) {
-                *a += x * y as u64;
-            }
-            count += 1;
-            if count == self.batch {
-                acc.iter_mut().for_each(|a| *a = md.reduce(*a));
-                count = 0;
-            }
+            lin.sub_row(&mut acc, 0, &lin.neg(x), &self.nf[(q & !BORDER) as usize]);
         }
-        acc.into_iter().map(|a| md.reduce(a) as u32).collect()
+        lin.finish(acc)
     }
 
     /// Find the normal form of the monomial on the border with index `b`,
     /// and those it follows from.
     fn find(&mut self, b: u32) {
-        let (d, p) = (self.d, self.md.p);
+        let d = self.d;
         let mut stack = vec![b];
         while let Some(&t) = stack.last() {
             let t = t as usize;
@@ -106,9 +299,9 @@ impl Quotient<'_> {
                 How::Lead(g) => {
                     // The basis is reduced: the tail is in the staircase.
                     let g = &self.gb[g];
-                    let mut v = vec![0u32; d];
+                    let mut v = vec![self.lin.zero(); d];
                     for i in 1..g.len() {
-                        v[self.at[g.exp(i, self.n)] as usize] = (p - g.c[i]) as u32;
+                        v[self.at[g.exp(i, self.n)] as usize] = self.lin.neg_coef(&g.c[i]);
                     }
                     self.nf[t] = v;
                     stack.pop();
@@ -119,9 +312,9 @@ impl Quotient<'_> {
                         continue;
                     }
                     let depth = stack.len();
-                    for (s, &x) in self.nf[m as usize].iter().enumerate() {
+                    for (s, x) in self.nf[m as usize].iter().enumerate() {
                         let q = self.next[k * d + s];
-                        if x != 0 && self.missing(q) {
+                        if !self.lin.is_zero(x) && self.missing(q) {
                             stack.push(q & !BORDER);
                         }
                     }
@@ -135,11 +328,11 @@ impl Quotient<'_> {
     }
 
     /// The normal form of x_k times the element with normal form `w`.
-    fn product(&mut self, k: usize, w: &[u32]) -> Vec<u32> {
+    fn product(&mut self, k: usize, w: &[L::E]) -> Vec<L::E> {
         let d = self.d;
-        for (s, &x) in w.iter().enumerate() {
+        for (s, x) in w.iter().enumerate() {
             let q = self.next[k * d + s];
-            if x != 0 && self.missing(q) {
+            if !self.lin.is_zero(x) && self.missing(q) {
                 self.find(q & !BORDER);
             }
         }
@@ -177,11 +370,21 @@ impl PartialEq for Next<'_> {
 impl Eq for Next<'_> {}
 
 /// The reduced Gröbner basis for the order of `to` of the ideal of which `gb`
-/// is the reduced Gröbner basis for the order of `from`, or None if the
-/// ideal is not zero-dimensional.
+/// is the reduced Gröbner basis for the order of `from`, over GF(p) for a
+/// prime p < 2^31, or None if the ideal is not zero-dimensional.
 pub fn fglm(field: &Zp, from: &Ring, gb: &[Poly<u64>], to: &Ring) -> Option<Vec<Poly<u64>>> {
-    let (n, p) = (from.n, field.modulus());
-    debug_assert!(p < 1 << 31);
+    debug_assert!(field.modulus() < 1 << 31);
+    let md = Modulus::new(field.modulus());
+    change(&Words { field, md, batch: md.batch() }, from, gb, to)
+}
+
+/// As `fglm`, over any field.
+pub fn fglm_field<F: Field>(field: &F, from: &Ring, gb: &[Poly<F::E>], to: &Ring) -> Option<Vec<Poly<F::E>>> {
+    change(&Elements(field), from, gb, to)
+}
+
+fn change<L: Lin>(lin: &L, from: &Ring, gb: &[Poly<L::C>], to: &Ring) -> Option<Vec<Poly<L::C>>> {
+    let n = from.n;
     let lms: Vec<(u64, &[u32])> = gb.iter().map(|g| (mask(g.lm(n)), g.lm(n))).collect();
     if lms.iter().any(|(_, l)| l.iter().all(|&x| x == 0)) {
         return Some(gb.to_vec());
@@ -251,18 +454,16 @@ pub fn fglm(field: &Zp, from: &Ring, gb: &[Poly<u64>], to: &Ring) -> Option<Vec<
             How::Times(k, b)
         })
         .collect();
-    let md = Modulus::new(p);
-    let batch = md.batch();
     let nf = vec![Vec::new(); border.len()];
-    let mut q = Quotient { md, batch, gb, n, d, at, next, how, nf };
+    let mut q = Quotient { lin, gb, n, d, at, next, how, nf };
 
     // The monomials kept and their normal forms, reduced to an echelon form:
     // the row of each is 0 before its pivot, where it is 1, and at the pivots
     // of the rows before it. The normal form of the ith monomial is leads[i]
     // times its row plus mu[i][j] times the jth row for j < i.
-    let (mut kept, mut forms): (Vec<Vec<u32>>, Vec<Vec<u32>>) = (Vec::new(), Vec::new());
-    let (mut rows, mut pivots, mut mu, mut leads): (Vec<Vec<u32>>, Vec<usize>, Vec<Vec<u32>>, Vec<u64>) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    let mut basis: Vec<Poly<u64>> = Vec::new();
+    let (mut kept, mut forms): (Vec<Vec<u32>>, Vec<Vec<L::E>>) = (Vec::new(), Vec::new());
+    let (mut rows, mut pivots, mut mu, mut leads): (Vec<Vec<L::E>>, Vec<usize>, Vec<Vec<L::E>>, Vec<L::E>) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut basis: Vec<Poly<L::C>> = Vec::new();
     let mut new_lms: Vec<(u64, Vec<u32>)> = Vec::new();
     let mut heap: BinaryHeap<Next> = BinaryHeap::from([Next { order: &to.order, e: vec![0; n], from: usize::MAX, k: 0 }]);
     let mut last: Option<Vec<u32>> = None;
@@ -276,8 +477,8 @@ pub fn fglm(field: &Zp, from: &Ring, gb: &[Poly<u64>], to: &Ring) -> Option<Vec<
             continue;
         }
         let v = if from == usize::MAX {
-            let mut v = vec![0u32; d];
-            v[0] = 1;
+            let mut v = vec![lin.zero(); d];
+            v[0] = lin.one();
             v
         } else {
             let w = std::mem::take(&mut forms[from]);
@@ -286,56 +487,45 @@ pub fn fglm(field: &Zp, from: &Ring, gb: &[Poly<u64>], to: &Ring) -> Option<Vec<
             v
         };
         // Reduce v by the rows, in turn.
-        let mut acc: Vec<u64> = v.iter().map(|&x| x as u64).collect();
-        let mut lambda: Vec<u64> = Vec::with_capacity(rows.len());
-        let mut count = 0;
+        let mut acc = lin.acc(&v);
+        let mut lambda: Vec<L::E> = Vec::with_capacity(rows.len());
         for (row, &c) in rows.iter().zip(&pivots) {
-            let x = md.reduce(acc[c]);
-            acc[c] = x;
+            let x = lin.get(&mut acc, c);
+            if !lin.is_zero(&x) {
+                lin.sub_row(&mut acc, c, &x, row);
+            }
             lambda.push(x);
-            if x == 0 {
-                continue;
-            }
-            let y = p - x;
-            for (a, &r) in acc[c..].iter_mut().zip(row) {
-                *a += y * r as u64;
-            }
-            count += 1;
-            if count == batch {
-                acc.iter_mut().for_each(|a| *a = md.reduce(*a));
-                count = 0;
-            }
         }
-        acc.iter_mut().for_each(|a| *a = md.reduce(*a));
-        match acc.iter().position(|&a| a != 0) {
+        let acc = lin.finish(acc);
+        match acc.iter().position(|a| !lin.is_zero(a)) {
             None => {
                 // v is the sum of lambda[i] times the ith row: as a combination
                 // of the normal forms of the monomials kept, it gives a
                 // polynomial of the new basis.
-                let mut c = vec![0u64; kept.len()];
+                let mut c = vec![lin.zero(); kept.len()];
                 for i in (0..kept.len()).rev() {
-                    let x = md.reduce(lambda[i] * field.inv(&leads[i]));
-                    c[i] = x;
-                    if x != 0 {
-                        for (l, &u) in lambda[..i].iter_mut().zip(&mu[i]) {
-                            *l = md.reduce(*l + (p - x) * u as u64);
+                    let x = lin.mul(&lambda[i], &lin.inv(&leads[i]));
+                    if !lin.is_zero(&x) {
+                        for (l, u) in lambda[..i].iter_mut().zip(&mu[i]) {
+                            *l = lin.sub_mul(l, &x, u);
                         }
                     }
+                    c[i] = x;
                 }
-                let mut g = Poly { c: vec![1], e: e.clone() };
-                for i in (0..kept.len()).rev().filter(|&i| c[i] != 0) {
-                    g.c.push(p - c[i]);
+                let mut g = Poly { c: vec![lin.one_coef()], e: e.clone() };
+                for i in (0..kept.len()).rev().filter(|&i| !lin.is_zero(&c[i])) {
+                    g.c.push(lin.coef(&c[i]));
                     g.e.extend_from_slice(&kept[i]);
                 }
                 basis.push(g);
                 new_lms.push((m, e));
             }
             Some(c) => {
-                let (x, u) = (acc[c], field.inv(&acc[c]));
-                rows.push(acc[c..].iter().map(|&a| md.reduce(a * u) as u32).collect());
+                let u = lin.inv(&acc[c]);
+                rows.push(acc[c..].iter().map(|a| lin.mul(a, &u)).collect());
                 pivots.push(c);
-                mu.push(lambda.iter().map(|&l| l as u32).collect());
-                leads.push(x);
+                mu.push(lambda);
+                leads.push(acc[c].clone());
                 for k in 0..n {
                     let mut f = e.clone();
                     f[k] += 1;

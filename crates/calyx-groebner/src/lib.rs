@@ -117,27 +117,36 @@ pub fn is_groebner(base: &Rc<Ctx>, n: usize, order: &Order, polys: &[Terms]) -> 
 
 /// The reduced Gröbner basis in the order `to` of the ideal of which `gb`
 /// is the reduced Gröbner basis in the order `from`: for a zero-dimensional
-/// ideal over GF(p), p < 2^31, by a change of order, and otherwise computed
-/// again from `gb`.
+/// ideal by a change of order, and otherwise computed again from `gb`.
 pub fn change_order(base: &Rc<Ctx>, n: usize, from: &Order, gb: &[Terms], to: &Order) -> Result<Vec<Terms>, Error> {
     let (ring, ring2) = (Ring { n, order: from.clone() }, Ring { n, order: to.clone() });
-    if let Some(Coefficients::Zp(f)) = field::coefficients(base) {
-        let h = if f.modulus() < 1 << 31 { fglm::fglm(&f, &ring, &imports(&f, &ring, gb)?, &ring2) } else { None };
-        if let Some(h) = h {
-            return Ok(h.iter().map(|p| export(&f, &ring2, p)).collect());
-        }
+    let h = match field::coefficients(base).ok_or(Error::Unsupported)? {
+        Coefficients::Zp(f) if f.modulus() < 1 << 31 => fglm::fglm(&f, &ring, &imports(&f, &ring, gb)?, &ring2).map(|h| exports(&f, &ring2, &h)),
+        Coefficients::Zp(f) => fglm::fglm_field(&f, &ring, &imports(&f, &ring, gb)?, &ring2).map(|h| exports(&f, &ring2, &h)),
+        Coefficients::Gr(f) => fglm::fglm_field(&f, &ring, &imports(&f, &ring, gb)?, &ring2).map(|h| exports(&f, &ring2, &h)),
+    };
+    match h {
+        Some(h) => Ok(h),
+        None => basis_of(base, &ring2, gb, None),
     }
-    basis_of(base, &ring2, gb, None)
+}
+
+/// Whether the order compares the degrees first, which suits the pairs of
+/// F4 and Buchberger's algorithm taken by degree.
+fn graded(order: &Order) -> bool {
+    matches!(order, Order::GRevLex | Order::GLex | Order::GRevLexW(_))
 }
 
 /// A basis by F4 for the primes below 2^31, where it runs in word
-/// arithmetic, and by Buchberger's algorithm for the other fields.
+/// arithmetic, and by Buchberger's algorithm for the other fields. As Magma
+/// does, the basis in the other orders is computed in grevlex and changed to
+/// the order, when the ideal is zero-dimensional.
 fn basis_of(base: &Rc<Ctx>, ring: &Ring, gens: &[Terms], limit: Option<(&[u64], i128)>) -> Result<Vec<Terms>, Error> {
     match field::coefficients(base).ok_or(Error::Unsupported)? {
         // F4 takes the pairs by degree, which suits graded orders and
         // truncated bases; in the other orders the degrees of the pairs can
         // run far beyond those of the basis.
-        Coefficients::Zp(f) if f.modulus() < 1 << 31 && (limit.is_some() || matches!(ring.order, Order::GRevLex | Order::GLex | Order::GRevLexW(_))) => {
+        Coefficients::Zp(f) if f.modulus() < 1 << 31 && (limit.is_some() || graded(&ring.order)) => {
             // Pairs are taken by weighted degree for a grevlexw order.
             let weights = match (limit, &ring.order) {
                 (Some((w, _)), _) => w.to_vec(),
@@ -147,19 +156,34 @@ fn basis_of(base: &Rc<Ctx>, ring: &Ring, gens: &[Terms], limit: Option<(&[u64], 
             let g = f4::groebner(&f, ring, imports(&f, ring, gens)?, &weights, limit.map(|(_, d)| d));
             Ok(g.iter().map(|p| export(&f, ring, p)).collect())
         }
-        // As Magma does, the basis in the other orders is computed in grevlex
-        // and changed to the order, when the ideal is zero-dimensional.
         Coefficients::Zp(f) if f.modulus() < 1 << 31 => {
             let grevlex = Ring { n: ring.n, order: Order::GRevLex };
             let g = f4::groebner(&f, &grevlex, imports(&f, &grevlex, gens)?, &vec![1; ring.n], None);
             match fglm::fglm(&f, &grevlex, &g, ring) {
-                Some(h) => Ok(h.iter().map(|p| export(&f, ring, p)).collect()),
+                Some(h) => Ok(exports(&f, ring, &h)),
                 None => groebner_in(&f, ring, gens, None),
             }
         }
-        Coefficients::Zp(f) => groebner_in(&f, ring, gens, limit),
-        Coefficients::Gr(f) => groebner_in(&f, ring, gens, limit),
+        Coefficients::Zp(f) => changed_basis(&f, ring, gens, limit),
+        Coefficients::Gr(f) => changed_basis(&f, ring, gens, limit),
     }
+}
+
+/// A basis by Buchberger's algorithm, in an order that is not graded by way
+/// of grevlex for a zero-dimensional ideal.
+fn changed_basis<F: Field>(field: &F, ring: &Ring, gens: &[Terms], limit: Option<(&[u64], i128)>) -> Result<Vec<Terms>, Error> {
+    if limit.is_none() && !graded(&ring.order) {
+        let grevlex = Ring { n: ring.n, order: Order::GRevLex };
+        let g = buchberger::groebner(field, &grevlex, imports(field, &grevlex, gens)?, None);
+        if let Some(h) = fglm::fglm_field(field, &grevlex, &g, ring) {
+            return Ok(exports(field, ring, &h));
+        }
+    }
+    groebner_in(field, ring, gens, limit)
+}
+
+fn exports<F: Field>(field: &F, ring: &Ring, polys: &[Poly<F::E>]) -> Vec<Terms> {
+    polys.iter().map(|p| export(field, ring, p)).collect()
 }
 
 fn groebner_in<F: Field>(field: &F, ring: &Ring, gens: &[Terms], limit: Option<(&[u64], i128)>) -> Result<Vec<Terms>, Error> {
@@ -455,19 +479,30 @@ mod tests {
                 assert_eq!(shown(&g), shown(&f4));
                 let h = groebner_in(&grp, &ring, &gens, None).unwrap();
                 assert_eq!(shown(&g), shows("xyz", &h));
-                // So does the change of order when the ideal is zero-dimensional.
+                // So does the change of order when the ideal is zero-dimensional,
+                // in words or with the field's elements.
                 if let Some(h) = fglm::fglm(&zp, &grevlex, &g0, &ring) {
                     assert_eq!(shown(&g), shown(&h));
+                    assert_eq!(shown(&h), shown(&fglm::fglm_field(&zp, &grevlex, &g0, &ring).unwrap()));
+                    let g1 = imports(&grp, &grevlex, &exports(&zp, &grevlex, &g0)).unwrap();
+                    assert_eq!(shown(&h), shows("xyz", &exports(&grp, &ring, &fglm::fglm_field(&grp, &grevlex, &g1, &ring).unwrap())));
                     changed += 1;
                 }
             }
         }
         assert!(changed >= 64, "{changed} changes of order");
         let q = Ctx::rationals();
+        let (grq, lex) = (field::GrField::new(&q), Ring { n: 3, order: Order::Lex });
+        let mut zero_dimensional = 0;
         for round in 0..8 {
             let gens = random_system(&q, &mut s, 3, 2 + round % 2, 3, 2);
-            checked(&field::GrField::new(&q), 3, &Order::GRevLex, &Order::Lex, &gens);
+            let g = checked(&grq, 3, &Order::GRevLex, &Order::Lex, &gens);
+            if let Some(h) = fglm::fglm_field(&grq, &grevlex, &g, &lex) {
+                assert_eq!(shows("xyz", &exports(&grq, &lex, &h)), shows("xyz", &groebner_in(&grq, &lex, &gens, None).unwrap()));
+                zero_dimensional += 1;
+            }
         }
+        assert!(zero_dimensional >= 3, "{zero_dimensional} zero-dimensional ideals");
     }
 
     #[test]
@@ -475,18 +510,26 @@ mod tests {
         let mut s = 0x13198a2e03707344;
         let mut sizes = Vec::new();
         for round in 0..16 {
-            // Also a prime near 2^31, where few products fit a word.
-            let p = gf(if round % 4 == 3 { (1 << 31) - 1 } else { 32003 });
+            // Also a prime near 2^31, where few products fit a word, and one
+            // beyond, where the vectors are of the field's elements.
+            let p = gf(match round % 4 {
+                1 => (1 << 61) - 1,
+                3 => (1 << 31) - 1,
+                _ => 32003,
+            });
             let zp = field::Zp::new(&p);
+            let words = zp.modulus() < 1 << 31;
             let n = 2 + round % 3;
             let gens = random_system(&p, &mut s, n, n, 3 + round % 2, 2 + round as u64 % 3);
             let (grevlex, lex, elim) = (Ring { n, order: Order::GRevLex }, Ring { n, order: Order::Lex }, Ring { n, order: Order::ElimK(1) });
-            let g0 = f4::groebner(&zp, &grevlex, gens.iter().map(|t| import(&zp, &grevlex, t).unwrap()).collect(), &vec![1; n], None);
+            let polys = imports(&zp, &grevlex, &gens).unwrap();
+            let g0 = if words { f4::groebner(&zp, &grevlex, polys, &vec![1; n], None) } else { buchberger::groebner(&zp, &grevlex, polys, None) };
             let masks: Vec<u64> = g0.iter().map(|p| poly::mask(p.lm(n))).collect();
             let all: Vec<usize> = (0..g0.len()).collect();
             for ring in [&lex, &elim] {
                 let polys: Vec<Poly<u64>> = gens.iter().map(|t| import(&zp, ring, t).unwrap()).collect();
-                let Some(h) = fglm::fglm(&zp, &grevlex, &g0, ring) else { continue };
+                let h = if words { fglm::fglm(&zp, &grevlex, &g0, ring) } else { fglm::fglm_field(&zp, &grevlex, &g0, ring) };
+                let Some(h) = h else { continue };
                 // A reduced Gröbner basis whose ideal has the generators and is
                 // in theirs.
                 check_reduced(&zp, ring, &polys, &h);
@@ -508,6 +551,11 @@ mod tests {
         check_reduced(&zp, &ring, &imports(&zp, &ring, &k).unwrap(), &imports(&zp, &ring, &g).unwrap());
         assert_eq!(shows("abcd", &g), shows("abcd", &groebner_in(&zp, &ring, &k, None).unwrap()));
         assert_eq!(g.len(), 4);
+        // And over the rationals.
+        let q = Ctx::rationals();
+        let k = katsura(&q, 3);
+        let g = groebner(&q, 4, &Order::Lex, &k).unwrap();
+        assert_eq!(shows("abcd", &g), shows("abcd", &groebner_in(&field::GrField::new(&q), &ring, &k, None).unwrap()));
     }
 
     fn shows(vars: &str, ts: &[Terms]) -> Vec<String> {
