@@ -138,7 +138,13 @@ fn run(opts: Options) -> i32 {
             return finish(&mut it, &opts, code);
         }
     }
-    let code = if interactive { repl(&mut it) } else { run_stdin(&mut it) };
+    if !interactive {
+        // As in Magma, output read from a pipe or file ends where the script's does.
+        let code = run_stdin(&mut it);
+        it.out.flush();
+        return code;
+    }
+    let code = repl(&mut it);
     finish(&mut it, &opts, code)
 }
 
@@ -227,7 +233,6 @@ fn run_stdin(it: &mut Interp) -> i32 {
                 }
             }
         }
-        it.out.ensure_newline();
     }
     if !buf.trim().is_empty() {
         if let Err(e) = it.execute(&buf, "", false) {
