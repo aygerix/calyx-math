@@ -32,10 +32,10 @@ pub struct Nearfield {
 }
 
 pub enum NfdKind {
-    /// The pair (q, v) with q = p^h; the variant s, the least member of its
-    /// class, and the exponent e of the primitive element z = z0^e (z0 that
-    /// of K, and s = e modulo v).
-    Dickson { p: Integer, h: u64, q: Integer, v: u64, variant: Integer, class: u64, e: Integer },
+    /// The pair (q, v) with q = p^h, the variant s modulo v (0 when v = 1),
+    /// and the exponent e of the primitive element z = z0^e (z0 that of K,
+    /// and e = s modulo v).
+    Dickson { p: Integer, h: u64, q: Integer, v: u64, s: u64, e: Integer },
 }
 
 /// How multiplication differs from that of the field.
@@ -73,17 +73,18 @@ impl Nearfield {
         }
     }
 
-    /// Whether `self` and `other` are the same nearfield up to isomorphism:
-    /// the same Dickson pair and the same class of variants.
+    /// Whether `self` and `other` are equal, as Magma's `eq` has it: the same
+    /// Dickson pair and the same variant modulo v. (Variants of one class
+    /// give isomorphic nearfields, but not equal ones.)
     pub fn same_as(&self, other: &Nearfield) -> bool {
         match (&self.kind, &other.kind) {
-            (NfdKind::Dickson { q, v, class, .. }, NfdKind::Dickson { q: q2, v: v2, class: c2, .. }) => q == q2 && v == v2 && class == c2,
+            (NfdKind::Dickson { q, v, s, .. }, NfdKind::Dickson { q: q2, v: v2, s: s2, .. }) => q == q2 && v == v2 && s == s2,
         }
     }
 
     pub fn hash_key(&self) -> (u64, Integer, u64) {
         match &self.kind {
-            NfdKind::Dickson { q, v, class, .. } => (*v, q.clone(), *class),
+            NfdKind::Dickson { q, v, s, .. } => (*v, q.clone(), *s),
         }
     }
 
@@ -149,7 +150,7 @@ impl Nearfield {
         }
         if is_zero(x) {
             if n.sign() < 0 {
-                return Err(RuntimeError::runtime("Illegal negative power of zero element"));
+                return Err(no_inverse());
             }
             return Ok(x.clone());
         }
@@ -186,6 +187,31 @@ fn is_zero(x: &Elem) -> bool {
     x.is_zero() == Truth::True
 }
 
+/// Magma's error for the inverse of zero, from the `Inverse` that division
+/// and powers call.
+fn no_inverse() -> RuntimeError {
+    RuntimeError::runtime("Cannot invert the zero element").in_context("Inverse")
+}
+
+/// Whether x and y lie in the same nearfield: equal nearfields count as one.
+fn same_parent(x: &NfdElt, y: &NfdElt) -> bool {
+    Rc::ptr_eq(&x.parent, &y.parent) || nfd(&x.parent).same_as(nfd(&y.parent))
+}
+
+fn not_same() -> RuntimeError {
+    super::bare(RuntimeError::runtime("Elements must belong to the same nearfield"))
+}
+
+/// `x eq y` for elements of nearfields.
+pub fn nfd_equal(x: &NfdElt, y: &NfdElt) -> RResult<bool> {
+    if !same_parent(x, y) {
+        return Err(not_same());
+    }
+    Ok(x.x.equal(&y.x) == Truth::True)
+}
+
+const CARRIER: &str = "Finite field element is not in the carrier set of the nearfield";
+
 /// The nearfield of a nearfield structure.
 pub fn nearfield_of(st: &Struct) -> Option<&Rc<Nearfield>> {
     match &st.kind {
@@ -211,116 +237,102 @@ pub fn negate(x: &NfdElt) -> RResult<Value> {
     Ok(elt(&x.parent, x.x.neg()?))
 }
 
-/// How a nearfield prints: its kind, name and order.
+/// How a nearfield prints: its kind, name (`$` if it has none) and order.
 pub fn describe(s: &Struct) -> [String; 2] {
     let n = nfd(s);
+    let name = s.name.borrow().map(|n| n.to_string()).unwrap_or_else(|| "$".to_string());
     match &n.kind {
-        NfdKind::Dickson { q, v, .. } => {
-            let name = s.name.borrow().map(|n| n.to_string()).unwrap_or_else(|| "D".to_string());
-            [format!("Nearfield {name} of Dickson type defined by the pair ({q}, {v})"), format!("Order = {}", n.order())]
-        }
+        NfdKind::Dickson { q, v, .. } => [format!("Nearfield {name} of Dickson type defined by the pair ({q}, {v})"), format!("Order = {}", n.order())],
     }
 }
 
-const INCOMPATIBLE: &str = "Arguments are not compatible\nArgument types given: NfdElt, NfdElt";
-
 impl Interp {
-    /// Operators with an element of a nearfield among the operands; `None`
-    /// leaves the rest to the generic rules.
+    /// Operators with an element of a nearfield among the operands. Elements
+    /// meet only elements of the same nearfield, and integers only as
+    /// exponents and (lying in the kernel) as scalars.
     pub fn nfd_binop(&mut self, op: BinOp, a: &Value, b: &Value) -> RResult<Option<Value>> {
         use BinOp::*;
-        let name = op.intrinsic_name();
-        if op == Pow {
-            return match (a, b) {
-                (Value::Nfd(x), Value::Int(n)) => {
-                    let y = nfd(&x.parent).pow(&x.x, n).map_err(|e| e.in_context(name))?;
-                    Ok(Some(elt(&x.parent, y)))
+        let arith = matches!(op, Add | Sub | Mul | Div | Pow | Eq | Ne | Lt | Le | Gt | Ge);
+        match (a, b) {
+            (Value::Nfd(x), Value::Nfd(y)) if arith => {
+                if !same_parent(x, y) {
+                    return Err(not_same());
                 }
-                // x^y = y^-1 x y.
-                (Value::Nfd(x), Value::Nfd(y)) if Rc::ptr_eq(&x.parent, &y.parent) => {
-                    if is_zero(&y.x) {
-                        return Err(RuntimeError::runtime("Division by zero").in_context(name));
-                    }
-                    let n = nfd(&x.parent);
-                    let r = n.mul(&n.mul(&n.inverse(&y.x)?, &x.x)?, &y.x)?;
-                    Ok(Some(elt(&x.parent, r)))
-                }
-                (Value::Nfd(_), Value::Nfd(_)) => Err(RuntimeError::runtime(INCOMPATIBLE).in_context(name)),
-                _ => Ok(None),
-            };
+                let n = nfd(&x.parent).clone();
+                let r = match op {
+                    Add => x.x.add(&y.x)?,
+                    Sub => x.x.sub(&y.x)?,
+                    Mul => n.mul(&x.x, &y.x)?,
+                    Div | Pow if is_zero(&y.x) => return Err(no_inverse()),
+                    Div => n.mul(&x.x, &n.inverse(&y.x)?)?,
+                    // x^y = y^-1 x y.
+                    Pow => n.mul(&n.mul(&n.inverse(&y.x)?, &x.x)?, &y.x)?,
+                    Eq => return Ok(Some(Value::Bool(nfd_equal(x, y)?))),
+                    Ne => return Ok(Some(Value::Bool(!nfd_equal(x, y)?))),
+                    _ => return Err(RuntimeError::runtime("No comparison algorithm exists for given objects").in_context(op.intrinsic_name())),
+                };
+                Ok(Some(elt(&x.parent, r)))
+            }
+            (Value::Nfd(x), Value::Int(n)) if op == Pow => Ok(Some(elt(&x.parent, nfd(&x.parent).pow(&x.x, n)?))),
+            (Value::Nfd(x), Value::Int(_)) | (Value::Int(_), Value::Nfd(x)) if op == Mul => {
+                let c = if let Value::Int(_) = a { a } else { b };
+                let Ok(Value::Nfd(c)) = self.coerce_into_nearfield(&x.parent, c, false)? else { return Ok(None) };
+                Ok(Some(elt(&x.parent, x.x.mul(&c.x)?)))
+            }
+            _ if arith => Err(self.bad_types(op, a, b)),
+            _ => Ok(None),
         }
-        if !matches!(op, Add | Sub | Mul | Div | Eq | Ne | Cmpeq | Cmpne) {
-            return Ok(None);
-        }
-        // Integers come into the nearfield of the other operand.
-        let st = match (a, b) {
-            (Value::Nfd(x), Value::Nfd(y)) if !Rc::ptr_eq(&x.parent, &y.parent) => {
-                return Err(RuntimeError::runtime(INCOMPATIBLE).in_context(name));
-            }
-            (Value::Nfd(x), _) | (_, Value::Nfd(x)) => x.parent.clone(),
-            _ => return Ok(None),
-        };
-        let operand = |me: &mut Interp, v: &Value| -> RResult<Option<Elem>> {
-            match v {
-                Value::Nfd(x) => Ok(Some(x.x.clone())),
-                Value::Int(_) => match me.coerce_into_nearfield(&st, v, false)? {
-                    Ok(Value::Nfd(x)) => Ok(Some(x.x.clone())),
-                    _ => Ok(None),
-                },
-                _ => Ok(None),
-            }
-        };
-        let (Some(x), Some(y)) = (operand(self, a)?, operand(self, b)?) else { return Ok(None) };
-        let n = nfd(&st).clone();
-        let r = match op {
-            Add => x.add(&y)?,
-            Sub => x.sub(&y)?,
-            Mul => n.mul(&x, &y)?,
-            Div => {
-                if is_zero(&y) {
-                    return Err(RuntimeError::runtime("Division by zero").in_context(name));
-                }
-                n.mul(&x, &n.inverse(&y)?)?
-            }
-            Eq | Cmpeq => return Ok(Some(Value::Bool(x.equal(&y) == Truth::True))),
-            _ => return Ok(Some(Value::Bool(x.equal(&y) != Truth::True))),
-        };
-        Ok(Some(elt(&st, r)))
     }
 
-    /// `N ! x`: an element of N, or of its field (or something that
-    /// coerces into the field, such as an integer).
+    /// `N ! x`: an element of N (or of a nearfield equal to N), or of its
+    /// field, or something that coerces into the field (as `Element(N, x)`
+    /// does for field elements). Only `!` (`strict`) reports field elements
+    /// outside the carrier; coercions into universes just fail.
     pub fn coerce_into_nearfield(&mut self, st: &Rc<Struct>, x: &Value, strict: bool) -> RResult<Result<Value, Option<String>>> {
-        let _ = strict;
         match x {
-            Value::Nfd(e) if Rc::ptr_eq(&e.parent, st) => Ok(Ok(x.clone())),
+            Value::Nfd(e) if Rc::ptr_eq(&e.parent, st) || nfd(&e.parent).same_as(nfd(st)) => Ok(Ok(elt(st, e.x.clone()))),
             Value::Nfd(_) => Ok(Err(None)),
             _ => {
                 let gf = Value::Struct(nfd(st).gf.clone());
-                match self.try_coerce(&gf, x)? {
+                let is_ff = matches!(crate::rings::small::elt_of(x), Some(e) if field_of(&e.parent).is_some());
+                // (Rationals such as 1/p fail with an error of their own.)
+                let into_gf = match self.try_coerce(&gf, x) {
+                    Err(e) if e.kind == crate::error::ErrKind::Interrupt => return Err(e),
+                    Err(_) => Err(None),
+                    Ok(r) => r,
+                };
+                match into_gf {
                     Ok(v) => match crate::rings::small::elt_of(&v) {
                         Some(e) => Ok(Ok(elt(st, e.x.clone()))),
                         None => Ok(Err(None)),
                     },
-                    Err(e) => Ok(Err(e)),
+                    Err(_) if is_ff && strict => Err(RuntimeError::runtime(CARRIER).in_context("Element")),
+                    Err(_) => Ok(Err(None)),
                 }
             }
         }
     }
 
-    /// `x in N` for a nearfield N.
+    /// `x in N` for a nearfield N: whether x is an element of N (or of a
+    /// nearfield equal to N).
     pub fn nfd_contains(&mut self, st: &Rc<Struct>, x: &Value) -> RResult<bool> {
-        match x {
-            Value::Nfd(e) => Ok(Rc::ptr_eq(&e.parent, st)),
-            _ => Err(RuntimeError::runtime("Bad argument types").in_context("in")),
-        }
+        Ok(matches!(x, Value::Nfd(e) if Rc::ptr_eq(&e.parent, st) || nfd(&e.parent).same_as(nfd(st))))
     }
 
-    /// The elements of a nearfield, in the order of its field.
-    pub fn enumerate_nearfield(&mut self, st: &Rc<Struct>) -> RResult<Vec<Value>> {
-        let gf = nfd(st).gf.clone();
-        let xs = self.enumerate_ring(&gf)?;
-        Ok(xs.iter().filter_map(crate::rings::small::elt_of).map(|e| elt(st, e.x.clone())).collect())
+    /// Magma does not iterate over nearfields.
+    pub fn enumerate_nearfield(&mut self, _st: &Rc<Struct>) -> RResult<Vec<Value>> {
+        Err(RuntimeError::runtime(crate::error::NOT_ITERABLE))
+    }
+}
+
+/// Whether a and b are different nearfield objects: Magma's aggregates find
+/// no common universe for them, even when they are equal.
+pub fn distinct_nearfields(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Struct(x), Value::Struct(y)) => {
+            matches!((&x.kind, &y.kind), (StructKind::Nearfield(_), StructKind::Nearfield(_))) && !Rc::ptr_eq(x, y)
+        }
+        _ => false,
     }
 }
 
@@ -345,50 +357,23 @@ fn prime_factors(mut n: u64) -> Vec<u64> {
     out
 }
 
-/// Whether (q, v) is a Dickson pair: every prime factor of v divides
-/// q - 1, and 4 divides q - 1 if it divides v.
-fn is_dickson_pair(q: &Integer, v: u64) -> bool {
+/// Whether (q, v) is a Dickson pair, with the errors of the Magma functions
+/// that decide it (`IsPrimePower` for q < 2, `PrimeBasis` for v = 0): q is
+/// a prime power, every prime factor of v divides q - 1, and 4 divides
+/// q - 1 if it divides v. (Magma lets v be negative.)
+fn dickson_pair(q: &Integer, v: i64) -> RResult<bool> {
+    if q < &Integer::from_u64(2) {
+        return Err(RuntimeError::runtime(format!("Argument 1 ({q}) should be >= 2")).in_context("IsPrimePower"));
+    }
+    if v == 0 {
+        return Err(RuntimeError::runtime("Argument 1 is not non-zero").in_context("PrimeBasis"));
+    }
+    if prime_power(q).is_none() {
+        return Ok(false);
+    }
     let q1 = q - &Integer::one();
-    prime_factors(v).iter().all(|&r| q1.mod_u64(r) == 0) && (v % 4 != 0 || q1.mod_u64(4) == 0)
-}
-
-/// The classes of variants: the units modulo v up to multiplication by
-/// powers of p, each by its least member.
-fn variant_classes(p: &Integer, v: u64) -> Vec<u64> {
-    if v == 1 {
-        return vec![1];
-    }
-    let pm = p.mod_u64(v);
-    let mut seen = vec![false; v as usize];
-    let mut reps = Vec::new();
-    for s in 1..v {
-        if seen[s as usize] || calyx_flint::gcd_u64(s, v) != 1 {
-            continue;
-        }
-        reps.push(s);
-        let mut x = s;
-        while !seen[x as usize] {
-            seen[x as usize] = true;
-            x = (x as u128 * pm as u128 % v as u128) as u64;
-        }
-    }
-    reps
-}
-
-/// The least member of the class of the variant s modulo v.
-fn class_of(p: &Integer, v: u64, s: &Integer) -> u64 {
-    if v == 1 {
-        return 1;
-    }
-    let (pm, s) = (p.mod_u64(v), s.mod_u64(v));
-    let (mut x, mut least) = (s, s);
-    loop {
-        x = (x as u128 * pm as u128 % v as u128) as u64;
-        if x == s {
-            return least;
-        }
-        least = least.min(x);
-    }
+    let w = v.unsigned_abs();
+    Ok(prime_factors(w).iter().all(|&r| q1.mod_u64(r) == 0) && (w % 4 != 0 || q1.mod_u64(4) == 0))
 }
 
 /// q = p^h with p prime and h >= 1, or `None`.
@@ -403,53 +388,134 @@ fn prime_power(q: &Integer) -> Option<(Integer, u64)> {
     }
 }
 
-/// A small non-negative integer argument.
-fn small_arg(a: &CallArgs, i: usize) -> RResult<u64> {
-    let n = a.int(i)?;
-    n.to_u64().filter(|&n| n < 1 << 30).ok_or_else(|| RuntimeError::runtime(format!("Argument {} ({n}) is not small and non-negative", i + 1)))
+/// x^k modulo m.
+fn pow_mod(x: u64, mut k: u64, m: u64) -> u64 {
+    let (mut r, mut b) = (1 % m, x % m);
+    while k > 0 {
+        if k & 1 == 1 {
+            r = (r as u128 * b as u128 % m as u128) as u64;
+        }
+        b = (b as u128 * b as u128 % m as u128) as u64;
+        k >>= 1;
+    }
+    r
 }
 
+/// Generators of the units modulo v with their orders, as Magma's unit
+/// group has them: for each prime power l^k of v in turn, the least
+/// primitive root (-1 and then 5 for 2^k, k >= 3), lifted to 1 modulo the
+/// rest of v.
+fn unit_generators(v: u64) -> Vec<(u64, u64)> {
+    let mut gens = Vec::new();
+    for l in prime_factors(v) {
+        let mut lk = 1;
+        while v % (lk * l) == 0 {
+            lk *= l;
+        }
+        let rest = v / lk;
+        // g modulo l^k and 1 modulo the rest.
+        let lift = |g: u64| {
+            let t = (g + lk - 1) % lk * Nmod::new(lk).inv(rest % lk).expect("coprime") % lk;
+            1 + rest * t
+        };
+        if l == 2 {
+            if lk == 4 {
+                gens.push((lift(3), 2));
+            } else if lk >= 8 {
+                gens.push((lift(lk - 1), 2));
+                gens.push((lift(5), lk / 4));
+            }
+            continue;
+        }
+        let phi = lk / l * (l - 1);
+        let primes = prime_factors(phi);
+        let g = (2..lk).find(|&g| g % l != 0 && primes.iter().all(|&r| pow_mod(g, phi / r, lk) != 1)).expect("a primitive root");
+        gens.push((lift(g), phi));
+    }
+    gens
+}
+
+/// Representatives of the variants of the Dickson triple (p, h, v): the
+/// units modulo v up to multiplication by powers of p, each by the first
+/// member met when the units run through the products of powers of
+/// `unit_generators`, the power of the first generator the fastest.
+fn variant_reps(p: &Integer, v: u64) -> Vec<u64> {
+    if v == 1 {
+        return vec![1];
+    }
+    let gens = unit_generators(v);
+    let pm = p.mod_u64(v);
+    let mut seen = vec![false; v as usize];
+    let mut reps = Vec::new();
+    let mut exps = vec![0; gens.len()];
+    loop {
+        let x = gens.iter().zip(&exps).fold(1, |x, (&(g, _), &e)| (x as u128 * pow_mod(g, e, v) as u128 % v as u128) as u64);
+        if !seen[x as usize] {
+            reps.push(x);
+            let mut y = x;
+            while !seen[y as usize] {
+                seen[y as usize] = true;
+                y = (y as u128 * pm as u128 % v as u128) as u64;
+            }
+        }
+        let Some(i) = (0..gens.len()).find(|&i| exps[i] + 1 < gens[i].1) else { return reps };
+        exps[i] += 1;
+        exps[..i].iter_mut().for_each(|e| *e = 0);
+    }
+}
+
+/// A bound of the ranges that the pair functions run through.
+fn bound_arg(a: &CallArgs, i: usize) -> RResult<i64> {
+    let n = a.int(i)?;
+    n.to_i64().filter(|n| n.unsigned_abs() < 1 << 30).ok_or_else(|| RuntimeError::runtime(format!("Argument {} ({n}) is not small", i + 1)))
+}
+
+/// Argument 1, a prime (up to sign, as Magma's `IsPrime` has it).
 fn prime_arg(a: &CallArgs) -> RResult<Integer> {
     let p = a.int(0)?.clone();
-    if !p.is_prime() {
-        return Err(RuntimeError::runtime("Argument 1 is not prime"));
+    if !p.abs().is_prime() {
+        return Err(RuntimeError::runtime("p must be prime"));
     }
     Ok(p)
 }
 
-fn dickson_pairs_in(p: &Integer, hs: std::ops::RangeInclusive<u64>, vs: std::ops::RangeInclusive<u64>) -> Value {
+/// The Dickson pairs (p^h, v), with h and v running through their ranges.
+fn dickson_pairs_in(p: &Integer, hs: std::ops::RangeInclusive<i64>, vs: std::ops::RangeInclusive<i64>) -> RResult<Value> {
     let mut out = Vec::new();
     for h in hs {
-        let q = p.pow(h);
+        if h < 0 {
+            return Err(RuntimeError::runtime("Bad argument types\nArgument types given: FldRatElt").in_context("IsPrimePower"));
+        }
+        let q = p.pow(h as u64);
         for v in vs.clone() {
-            if v >= 1 && is_dickson_pair(&q, v) {
-                out.push(Value::seq(None, vec![Value::Int(q.clone()), Value::Int(Integer::from_u64(v))]));
+            if dickson_pair(&q, v)? {
+                out.push(Value::seq(None, vec![Value::Int(q.clone()), Value::Int(Integer::from_i64(v))]));
             }
         }
     }
-    Value::seq(None, out)
+    Ok(Value::seq(None, out))
 }
 
 fn dickson_pairs(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let p = prime_arg(a)?;
-    let (hlo, hhi, vlo, vhi) = (small_arg(a, 1)?.max(1), small_arg(a, 2)?, small_arg(a, 3)?.max(1), small_arg(a, 4)?);
-    one(dickson_pairs_in(&p, hlo..=hhi, vlo..=vhi))
+    let p = prime_arg(a).map_err(super::bare)?;
+    let (hlo, hhi, vlo, vhi) = (bound_arg(a, 1)?, bound_arg(a, 2)?, bound_arg(a, 3)?, bound_arg(a, 4)?);
+    one(dickson_pairs_in(&p, hlo..=hhi, vlo..=vhi)?)
 }
 
 fn dickson_pairs_bounded(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let p = prime_arg(a)?;
-    one(dickson_pairs_in(&p, 1..=small_arg(a, 1)?, 1..=small_arg(a, 2)?))
+    one(dickson_pairs_in(&p, 1..=bound_arg(a, 1)?, 1..=bound_arg(a, 2)?)?)
 }
 
 fn dickson_triples(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let p = prime_arg(a)?;
-    let (hb, vb) = (small_arg(a, 1)?, small_arg(a, 2)?);
+    let p = prime_arg(a).map_err(super::bare)?;
+    let (hb, vb) = (bound_arg(a, 1)?, bound_arg(a, 2)?);
     let mut out = Vec::new();
     for h in 1..=hb {
-        let q = p.pow(h);
+        let q = p.pow(h as u64);
         for v in 1..=vb {
-            if is_dickson_pair(&q, v) {
-                let t = [p.clone(), Integer::from_u64(h), Integer::from_u64(v)];
+            if dickson_pair(&q, v)? {
+                let t = [p.clone(), Integer::from_i64(h), Integer::from_i64(v)];
                 out.push(Value::seq(None, t.into_iter().map(Value::Int).collect()));
             }
         }
@@ -458,82 +524,112 @@ fn dickson_triples(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 }
 
 /// The Dickson pair (q, v) of arguments 1 and 2, with the prime and the
-/// exponent of q.
-fn pair_args(a: &CallArgs) -> RResult<(Integer, u64, Integer, u64)> {
+/// exponent of q; v may be negative.
+fn pair_args(a: &CallArgs) -> RResult<(Integer, u64, Integer, i64)> {
     let q = a.int(0)?.clone();
-    let (p, h) = prime_power(&q).ok_or_else(|| RuntimeError::runtime("Argument 1 is not a prime power"))?;
-    let v = small_arg(a, 1)?;
-    if v == 0 || !is_dickson_pair(&q, v) {
-        return Err(RuntimeError::runtime(format!("({q}, {v}) is not a Dickson pair")));
+    let v = a.int(1)?.to_i64().filter(|v| v.unsigned_abs() < 1 << 30).ok_or_else(|| RuntimeError::runtime("Argument 2 is not small"))?;
+    if !dickson_pair(&q, v)? {
+        return Err(super::bare(RuntimeError::runtime(format!("({q}, {v}) is not a Dickson pair"))));
     }
+    let (p, h) = prime_power(&q).expect("a prime power");
     Ok((p, h, q, v))
 }
 
 fn number_of_variants(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (p, _, _, v) = pair_args(a)?;
-    intv(Integer::from_u64(variant_classes(&p, v).len() as u64))
+    if v < 0 {
+        return Err(RuntimeError::runtime("Argument 1 is not positive").in_context("EulerPhi"));
+    }
+    intv(Integer::from_u64(variant_reps(&p, v as u64).len() as u64))
 }
 
 fn number_of_variants_n(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let st = nfd_arg(a, 0)?;
     let NfdKind::Dickson { p, v, .. } = &nfd(&st).kind;
-    intv(Integer::from_u64(variant_classes(p, *v).len() as u64))
+    intv(Integer::from_u64(variant_reps(p, *v).len() as u64))
 }
 
 fn variant_representatives(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (p, _, _, v) = pair_args(a)?;
-    one(Value::seq(None, variant_classes(&p, v).into_iter().map(|s| Value::Int(Integer::from_u64(s))).collect()))
+    if v < 0 {
+        return Err(RuntimeError::runtime(format!("Argument 1 ({v}) should be >= 2")).in_context("ResidueClassRing"));
+    }
+    one(Value::seq(None, variant_reps(&p, v as u64).into_iter().map(|s| Value::Int(Integer::from_u64(s))).collect()))
 }
 
 // ----- construction ----------------------------------------------------------------------------
 
-/// The exponent e of the primitive element z0^e for the variant s: the
-/// least e >= s (or >= 1) with e = s modulo v and e prime to q^v - 1.
-fn variant_exponent(s: &Integer, v: u64, qm1: &Integer) -> Integer {
-    let vv = Integer::from_u64(v);
-    let mut e = if s.sign() > 0 { s.clone() } else { Integer::from_u64(s.mod_u64(v)) };
-    if e.is_zero() {
-        e = vv.clone();
+/// The exponent e of the primitive element z0^e for the variant s (reduced
+/// modulo v), as Magma picks it: 1 for s = 1, else s + N/m for N = q^v - 1
+/// and m the product over the prime powers l^a of N of l^a if l divides s,
+/// else of l^(a - 1 - b) for l^b the power of l in v. That is prime to N
+/// and s modulo v.
+fn variant_exponent(s: u64, v: u64, n: &Integer, factors: &[(Integer, u64)]) -> Integer {
+    if s <= 1 {
+        return Integer::one();
     }
-    while !e.gcd(qm1).is_one() {
-        e = &e + &vv;
+    let mut m = Integer::one();
+    for (l, a) in factors {
+        let small = l.to_u64();
+        let k = if small.is_some_and(|l| s % l == 0) {
+            *a
+        } else {
+            let mut b = 0;
+            if let Some(l) = small {
+                let mut w = v;
+                while w % l == 0 {
+                    w /= l;
+                    b += 1;
+                }
+            }
+            a.saturating_sub(1 + b)
+        };
+        m = &m * &l.pow(k);
     }
-    e
+    let e = &Integer::from_u64(s) + &n.divexact(&m);
+    e.div_rem_euclid(n).map(|(_, r)| r).unwrap_or(e)
 }
 
 fn dickson_nearfield(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (p, h, q, v) = pair_args(a)?;
-    let s = match a.param("Variant") {
-        Some(Value::Int(s)) => s.clone(),
-        _ => Integer::one(),
+    if v < 0 {
+        return Err(super::bare(RuntimeError::runtime("Bad argument types\nArgument types given: FldRatElt, FldRatElt")));
+    }
+    let v = v as u64;
+    let s = match a.param("Variant").cloned() {
+        Some(x) => match it.coerce(&Value::integers(), &x).map_err(|e| e.in_context("!"))? {
+            Value::Int(s) => s,
+            _ => return Err(RuntimeError::runtime("Bad argument types")),
+        },
+        None => Integer::one(),
     };
     if !s.gcd(&Integer::from_u64(v)).is_one() {
-        return Err(RuntimeError::runtime(format!("The variant ({s}) must be prime to {v}")));
+        return Err(super::bare(RuntimeError::runtime("Variant must be coprime to v")));
     }
-    let qv = q.pow(v);
-    let qm1 = &qv - &Integer::one();
-    let e = variant_exponent(&s, v, &qm1);
+    if a.param("LargeMatrices").is_some_and(|x| !matches!(x, Value::Bool(_))) {
+        return Err(super::bare(RuntimeError::runtime("Expected a logical for the 'select' operator")));
+    }
+    let s = s.mod_u64(v);
     let gf = it.default_field(&p, h * v)?;
+    let qm1 = &field_of(&gf).expect("a finite field").1.order() - &Integer::one();
+    let e = if s <= 1 { Integer::one() } else { variant_exponent(s, v, &qm1, finite::qm1_factors(&gf)) };
     let ctx = field_of(&gf).expect("a finite field").0.ctx.clone();
     let z0 = it.ff_primitive(&gf)?;
     let z = z0.pow(&e)?;
+    // frob[(q^i - 1)/(q - 1) mod v] = i mod v, for 1 <= i <= v.
+    let qv_mod = q.mod_u64(v);
+    let mut frob = vec![u64::MAX; v as usize];
+    let mut c = 1 % v;
+    for i in 1..=v {
+        frob[c as usize] = i % v;
+        c = (c * qv_mod + 1) % v;
+    }
     let twist = if v == 1 {
         Twist::Field
     } else {
-        // frob[(q^i - 1)/(q - 1) mod v] = i mod v, for 1 <= i <= v.
-        let qv_mod = q.mod_u64(v);
-        let mut frob = vec![u64::MAX; v as usize];
-        let mut c = 1 % v;
-        for i in 1..=v {
-            frob[c as usize] = i % v;
-            c = (c * qv_mod + 1) % v;
-        }
-        if frob.contains(&u64::MAX) {
-            return Err(RuntimeError::runtime(format!("({q}, {v}) is not a Dickson pair")));
-        }
         let residue = match (Elem::zech_order(&ctx), z0.zech_log()) {
             (Some(qm1), Some(1)) => {
-                let einv = if v == 1 { 0 } else { Nmod::new(v).inv(e.mod_u64(v)).expect("a unit modulo v") };
+                let einv = Nmod::new(v).inv(e.mod_u64(v)).expect("a unit modulo v");
                 let qq = q.mod_u64(qm1);
                 let mut qpow = Vec::with_capacity(v as usize);
                 let mut x = 1 % qm1;
@@ -554,17 +650,29 @@ fn dickson_nearfield(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
                 Residue::Power { m, omegas }
             }
         };
-        Twist::Frobenius { h, frob, residue }
+        Twist::Frobenius { h, frob: frob.clone(), residue }
     };
-    let class = class_of(&p, v, &s);
-    let kind = NfdKind::Dickson { p, h, q, v, variant: s, class, e };
+    // Magma's attributes: the Frobenius index for each residue of the
+    // logarithm (v for 0) and the power of q it raises to.
+    let twists: Vec<u64> = frob.iter().map(|&i| if i == 0 { v } else { i }).collect();
+    let int = |n: u64| Value::Int(Integer::from_u64(n));
+    let rho = Value::seq(None, twists.iter().map(|&i| Value::Int(q.pow(i))).collect());
+    let twist_seq = Value::seq(None, twists.iter().map(|&i| int(i)).collect());
+    let attrs = [
+        ("gf", Value::Struct(gf.clone())),
+        ("h", int(h)),
+        ("p", Value::Int(p.clone())),
+        ("q", Value::Int(q.clone())),
+        ("v", int(v)),
+        ("sz", Value::Int(q.clone())),
+        ("rho", rho),
+        ("twist", twist_seq),
+        ("prim", make_elt(&gf, z)),
+    ];
+    let kind = NfdKind::Dickson { p, h, q, v, s, e };
     let n = Nearfield { kind, gf: gf.clone(), twist };
     let st = Struct::new(StructKind::Nearfield(Rc::new(n)));
-    {
-        let mut attrs = st.attrs.borrow_mut();
-        attrs.insert(Sym::new("gf"), Value::Struct(gf.clone()));
-        attrs.insert(Sym::new("prim"), make_elt(&gf, z));
-    }
+    st.attrs.borrow_mut().extend(attrs.into_iter().map(|(k, x)| (Sym::new(k), x)));
     one(Value::Struct(st))
 }
 
@@ -587,9 +695,21 @@ fn nfd_elt_arg(a: &CallArgs, i: usize) -> RResult<Rc<NfdElt>> {
 fn element(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let st = nfd_arg(a, 0)?;
     let x = a.args[1].clone();
-    match it.coerce_into_nearfield(&st, &x, true)? {
-        Ok(v) => one(v),
-        Err(e) => Err(RuntimeError::runtime(e.unwrap_or_else(|| "Illegal coercion".to_string()))),
+    match it.coerce_into_nearfield(&st, &x, true) {
+        Ok(Ok(v)) => one(v),
+        Ok(Err(e)) => Err(RuntimeError::runtime(e.unwrap_or_else(|| "Illegal coercion".to_string()))),
+        // Called directly, Magma's `Element` does not name itself.
+        Err(e) if e.message == CARRIER => Err(super::bare(RuntimeError::runtime(CARRIER))),
+        Err(e) => Err(e),
+    }
+}
+
+/// `IsCoercible(N, x)`, which gives Magma's reason when x does not coerce.
+fn is_coercible(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let (n, x) = (a.args[0].clone(), a.args[1].clone());
+    match it.try_coerce(&n, &x)? {
+        Ok(v) => Ok(vals![Value::Bool(true), v]),
+        Err(_) => Ok(vals![Value::Bool(false), Value::str("Illegal coercion")]),
     }
 }
 
@@ -601,7 +721,7 @@ fn eltseq(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 fn inverse(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let x = nfd_elt_arg(a, 0)?;
     if is_zero(&x.x) {
-        return Err(RuntimeError::runtime("Element is not invertible"));
+        return Err(super::bare(RuntimeError::runtime("Cannot invert the zero element")));
     }
     one(elt(&x.parent, nfd(&x.parent).inverse(&x.x)?))
 }
@@ -609,7 +729,7 @@ fn inverse(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 fn order(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let x = nfd_elt_arg(a, 0)?;
     if is_zero(&x.x) {
-        return Err(RuntimeError::runtime("Element is not a unit"));
+        return Err(super::bare(RuntimeError::runtime("Attempting to find the order of a non-unit")));
     }
     intv(nfd(&x.parent).unit_order(&x.x)?)
 }
@@ -668,6 +788,17 @@ fn kernel(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 }
 
 pub fn register(it: &mut Interp) {
+    // Magma's attributes of nearfields and their elements.
+    let dickson = ["gf", "h", "matgrp", "p", "phi", "prim", "psi", "q", "rho", "sz", "twist", "v"];
+    let zassenhaus = ["gf", "matgrp", "mu", "ndx", "p", "phi", "prim", "psi", "q", "sz"];
+    let attrs: [(_, &[&str]); 4] = [(t::NFD, &dickson[..]), (t::NFD_DCK, &dickson), (t::NFD_ZSS, &zassenhaus), (t::NFD_ELT, &["elt", "log", "parent"])];
+    for (ty, names) in attrs {
+        for name in names {
+            if ty != t::NFD || !["h", "rho", "twist", "v"].contains(name) {
+                it.types.add_attribute(ty, Sym::new(name));
+            }
+        }
+    }
     let pairs = "The Dickson pairs (p^h, v) for hlo <= h <= hhi and vlo <= v <= vhi.";
     it.def("DicksonPairs", "p::RngIntElt, hlo::RngIntElt, hhi::RngIntElt, vlo::RngIntElt, vhi::RngIntElt -> SeqEnum", pairs, dickson_pairs);
     it.def("DicksonPairs", "p::RngIntElt, h1::RngIntElt, v1::RngIntElt -> SeqEnum", "The Dickson pairs (p^h, v) for h <= h1 and v <= v1.", dickson_pairs_bounded);
@@ -684,6 +815,7 @@ pub fn register(it: &mut Interp) {
     );
 
     it.def("Element", "N::Nfd, x::FldFinElt -> NfdElt", "The element x of the field of N as an element of N.", element);
+    it.def("IsCoercible", "N::Nfd, x::. -> BoolElt, .", "Whether x can be coerced into N, and the result or the reason it cannot.", is_coercible);
     for name in ["ElementToSequence", "Eltseq"] {
         it.def(name, "x::NfdElt -> SeqEnum", "The coefficients of x as an element of its field.", eltseq);
     }
@@ -711,19 +843,30 @@ mod tests {
 
     #[test]
     fn dickson_pairs_follow_the_condition() {
-        // (5, 4), (25, 3); not (5, 3), (125, 3) or (7, 4) (7 = 3 mod 4).
-        assert!(is_dickson_pair(&int(5), 4) && is_dickson_pair(&int(25), 3) && is_dickson_pair(&int(9), 4));
-        assert!(!is_dickson_pair(&int(5), 3) && !is_dickson_pair(&int(125), 3) && !is_dickson_pair(&int(7), 4));
-        assert!(is_dickson_pair(&int(7), 2) && !is_dickson_pair(&int(3), 4) && is_dickson_pair(&int(49), 4));
+        let pair = |q: u64, v: i64| dickson_pair(&int(q), v).unwrap();
+        assert!(pair(5, 4) && pair(25, 3) && pair(9, 4) && pair(7, 2) && pair(49, 4) && pair(5, -2));
+        // Not (5, 3), (125, 3) or (7, 4) (7 = 3 mod 4), and 6 is no prime power.
+        assert!(!pair(5, 3) && !pair(125, 3) && !pair(7, 4) && !pair(3, 4) && !pair(6, 2));
+        assert!(dickson_pair(&int(1), 2).is_err() && dickson_pair(&int(3), 0).is_err());
     }
 
     #[test]
-    fn variants() {
+    fn variants_in_magmas_order() {
         // H23E2: two variants of (625, 4), with representatives 1 and 3.
-        assert_eq!(variant_classes(&int(5), 4), vec![1, 3]);
-        assert_eq!(class_of(&int(5), 4, &int(5)), 1);
-        // Modulo 13 the powers of 3 are {1, 3, 9}: four classes.
-        assert_eq!(variant_classes(&int(3), 13), vec![1, 2, 4, 7]);
-        assert_eq!(class_of(&int(3), 13, &int(12)), 4);
+        assert_eq!(variant_reps(&int(5), 4), vec![1, 3]);
+        // The units modulo 13 are the powers of 2; modulo 60 the products of
+        // powers of 31, 41 and 37; modulo 16 of -1 and 5.
+        assert_eq!(variant_reps(&int(3), 13), vec![1, 2, 4, 8]);
+        assert_eq!(variant_reps(&int(61), 60), vec![1, 31, 41, 11, 37, 7, 17, 47, 49, 19, 29, 59, 13, 43, 53, 23]);
+        assert_eq!(variant_reps(&int(7), 16), vec![1, 15, 5, 11]);
+    }
+
+    #[test]
+    fn variant_exponents_as_magma_picks_them() {
+        let e = |q: u64, v: u64, s: u64| {
+            let n = &int(q).pow(v) - &Integer::one();
+            variant_exponent(s, v, &n, &n.factor().unwrap().factors)
+        };
+        assert_eq!((e(5, 4, 3), e(49, 4, 3), e(7, 9, 2), e(7, 9, 5)), (int(107), int(48043), int(20176805), int(5)));
     }
 }
