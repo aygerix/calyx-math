@@ -1,0 +1,41 @@
+6
+6
+5
+0
+1208925819614629174706176
+3
+0
+4
+6
+
+>> Gcd([]);
+      ^
+Runtime error in 'Gcd': Illegal null set/sequence
+
+6
+6 -1 1
+6 1 1
+5 0 -1
+0 0 0
+5 1 0
+2 -9 47
+2 9 -47
+3 [ -2, 0, 1 ]
+3
+0 [ 0, 0 ]
+2 [ -1, -1 ]
+0 []
+12
+12
+0
+0
+60
+12
+0
+7
+
+>> Lcm([]);
+      ^
+Runtime error in 'Lcm': Illegal null set/sequence
+
+12

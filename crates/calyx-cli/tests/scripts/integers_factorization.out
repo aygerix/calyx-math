@@ -1,0 +1,325 @@
+[ <2, 3>, <3, 2>, <5, 1> ]
+[ <2, 3>, <3, 2>, <5, 1> ]
+[]
+[]
+[ <274177, 1>, <67280421310721, 1> ]
+[ <73, 1>, <137, 1>, <1676321, 1>, <5964848081, 1> ]
+
+>> Factorization(0);
+                ^
+Runtime error in 'Factorization': Argument 1 is not non-zero
+
+[ <2, 2>, <3, 1> ]
+-1
+[ <2, 2>, <3, 1> ]
+1
+false
+[ <101, 1>, <9901, 1> ]
+[ <193707721, 1>, <761838257287, 1> ]
+[ <1000003, 1>, <1000033, 1> ]
+[ <618970019642690137449562111, 1> ]
+[ <618970019642690137449562111, 1> ]
+[ 1000003, 1000033, 1000037 ]
+[]
+
+>> StoreFactor(10);
+              ^
+Runtime error in 'StoreFactor': Argument 1 (10) should be prime
+
+[ 101, 103 ]
+
+>> StoreFactor(-7);
+              ^
+Runtime error in 'StoreFactor': Argument 1 is not positive
+
+[ <2, 3>, <3, 2>, <5, 1> ]
+1
+[ <2, 10> ]
+1000003
+[ <2, 10>, <1000003, 1> ]
+1
+[]
+97
+[ <97, 1> ]
+101
+[ <2, 3>, <3, 2>, <5, 1> ]
+1
+[]
+1
+[]
+15
+
+>> TrialDivision(0);
+                ^
+Runtime error in 'TrialDivision': Argument 1 is not non-zero
+
+[]
+360
+
+>> TrialDivision(360, 0);
+                ^
+Runtime error in 'TrialDivision': Argument 2 must be greater than 0
+
+
+>> TrialDivision(360, -1);
+                ^
+Runtime error in 'TrialDivision': Argument 2 must be greater than 0
+
+[ <2, 3>, <3, 1> ]
+1000036000099
+[ <2, 3>, <3, 2> ]
+5
+[ <2, 3> ]
+45
+[ <2, 3>, <7, 2> ]
+11
+[ <1000003, 1>, <1000033, 1> ]
+[]
+[ <2, 3>, <3, 2>, <5, 1> ]
+[]
+[ <97, 1> ]
+[]
+[]
+[ 1000036000099 ]
+
+>> PollardRho(1);
+             ^
+Runtime error in 'PollardRho': Argument 1 must be greater than 1
+
+
+>> PollardRho(0);
+             ^
+Runtime error in 'PollardRho': Argument 1 must be greater than 1
+
+true
+
+>> pMinus1(1000003*1000033, 100, 1000);
+          ^
+Runtime error in 'pMinus1': Bad argument types
+Argument types given: RngIntElt, RngIntElt, RngIntElt
+
+0
+3 2
+
+>> pMinus1(1, 10);
+          ^
+Runtime error in 'pMinus1': Argument 1 should be greater than 1
+
+0
+[ <1000003, 1>, <1000033, 1> ]
+[]
+[ <2, 3>, <3, 2>, <5, 1> ]
+[]
+[ <97, 1> ]
+[]
+[ <1000003, 1>, <1000033, 1> ]
+[]
+
+>> SQUFOF(1);
+         ^
+Runtime error in 'SQUFOF': Argument 1 must be greater than 1
+
+
+>> SQUFOF(2^200+1);
+         ^
+Runtime error in 'SQUFOF': Argument 1 
+(1606938044258990275541962092341162602522202993782792835301377) is too large
+
+1000033 7
+0
+
+>> ECM(1, 1000);
+      ^
+Runtime error in 'ECM': Argument 1 should be greater than 1
+
+[ <1000003, 1>, <1000033, 1>, <1000037, 1>, <1000039, 1>, <1000081, 1> ]
+[]
+[ <1000000000000000000000000000057, 1> ]
+[]
+1000296
+[ <2, 3>, <3, 3>, <11, 1>, <421, 1> ]
+1000980
+9996
+
+>> ECMOrder(15, 7);
+           ^
+Runtime error: First argument must be a positive prime
+
+[ 2, 3, 5 ]
+[ 1, 2, 4, 7, 14, 28 ]
+[ 1, 2, 4, 8, 16, 31, 62, 124, 248, 496 ]
+[ 1 ]
+
+>> 96)); Divisors(1); Divisors(-12);
+                              ^
+Runtime error in 'Divisors': Argument 1 (-12) should be >= 1
+
+
+>> Divisors(0);
+           ^
+Runtime error in 'Divisors': Argument 1 (0) should be >= 1
+
+
+>> Divisors([<2, 3>]);
+           ^
+Runtime error in 'Divisors': Bad argument types
+Argument types given: SeqEnum[Tup]
+
+[ 1, 2, 3, 4, 6, 12 ]
+[ 2, 3 ]
+[ <2, 3>, <3, 3> ]
+[ <2, 2>, <3, 2>, <5, 2> ]
+[]
+[]
+[ <2, 5> ]
+[ <2, 6>, <3, 3>, <125, 1> ]
+[ <2, 1>, <3, 2>, <5, 2>, <7, 1> ]
+[ <5, 1> ]
+[ <2, 3>, <3, 1> ]
+RngIntEltFact
+[
+    [
+        [],
+        [ <12, 1> ]
+    ]
+]
+[]
+[
+    [
+        [],
+        []
+    ]
+]
+[
+    [
+        [ <2, 2> ],
+        [ <3, 1> ]
+    ],
+    [
+        [ <3, 2> ],
+        [ <2, 1> ]
+    ]
+]
+[
+    [
+        [],
+        [ <7, 1> ]
+    ],
+    [
+        [ <7, 2> ],
+        []
+    ],
+    [
+        [ <7, 2> ],
+        [ <7, 1> ]
+    ]
+]
+[
+    [
+        [ <4, 2>, <3, 2> ],
+        [ <2, 1> ]
+    ],
+    [
+        [ <6, 2> ],
+        [ <3, 1>, <2, 1> ]
+    ]
+]
+
+>> PartialFactorization([0]);
+                       ^
+Runtime error in 'PartialFactorization': The integers must be non-zero
+
+RngIntEltFact
+[ <193707721, 1>, <761838257287, 1> ]
+[ <274177, 1>, <67280421310721, 1> ]
+[ <11, 1>, <9091, 1> ]
+[ <5, 2>, <41, 1> ]
+[ <2, 1>, <11, 2> ]
+[ <11, 1> ]
+[]
+
+>> 10, 1, 1); Cunningham(2, 1, -1); Cunningham(2, 0, 1); Cunningham(1, 5, 1);
+                                              ^
+Runtime error in 'Cunningham': Argument 2 (0) should be in the range [1 .. 
+10000]
+
+
+>> 10, 1, 1); Cunningham(2, 1, -1); Cunningham(2, 0, 1); Cunningham(1, 5, 1);
+                                                                   ^
+Runtime error in 'Cunningham': Argument 1 (1) should be in the range [2 .. 
+1073741823]
+
+[ <13, 1>, <211, 1>, <13063, 1> ]
+[ <5, 2>, <43, 1>, <311, 1>, <1171, 1>, <1201, 1> ]
+[ <3, 2>, <5, 2>, <7, 1>, <11, 1>, <13, 1>, <31, 1>, <41, 1>, <61, 1>, <151, 1>,
+<331, 1>, <1321, 1> ]
+
+>> Cunningham(2, 67, 0);
+             ^
+Runtime error in 'Cunningham': Argument 3 should be -1 or +1
+
+
+>> Cunningham(2, 10, 2);
+             ^
+Runtime error in 'Cunningham': Argument 3 should be -1 or +1
+
+
+>> Cunningham(-2, 10, 1);
+             ^
+Runtime error in 'Cunningham': Argument 1 (-2) should be in the range [2 .. 
+1073741823]
+
+
+>> Cunningham(2, -3, 1);
+             ^
+Runtime error in 'Cunningham': Argument 2 (-3) should be in the range [1 .. 
+10000]
+
+true 50
+50
+1000000
+true 0
+1073741823
+
+>> AssertAttribute(RngInt, "CunninghamStorageLimit", 2^30);
+                  ^
+Runtime error in 'AssertAttribute': Argument 2 is not positive
+
+
+>> AssertAttribute(RngInt, "CunninghamStorageLimit", -1);
+                  ^
+Runtime error in 'AssertAttribute': Argument 2 is not positive
+
+
+>> AssertAttribute(RngInt, "CunninghamStorageLimit", "x");
+                  ^
+Runtime error in 'AssertAttribute': Bad rhs type for attribute 
+"CunninghamStorageLimit"
+
+
+>> AssertAttribute(RngInt, "CunninghamStorageLimit", 1/2);
+                  ^
+Runtime error in 'AssertAttribute': Bad rhs type for attribute 
+"CunninghamStorageLimit"
+
+
+>> AssertAttribute(RngInt, "Foo", 1);
+                  ^
+Runtime error in 'AssertAttribute': Unknown attribute "Foo" for this object
+
+
+>> AssertAttribute(FldRat, "CunninghamStorageLimit", 1);
+                  ^
+Runtime error in 'AssertAttribute': Unknown attribute "CunninghamStorageLimit" 
+for this object
+
+
+>> HasAttribute(RngInt, "Foo");
+               ^
+Runtime error in 'HasAttribute': Unknown attribute "Foo" for this object
+
+
+>> RngInt`Foo;
+         ^
+Runtime error in `: Invalid attribute 'Foo' for this category
+

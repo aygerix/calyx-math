@@ -1,0 +1,196 @@
+4
+5
+1
+1
+549755813888
+0
+
+>> Modexp(2, -1, 4);
+         ^
+Runtime error in 'Modexp': Argument 1 (-1) has no inverse modulo argument 3 (4)
+
+
+>> Modexp(3, 4, 0);
+         ^
+Runtime error in 'Modexp': Argument 3 (0) should be >= 2
+
+
+>> Modexp(3, 4, -7);
+         ^
+Runtime error in 'Modexp': Argument 3 (-7) should be >= 2
+
+2
+3
+-3
+5
+5
+2
+5
+0
+
+>> Modinv(2, 4);
+         ^
+Runtime error in 'Modinv': Argument 1 is not a unit mod argument 2
+
+
+>> Modinv(3, 0);
+         ^
+Runtime error in 'Modinv': Argument 2 (0) should be >= 1
+
+
+>> Modinv(3, -7);
+         ^
+Runtime error in 'Modinv': Argument 2 (-7) should be >= 1
+
+4
+2
+0
+2
+1
+3
+2
+39
+
+>> Modsqrt(3, 7);
+          ^
+Runtime error in 'Modsqrt': Argument has no square root
+
+
+>> Modsqrt(2, 1);
+          ^
+Runtime error in 'Modsqrt': Argument 2 (1) should be >= 2
+
+
+>> Modsqrt(2, 0);
+          ^
+Runtime error in 'Modsqrt': Argument 2 (0) should be >= 2
+
+3
+6
+0
+1
+2
+2
+6
+
+>> Modorder(2, 1);
+           ^
+Runtime error in 'Modorder': Argument 2 (1) should be >= 2
+
+
+>> Modorder(2, 0);
+           ^
+Runtime error in 'Modorder': Argument 2 (0) should be >= 2
+
+true
+false
+false
+true
+
+>> ; IsPrimitive(3, 4); IsPrimitive(10, 7); IsPrimitive(0, 7);
+                                   ^
+Runtime error in 'IsPrimitive': Argument 1 (10) should be <= 6
+
+
+>> ; IsPrimitive(3, 4); IsPrimitive(10, 7); IsPrimitive(0, 7);
+                                                       ^
+Runtime error in 'IsPrimitive': Argument 1 (0) should be >= 1
+
+
+>> IsPrimitive(3, 1);
+              ^
+Runtime error in 'IsPrimitive': Argument 2 (1) should be >= 2
+
+3
+1
+3
+0
+2
+5
+2
+5
+
+>> PrimitiveRoot(1);
+                ^
+Runtime error in 'PrimitiveRoot': Argument 1 (1) should be >= 2
+
+
+>> PrimitiveRoot(0);
+                ^
+Runtime error in 'PrimitiveRoot': Argument 1 (0) should be >= 2
+
+
+>> PrimitiveRoot(-7);
+                ^
+Runtime error in 'PrimitiveRoot': Argument 1 (-7) should be >= 2
+
+6 7
+4 5
+-1
+0 1
+0 1
+1 7
+6 7
+0 1
+
+>> Solution(3, 4, 0);
+           ^
+Runtime error in 'Solution': Argument 3 (0) should be >= 1
+
+8
+23
+-1
+9
+
+>>  [3, 5, 7]); CRT([1, 2], [4, 6]); CRT([1, 3], [4, 6]); CRT([], []); CRT([5]
+                                                             ^
+Runtime error in 'CRT': Sequence argument 1 must be non-empty
+
+5
+6
+0
+
+>> CRT([1, 2], [3]);
+      ^
+Runtime error in 'CRT': Lengths of sequence arguments should be the same
+
+
+>> CRT([1, 2], [0, 5]);
+      ^
+Runtime error in 'CRT': Element of second argument (moduli M) is zero
+
+13
+-1
+-1
+9
+0
+
+>> Solution([1, 2], [1], [3, 5]);
+           ^
+Runtime error in 'Solution': Lengths of sequence arguments should be the same
+
+true 5 0
+false
+true 3 0
+true 2 1
+true 0 0
+true 0 1
+true 98 73
+true 5 0
+
+>> NormEquation(0, 4);
+               ^
+Runtime error in 'NormEquation': Argument 1 must be positive and argument 2 
+non-negative
+
+
+>> NormEquation(1, -4);
+               ^
+Runtime error in 'NormEquation': Argument 1 must be positive and argument 2 
+non-negative
+
+true 1125 10
+true 507 2
+true 55 2
+true 104 18
+true 21 409

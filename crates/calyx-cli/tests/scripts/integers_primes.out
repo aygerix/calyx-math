@@ -1,0 +1,145 @@
+true
+true
+true
+true
+true
+false
+false
+true
+false
+true
+false
+true
+true
+true
+false
+false
+true
+true
+false
+false
+true 2 3
+false
+
+>> IsPrimePower(8); IsPrimePower(12); IsPrimePower(1); IsPrimePower(7); IsPrim
+                                                  ^
+Runtime error in 'IsPrimePower': Argument 1 (1) should be >= 2
+
+true 7 1
+
+>> rimePower(7); IsPrimePower(-8); IsPrimePower(0); IsPrimePower(3^40);
+                             ^
+Runtime error in 'IsPrimePower': Argument 1 (-8) should be >= 2
+
+
+>> rimePower(7); IsPrimePower(-8); IsPrimePower(0); IsPrimePower(3^40);
+                                               ^
+Runtime error in 'IsPrimePower': Argument 1 (0) should be >= 2
+
+true 3 40
+2
+19
+23
+2
+2
+3
+101
+
+>> NextPrime(0); NextPrime(1); NextPrime(2); NextPrime(100); NextPrime(-5); Ne
+                                                                      ^
+Runtime error in 'NextPrime': Argument 1 (-5) should be >= 0
+
+100000000000000000039
+1000000000000000000000000000057
+2
+97
+99999999999999999989
+
+>> PreviousPrime(2);
+                ^
+Runtime error in 'PreviousPrime': Argument 1 (2) should be >= 3
+
+
+>> PreviousPrime(-5);
+                ^
+Runtime error in 'PreviousPrime': Argument 1 (-5) should be >= 3
+
+[ 2, 3, 5, 7, 11, 13, 17, 19, 23, 29 ]
+[ 2 ]
+[]
+
+>> PrimesUpTo(30); PrimesUpTo(2); PrimesUpTo(1); PrimesUpTo(0); #PrimesUpTo(10
+                                                           ^
+Runtime error in 'PrimesUpTo': Limit must be positive
+
+1229
+
+>> PrimesUpTo(-5);
+             ^
+Runtime error in 'PrimesUpTo': Limit must be positive
+
+[ 11, 13, 17, 19, 23, 29 ]
+[ 2 ]
+
+>> PrimesInInterval(10, 30); PrimesInInterval(2, 2); PrimesInInterval(30, 10);
+                                                                     ^
+Runtime error in 'PrimesInInterval': Upper limit < Lower Limit !
+
+
+>> sInInterval(30, 10); PrimesInInterval(-10, 10); PrimesInInterval(10^12, 10^
+                                        ^
+Runtime error in 'PrimesInInterval': Lower limit must be positive
+
+[ 1000000000039, 1000000000061, 1000000000063, 1000000000091 ]
+2
+29
+7919
+1299709
+1
+
+>> NthPrime(-1);
+           ^
+Runtime error in 'NthPrime': Argument 1 (-1) should be >= 0
+
+[ 2, 3, 5 ]
+[ 2, 3, 5 ]
+[]
+[ 97 ]
+[ 641, 6700417 ]
+
+>> PrimeBasis(0);
+             ^
+Runtime error in 'PrimeBasis': Argument 1 is not non-zero
+
+
+>> PrimesUpTo(2^30);
+             ^
+Runtime error in 'PrimesUpTo': Limit is too large
+
+
+>> PrimesInInterval(2, 2^30 + 1);
+                   ^
+Runtime error in 'PrimesInInterval': Interval is too large
+
+
+>> PrimesInInterval(2^57 - 100, 2^57);
+                   ^
+Runtime error in 'PrimesInInterval': Limits are too large
+
+
+>> PrimesInInterval(-10, -5);
+                   ^
+Runtime error in 'PrimesInInterval': Upper limit must be positive
+
+[ 144115188075855803, 144115188075855811, 144115188075855823, 
+144115188075855847, 144115188075855859 ]
+[ 1099511627791, 1099511627803, 1099511627831, 1099511627873 ]
+[]
+99999989
+100000007
+9999999967
+
+>> NthPrime(455052512);
+           ^
+Runtime error in 'NthPrime': Integer is too large
+

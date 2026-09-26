@@ -1,0 +1,65 @@
+// A copy of compat/pending/integers_creation.m, so that calyx's output, checked against
+// Magma 2.22, is kept until #24 records the output of 2.29.
+// Creating the integers and their elements: the ring, literals (decimal,
+// hexadecimal, leading zeros), elt< >, coercion into Z, hexadecimal
+// printing, conversions to and from digit sequences, and natural maps.
+Z := IntegerRing(); Z;
+Integers(); RingOfIntegers();
+IntegerRing(Rationals()); Integers(Rationals()); RingOfIntegers(Rationals());
+IntegerRing() eq Integers();
+One(Z); Identity(Z); Zero(Z); Representative(Z);
+0xff; 0x0; 0x00ff; -0x10;
+0XFF;
+007; 000;
+elt< Z | 1/2 >;
+elt< Z | 4/2 >;
+Z ! 7; Z ! (6/3); Z ! Integers(7)!12; Z ! GF(5)!3;
+Z ! (1/2);
+Z ! GF(4).1;
+Z ! [5];
+Z ! [5, 6];
+Z ! 2.0;
+Z ! 2.5;
+Z ! 1e30;
+-255 : Hex;
+0 : Hex;
+[1, 255] : Hex;
+2^100 : Hex;
+print 1234567890 : Hex;
+FactorizationToInteger([<2, 3>, <3, 2>]); FactorisationToInteger([<2, 3>, <5, 0>]); Facint([<7, 1>]);
+Facint([]);
+Facint([<4, 2>, <6, 1>]);
+Facint([<-2, 3>]);
+Facint([<2, -1>]);
+Facint([<2, 1, 1>]);
+Facint([1, 2]);
+IntegerToSequence(1234, 10); Intseq(1234, 10); Intseq(0, 10); Intseq(255, 16); Intseq(5, 2); Intseq(123);
+Intseq(-5, 10);
+Intseq(5, 1);
+Intseq(5, 0);
+Intseq(5, -2);
+Intseq(10, 2, 6);
+Intseq(10, 2, 2);
+SequenceToInteger([4, 3, 2, 1], 10); Seqint([4, 3, 2, 1], 10); Seqint([], 10); Seqint([1, 0, 1]);
+Seqint([12, 1], 10);
+Seqint([-1, 1], 10);
+Seqint([1, 1], 1);
+Seqint([1, 1], -2);
+IntegerToString(-255); IntegerToString(255, 16); IntegerToString(-255, 2); IntegerToString(35, 36);
+IntegerToString(10, 37);
+IntegerToString(10, 1);
+Eltseq(7); Eltseq(-3); Type(Eltseq(0));
+Denominator(7); Numerator(-7);
+h := hom< Z -> Rationals() | >; h; h(3); Type(h(3));
+h2 := hom< Integers() -> GF(7) | >; h2(10);
+hom< Z -> Integers(6) | >(8);
+hom< Z -> Z | >;
+Category(Z); Parent(Z); PrimeRing(Z); Center(Z); Centre(Z);
+FieldOfFractions(Z); Type(FieldOfFractions(Z));
+sub< Z | 6 >; sub< Z | 4, 6 >; sub< Z | 1 >; sub< Z | 0 >;
+I := sub< Z | 6 >; sub< I | 4 >;
+sub< Z | 1/2 >;
+Characteristic(Z); Signature(Z);
+IsCommutative(Z); IsUnitary(Z); IsFinite(Z); IsOrdered(Z); IsField(Z); IsEuclideanDomain(Z); IsPID(Z); IsUFD(Z);
+IsDivisionRing(Z); IsEuclideanRing(Z); IsPrincipalIdealRing(Z); IsDomain(Z);
+Z eq Rationals(); Z ne Rationals(); Z eq Integers(); Z eq GF(2);
