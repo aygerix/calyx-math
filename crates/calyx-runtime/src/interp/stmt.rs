@@ -43,6 +43,14 @@ impl Interp {
                             let (x, y) = (self.eval(a, f)?, self.eval(b, f)?);
                             vec![self.binop(*op, x, y).map_err(|err| crate::ops::op_error(*op, err, true).at(e.span))?]
                         }
+                        // `x @ m;` names '@' when no map or intrinsic takes x.
+                        Ex::Image(a, b) if *lone => {
+                            let (x, m) = (self.eval(a, f)?, self.eval(b, f)?);
+                            vec![self.image(&x, &m).map_err(|err| {
+                                let bad = err.span.is_none() && err.context.is_none() && err.message.starts_with("Bad argument types");
+                                (if bad { err.in_context("@") } else { err }).at(e.span)
+                            })?]
+                        }
                         // So is a failed requirement of `.`, as in `G.2;`.
                         Ex::Dot(a, b) if *lone => {
                             let (x, y) = (self.eval(a, f)?, self.eval(b, f)?);

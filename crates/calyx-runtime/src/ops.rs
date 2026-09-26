@@ -1208,7 +1208,8 @@ impl Interp {
                 if let Some(v) = self.dispatch_user_operator("@", vec![x.clone(), m.clone()])? {
                     return Ok(v);
                 }
-                Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}, {}", self.type_name(x), self.type_name(m))).in_context("@"))
+                // A statement of its own names '@' (see exec_inner), as f(x) does.
+                Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}, {}", self.type_name_ext(x), self.type_name_ext(m))))
             }
         }
     }

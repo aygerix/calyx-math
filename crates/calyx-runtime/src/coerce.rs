@@ -966,7 +966,11 @@ impl Interp {
                 StructKind::Maps(..) => TypeVal::Cat(t::MAP),
                 StructKind::Coproduct(_) => TypeVal::Cat(t::COP_ELT),
                 StructKind::PowerStructure(ty) => TypeVal::Cat(*ty),
-                StructKind::Ring(r) => TypeVal::Cat(r.elt_type()),
+                // Univariate polynomials show their coefficient ring, as in extended_type.
+                StructKind::Ring(r) => match (&r.kind, r.base()) {
+                    (crate::rings::RingKind::UPoly { .. } | crate::rings::RingKind::UPolyRes { .. }, Some(b)) => TypeVal::Ext(r.elt_type(), Rc::from(vec![TypeArg::Type(TypeVal::Cat(b.type_id()))])),
+                    _ => TypeVal::Cat(r.elt_type()),
+                },
                 StructKind::SymGroup(_) => TypeVal::Cat(t::GRP_PERM_ELT),
                 StructKind::ExtendedReals => TypeVal::Cat(t::EXT_RE_ELT),
                 StructKind::IntIdeal(_) => TypeVal::Cat(t::RNG_INT_ELT),
@@ -1077,7 +1081,11 @@ impl Interp {
                 StructKind::Maps(..) => TypeVal::Cat(t::MAP),
                 StructKind::Coproduct(_) => TypeVal::Cat(t::COP_ELT),
                 StructKind::PowerStructure(ty) => TypeVal::Cat(*ty),
-                StructKind::Ring(r) => TypeVal::Cat(r.elt_type()),
+                // Univariate polynomials show their coefficient ring, as in extended_type.
+                StructKind::Ring(r) => match (&r.kind, r.base()) {
+                    (crate::rings::RingKind::UPoly { .. } | crate::rings::RingKind::UPolyRes { .. }, Some(b)) => TypeVal::Ext(r.elt_type(), Rc::from(vec![TypeArg::Type(TypeVal::Cat(b.type_id()))])),
+                    _ => TypeVal::Cat(r.elt_type()),
+                },
                 StructKind::SymGroup(_) => TypeVal::Cat(t::GRP_PERM_ELT),
                 StructKind::ExtendedReals => TypeVal::Cat(t::EXT_RE_ELT),
                 StructKind::IntIdeal(_) => TypeVal::Cat(t::RNG_INT_ELT),
