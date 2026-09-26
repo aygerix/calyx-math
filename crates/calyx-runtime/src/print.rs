@@ -94,15 +94,14 @@ impl Printer {
                     }
                 }
                 None => {
-                    // No space to break at: continue after a backslash.
+                    // No space to break at: continue after a backslash, as
+                    // indented as any continued line.
                     let last = self.buf.pop();
                     self.buf.push('\\');
-                    self.buf.push('\n');
-                    self.col = 0;
-                    self.line_start = self.buf.len();
+                    self.break_line();
                     if let Some(l) = last {
                         self.buf.push(l);
-                        self.col = 1;
+                        self.col += 1;
                     }
                 }
             }
@@ -141,6 +140,17 @@ impl Printer {
             self.line_start = self.buf.len();
         }
         self.write(s);
+    }
+
+    /// Write text that breaks at spaces, each word an atom (a string's
+    /// contents, `printf` output).
+    pub fn text(&mut self, s: &str) {
+        for (i, w) in s.split(' ').enumerate() {
+            if i > 0 {
+                self.put(' ');
+            }
+            self.atom(w, true);
+        }
     }
 }
 
@@ -304,10 +314,12 @@ impl Interp {
         Ok(p.buf)
     }
 
-    /// `Sprint`: like printing, but without indenting nested lines.
+    /// `Sprint`: like printing, but without indenting nested lines or
+    /// wrapping long ones (the string wraps only when it is printed).
     pub fn format_bare(&mut self, v: &Value, level: Level) -> RResult<String> {
         let mut p = Printer::new(0, self.out.columns, level);
         p.bare = true;
+        p.no_wrap = true;
         self.fmt(&mut p, v, 0)?;
         Ok(p.buf)
     }
@@ -344,7 +356,7 @@ impl Interp {
                     p.no_wrap = true;
                     p.write(&quote_string(s));
                 } else {
-                    p.write(s);
+                    p.text(s);
                 }
             }
             Value::Seq(s) => {
@@ -360,19 +372,22 @@ impl Interp {
                     }
                     p.write("[]");
                 } else if let Some((lo, hi, step)) = s.as_progression() {
+                    let open = if p.level == Level::Magma { "\\[" } else { "[" };
                     if step.is_one() {
-                        p.write(&format!("[ {lo} .. {hi} ]"));
+                        p.write(&format!("{open} {lo} .. {hi} ]"));
                     } else {
-                        p.write(&format!("[ {lo} .. {hi} by {step} ]"));
+                        p.write(&format!("{open} {lo} .. {hi} by {step} ]"));
                     }
                 } else {
                     let elems = s.elems.clone();
-                    self.fmt_agg(p, "[", "]", &elems, indent, None)?;
+                    let open = self.agg_open(p, "[", &s.universe, true)?;
+                    self.fmt_agg(p, &open, "]", &elems, indent, None)?;
                 }
             }
             Value::Set(s) => {
                 if s.is_empty() {
-                    p.write("{}");
+                    let open = self.agg_open(p, "{", &s.universe, false)?;
+                    p.write(if open == "{" { "{}".to_string() } else { format!("{open} }}") }.as_str());
                 } else if let SetRepr::Range { lo, step, len } = &s.repr {
                     let hi = lo + &(step * &calyx_flint::Integer::from_u64(len - 1));
                     if step.is_one() {
@@ -383,20 +398,23 @@ impl Interp {
                 } else {
                     let mut elems: Vec<Value> = s.iter().collect();
                     sort_values(&mut elems);
-                    self.fmt_agg(p, "{", "}", &elems, indent, None)?;
+                    let open = self.agg_open(p, "{", &s.universe, false)?;
+                    self.fmt_agg(p, &open, "}", &elems, indent, None)?;
                 }
             }
             Value::ISet(s) => {
+                let open = self.agg_open(p, "{@", &s.universe, false)?;
                 if s.elems.is_empty() {
-                    p.write("{@ @}");
+                    p.write(&format!("{open} @}}"));
                 } else {
                     let elems: Vec<Value> = s.elems.iter().cloned().collect();
-                    self.fmt_agg(p, "{@", "@}", &elems, indent, None)?;
+                    self.fmt_agg(p, &open, "@}", &elems, indent, None)?;
                 }
             }
             Value::MSet(s) => {
+                let open = self.agg_open(p, "{*", &s.universe, false)?;
                 if s.elems.is_empty() {
-                    p.write("{* *}");
+                    p.write(&format!("{open} *}}"));
                 } else {
                     let mut pairs: Vec<(Value, u64)> = s.elems.iter().map(|(v, n)| (v.clone(), *n)).collect();
                     let mut keys: Vec<Value> = pairs.iter().map(|p| p.0.clone()).collect();
@@ -406,7 +424,7 @@ impl Interp {
                     }
                     let elems: Vec<Value> = pairs.iter().map(|x| x.0.clone()).collect();
                     let mults: Vec<u64> = pairs.iter().map(|x| x.1).collect();
-                    self.fmt_agg(p, "{*", "*}", &elems, indent, Some(&mults))?;
+                    self.fmt_agg(p, &open, "*}", &elems, indent, Some(&mults))?;
                 }
             }
             Value::List(l) => {
@@ -588,8 +606,9 @@ impl Interp {
             }),
             Value::Perm(pm) => {
                 if p.level == Level::Magma {
-                    let images = Value::int_seq(pm.images.iter().map(|&x| calyx_flint::Integer::from_u64(x as u64 + 1)));
-                    return self.fmt(p, &images, indent);
+                    // The images, without the `\[` of integer sequences.
+                    let images: Vec<Value> = pm.images.iter().map(|&x| Value::Int(calyx_flint::Integer::from_u64(x as u64 + 1))).collect();
+                    return self.fmt_agg(p, "[", "]", &images, indent, None);
                 }
                 let text = match pm.cycle_notation() {
                     Some(c) => c,
@@ -627,6 +646,21 @@ impl Interp {
             return Ok(());
         }
         self.fmt(p, v, indent)
+    }
+
+    /// The opening bracket of an aggregate. At the Magma level it names the
+    /// universe (`[ RationalField() |`), except that sequences of integers
+    /// use the short form `\[`.
+    fn agg_open(&mut self, p: &Printer, open: &str, universe: &Option<Value>, seq: bool) -> RResult<String> {
+        match universe {
+            Some(u) if p.level == Level::Magma => {
+                if seq && u.is_integers() {
+                    return Ok(format!("\\{open}"));
+                }
+                Ok(format!("{open} {} |", self.format_flat(u, Level::Magma)?))
+            }
+            _ => Ok(open.to_string()),
+        }
     }
 
     /// Print an aggregate horizontally if all elements are simple,
@@ -840,6 +874,7 @@ impl Interp {
                 p.level = saved;
             }
             StructKind::PowerStructure(t) if *t == crate::types::t::RNG_INT_ELT_FACT => p.write("Set of integer factorization sequences"),
+            StructKind::PowerStructure(t) if p.level == Level::Magma => p.write(&format!("PowerStructure({})", self.types.name(*t))),
             StructKind::PowerStructure(t) => p.write(&format!("Power Structure of {}", self.types.name(*t))),
             StructKind::Ring(r) if p.level == Level::Minimal && matches!(r.kind, crate::rings::RingKind::Complex(_)) && s.name.borrow().is_some() => p.write(&group_name(s)),
             StructKind::Ring(r) => {
@@ -1059,7 +1094,7 @@ impl Interp {
 /// Wrap text at `width` columns with the same rules as the printer.
 pub fn wrap_text_output(text: &str, start_col: usize, width: usize) -> String {
     let mut p = Printer::new(start_col, width, Level::Default);
-    p.write(text);
+    p.text(text);
     p.buf
 }
 
