@@ -969,6 +969,128 @@ mod tests {
         }
     }
 
+    /// A xorshift generator, so that the cases are the same on every run.
+    fn next(s: &mut u64) -> u64 {
+        *s ^= *s << 13;
+        *s ^= *s >> 7;
+        *s ^= *s << 17;
+        *s
+    }
+
+    fn int(v: i64) -> Integer {
+        Integer::from_i64(v)
+    }
+
+    /// A random prime of at most `bits` bits.
+    fn prime(s: &mut u64, bits: u32) -> Integer {
+        Integer::from_u64(next(s) >> (64 - bits)).next_prime()
+    }
+
+    #[test]
+    fn crt_finds_the_least_solution() {
+        let mut s = 0x2545_f491_4f6c_dd1d;
+        for _ in 0..3000 {
+            let k = 1 + next(&mut s) as usize % 3;
+            let ms: Vec<i64> = (0..k).map(|_| (1 + next(&mut s) % 24) as i64 * if next(&mut s) % 4 == 0 { -1 } else { 1 }).collect();
+            let xs: Vec<i64> = (0..k).map(|_| (next(&mut s) % 101) as i64 - 50).collect();
+            let l = ms.iter().fold(int(1), |l, &m| l.lcm(&int(m))).to_i64().unwrap();
+            let want = (0..l).find(|y| xs.iter().zip(&ms).all(|(x, m)| (y - x).rem_euclid(*m) == 0)).unwrap_or(-1);
+            let got = crt_of(&xs.iter().map(|&x| int(x)).collect::<Vec<_>>(), &ms.iter().map(|&m| int(m)).collect::<Vec<_>>());
+            assert_eq!(got.unwrap(), int(want), "CRT({xs:?}, {ms:?})");
+        }
+        // Large coprime moduli: the least solution lies below their product.
+        for _ in 0..200 {
+            let ms: Vec<Integer> = (0..4).map(|_| prime(&mut s, 60)).collect();
+            if (1..4).any(|i| ms[..i].contains(&ms[i])) {
+                continue;
+            }
+            let xs: Vec<Integer> = (0..4).map(|_| &int(next(&mut s) as i64) * &int(next(&mut s) as i64)).collect();
+            let x = crt_of(&xs, &ms).unwrap();
+            assert!(x.sign() >= 0 && x < ms.iter().fold(int(1), |p, m| &p * m));
+            assert!(xs.iter().zip(&ms).all(|(r, m)| modp(&(&x - r), m).is_zero()));
+        }
+    }
+
+    #[test]
+    fn modular_square_roots_square_back() {
+        // Every residue modulo m < 400: a root exactly when there is one.
+        for m in 2..400i64 {
+            let mut square = vec![false; m as usize];
+            for x in 0..m {
+                square[(x * x % m) as usize] = true;
+            }
+            for n in 0..m {
+                let r = modsqrt(&int(n), &int(m));
+                assert_eq!(r.is_some(), square[n as usize], "Modsqrt({n}, {m})");
+                if let Some(r) = r {
+                    assert!(r.sign() >= 0 && r < int(m) && modp(&(&(&r * &r) - &int(n)), &int(m)).is_zero(), "Modsqrt({n}, {m}) = {r}");
+                }
+            }
+        }
+        // Squares modulo products of large prime powers.
+        let mut s = 0x9e37_79b9_7f4a_7c15;
+        for i in 0..300 {
+            let mut f: Vec<(Integer, u64)> = Vec::new();
+            for _ in 0..1 + i % 3 {
+                let p = if next(&mut s) % 4 == 0 { int(2 + (next(&mut s) % 2) as i64) } else { prime(&mut s, 30) };
+                if !f.iter().any(|(q, _)| *q == p) {
+                    f.push((p, 1 + next(&mut s) % 4));
+                }
+            }
+            f.sort();
+            let m = super::super::factseq::fact_int(&f);
+            let x = modp(&(&int(next(&mut s) as i64) * &int(next(&mut s) as i64)), &m);
+            let n = modp(&(&x * &x), &m);
+            let r = modsqrt_factored(&n, &f).unwrap_or_else(|| panic!("Modsqrt({n}, {m})"));
+            assert!(modp(&(&(&r * &r) - &n), &m).is_zero(), "Modsqrt({n}, {m}) = {r}");
+            assert!(is_square_mod_factored(&n, &f));
+            if let Some(all) = all_sqrts_factored(&n, &f, 1 << 12) {
+                assert!(all.contains(&r) && all.contains(&x) && all.iter().all(|y| modp(&(&(y * y) - &n), &m).is_zero()));
+            }
+        }
+    }
+
+    #[test]
+    fn norm_equations_hold_and_are_complete() {
+        for d in 1..=24i64 {
+            for m in 0..=300i64 {
+                let solvable = (0..=m.isqrt()).any(|x| (m - x * x) % d == 0 && ((m - x * x) / d).isqrt().pow(2) == (m - x * x) / d);
+                let got = norm_equation(&int(d), &int(m));
+                assert_eq!(got.is_some(), solvable, "NormEquation({d}, {m})");
+                if let Some((x, y)) = got {
+                    assert!(x.sign() >= 0 && y.sign() >= 0 && &(&x * &x) + &(&int(d) * &(&y * &y)) == int(m), "NormEquation({d}, {m}) = {x}, {y}");
+                }
+            }
+        }
+        // Large values of x^2 + d y^2.
+        let mut s = 0x0123_4567_89ab_cdef;
+        for _ in 0..200 {
+            let (x, y, d) = (int((next(&mut s) >> 34) as i64), int((next(&mut s) >> 34) as i64), int(1 + (next(&mut s) >> 50) as i64));
+            let m = &(&x * &x) + &(&d * &(&y * &y));
+            let (a, b) = norm_equation(&d, &m).unwrap_or_else(|| panic!("NormEquation({d}, {m})"));
+            assert_eq!(&(&a * &a) + &(&d * &(&b * &b)), m, "NormEquation({d}, {m})");
+        }
+    }
+
+    #[test]
+    fn linear_congruences_list_every_solution() {
+        for m in 1..=40i64 {
+            for a in -m..m {
+                for b in -3..m {
+                    let sols: Vec<i64> = (0..m).filter(|x| (a * x - b).rem_euclid(m) == 0).collect();
+                    match linear_congruence(&int(a), &int(b), &int(m)) {
+                        None => assert!(sols.is_empty(), "Solution({a}, {b}, {m})"),
+                        Some((x0, k)) => {
+                            let (x0, k) = (x0.to_i64().unwrap(), k.to_i64().unwrap());
+                            assert!(0 <= x0 && x0 < k && m % k == 0, "Solution({a}, {b}, {m}) = {x0}, {k}");
+                            assert_eq!(sols, (0..m).filter(|x| (x - x0) % k == 0).collect::<Vec<_>>(), "Solution({a}, {b}, {m})");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn norm_equations_are_magmas() {
         // Magma's first solutions, where other orders of roots or common factors find another one.
