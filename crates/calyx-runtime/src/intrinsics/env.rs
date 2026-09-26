@@ -2,7 +2,7 @@
 
 use std::rc::Rc;
 
-use super::reals::timing_value;
+use super::reals::{timing_seconds, timing_value};
 use super::{boolv, none, one};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
@@ -52,14 +52,14 @@ fn real_arg(v: &Value) -> RResult<f64> {
 }
 
 fn cputime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let now = cpu_time();
+    let now = timing_seconds(cpu_time());
     let t = if a.args.is_empty() { now } else { now - real_arg(&a.args[0])? };
     one(timing_value(t))
 }
 
 fn realtime(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let _ = it;
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+    let now = timing_seconds(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0));
     let t = if a.args.is_empty() { now } else { now - real_arg(&a.args[0])? };
     one(timing_value(t))
 }

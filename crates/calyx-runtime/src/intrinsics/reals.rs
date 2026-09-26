@@ -136,14 +136,13 @@ fn common_bits(a: &Value, b: &Value) -> u64 {
     }
 }
 
-/// Timings print with a fixed number of decimals, and so do results
-/// computed from them.
+/// Results computed from timings are timings, unless the other operand is
+/// a real of lower precision (as in Magma, whose field of timings has 52
+/// bits).
 fn fixed_of(a: &Value, b: &Value) -> Option<u32> {
-    let f = |v: &Value| if let Value::Real(r) = v { r.fixed } else { None };
-    match (f(a), f(b)) {
-        (Some(x), Some(y)) => Some(x.min(y)),
-        (x, y) => x.or(y),
-    }
+    let timing = |v: &Value| matches!(v, Value::Real(r) if r.fixed.is_some());
+    let lower = |v: &Value| matches!(v, Value::Real(r) if r.fixed.is_none() && r.x.prec() <= TIMING_BITS);
+    (timing(a) && !lower(b) || timing(b) && !lower(a)).then_some(TIMING_DECIMALS)
 }
 
 /// Binary operators with a real or complex operand and the other an
@@ -231,10 +230,29 @@ pub fn num_cmp(a: &Value, b: &Value) -> Option<Ordering> {
     Some(to_real(a, bits)?.cmp_magma(&to_real(b, bits)?))
 }
 
-/// A real with fixed-decimal printing (for timings).
+/// `secs` rounded to the precision of timings, so that the time since a
+/// timing taken earlier is not negative.
+pub fn timing_seconds(secs: f64) -> f64 {
+    Real::from_f64(secs, TIMING_BITS).to_f64()
+}
+
+/// A timing of `secs` seconds.
 pub fn timing_value(secs: f64) -> Value {
-    let x = Real::from_f64(secs, default_bits());
-    Value::Real(Rc::new(RealV { x, fixed: Some(3) }))
+    timing_real(Real::from_f64(secs, TIMING_BITS))
+}
+
+/// `x` in the field of timings.
+pub fn timing_real(x: Real) -> Value {
+    Value::Real(Rc::new(RealV { x: x.round_to(TIMING_BITS), fixed: Some(TIMING_DECIMALS) }))
+}
+
+/// `y`, a function of the real `x`, in the field of timings if `x` is a
+/// timing.
+fn same_field(x: &Value, y: Real) -> Value {
+    match x {
+        Value::Real(r) if r.fixed.is_some() => timing_real(y),
+        _ => Value::real(y),
+    }
 }
 
 // ----- real fields -------------------------------------------------------------
@@ -341,7 +359,7 @@ fn sqrt(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
         let z = Real::zero(x.prec());
         return one(Value::complex(z, x.neg().sqrt()));
     }
-    one(Value::real(x.sqrt()))
+    one(same_field(&a.args[0], x.sqrt()))
 }
 
 /// The real n-th root (NaN for n < 1); even roots of negative integers
@@ -582,7 +600,7 @@ fn real_function(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     if spec.finite && !y.is_finite() {
         return Err(RuntimeError::runtime("Function not defined for this argument"));
     }
-    one(Value::real(y))
+    one(same_field(&a.args[0], y))
 }
 
 fn sincos(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
