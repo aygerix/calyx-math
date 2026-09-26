@@ -72,7 +72,7 @@ fn poly_is_primitive(k: &Rc<Struct>, f: &Elem) -> RResult<bool> {
         return Ok(false);
     }
     let q1 = &ff(k).1.order().pow(n) - &Integer::one();
-    let primes: Vec<Integer> = q1.factor().map(|x| x.factors.into_iter().map(|(p, _)| p).collect()).unwrap_or_default();
+    let primes: Vec<Integer> = factseq::factor(&q1).into_iter().map(|(p, _)| p).collect();
     let ctx = f.ctx().clone();
     let base = ctx.base().unwrap().clone();
     let x = Elem::poly_from_coeffs(&ctx, &[Elem::zero(&base), Elem::one(&base)?])?;

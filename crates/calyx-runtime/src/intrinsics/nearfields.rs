@@ -640,7 +640,7 @@ fn prime_power(q: &Integer) -> Option<(Integer, u64)> {
     if q <= &Integer::one() {
         return None;
     }
-    let fac = q.factor()?.factors;
+    let fac = super::factseq::factor(q);
     match &fac[..] {
         [(p, h)] => Some((p.clone(), *h)),
         _ => None,
@@ -1257,7 +1257,7 @@ mod tests {
     fn variant_exponents_as_magma_picks_them() {
         let e = |q: u64, v: u64, s: u64| {
             let n = &int(q).pow(v) - &Integer::one();
-            variant_exponent(s, v, &n, &n.factor().unwrap().factors)
+            variant_exponent(s, v, &n, &crate::intrinsics::factseq::factor(&n))
         };
         assert_eq!((e(5, 4, 3), e(49, 4, 3), e(7, 9, 2), e(7, 9, 5)), (int(107), int(48043), int(20176805), int(5)));
     }

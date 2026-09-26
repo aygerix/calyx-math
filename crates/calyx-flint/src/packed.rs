@@ -1315,9 +1315,7 @@ mod tests {
             let pk = Ctx::packed_field(p, &cs).unwrap();
             let fq = Ctx::flint_field(&Integer::from_u64(p), &ints, false).unwrap();
             assert!(matches!(fq.kind(), CtxKind::FqNmod { .. }));
-            if p == 2 {
-                assert!(matches!(Ctx::finite_field(&Integer::from_u64(2), &ints, false).unwrap().kind(), CtxKind::FqPacked { .. }));
-            }
+            assert!(matches!(Ctx::finite_field(&Integer::from_u64(p), &ints, false).unwrap().kind(), CtxKind::FqPacked { .. }));
             let r: Vec<Vec<u64>> = (0..6).map(|_| (0..n).map(|_| rng.next() % p).collect()).collect();
             let e = Integer::from_i64(2).pow(n + 7);
             assert_eq!(poly_summary(&pk, &r, &e), poly_summary(&fq, &r, &e));

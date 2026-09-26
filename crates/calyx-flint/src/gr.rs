@@ -192,12 +192,12 @@ impl Ctx {
     /// The finite field `F_p[x]/(f)` for a monic irreducible `f` given by its
     /// coefficients (constant term first). With `zech`, a table of Zech
     /// logarithms is used if `f` is primitive; that fails with `Domain`
-    /// otherwise. Without, GF(2^n) packs its elements into words (see
-    /// `packed`) when it can.
+    /// otherwise. Without, GF(p^n) for n >= 2 packs its elements into
+    /// words (p = 2) or lanes (odd p < 2^16) when it can (see `packed`).
     pub fn finite_field(p: &Integer, modulus: &[Integer], zech: bool) -> GrResult<Rc<Ctx>> {
-        if !zech && p.to_u64() == Some(2) && modulus.len() > 2 {
-            let cs: Vec<u64> = modulus.iter().map(|c| c.mod_u64(2)).collect();
-            match Ctx::packed_field(2, &cs) {
+        if let Some(pw) = p.to_u64().filter(|&pw| !zech && pw < 1 << 16 && modulus.len() > 2) {
+            let cs: Vec<u64> = modulus.iter().map(|c| c.mod_u64(pw)).collect();
+            match Ctx::packed_field(pw, &cs) {
                 Err(GrError::Unable) => {}
                 r => return r,
             }

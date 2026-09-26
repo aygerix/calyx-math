@@ -451,7 +451,7 @@ mod tests {
     fn check_prime(p: i64) {
         let pi = int(p);
         let g = crate::intrinsics::ints::primitive_root(&pi).unwrap();
-        let f = (&pi - &Integer::one()).factor().unwrap().factors;
+        let f = crate::intrinsics::factseq::factor(&(&pi - &Integer::one()));
         for y in [1, 2, 3, p - 1, p / 2 + 1] {
             if y % p == 0 {
                 assert_eq!(log_mod_prime(&int(y), &g, &pi, &f), None);
