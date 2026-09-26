@@ -505,9 +505,10 @@ impl Interp {
             }
             Value::Map(m) => {
                 let m = m.clone();
-                let kind = match m.kind {
-                    MapKind::Map | MapKind::PMap => "Mapping",
-                    MapKind::Hom | MapKind::Iso => "Homomorphism",
+                // Maps given by rules print as mappings, even from hom< > and iso< >.
+                let kind = match (m.kind, &m.imp) {
+                    (MapKind::Map | MapKind::PMap, _) | (_, MapImpl::Rule { .. }) => "Mapping",
+                    (MapKind::Hom | MapKind::Iso, _) => "Homomorphism",
                 };
                 p.write(&format!("{kind} from: "));
                 // Domain and codomain print briefly (named structures by name).
