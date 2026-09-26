@@ -18,10 +18,24 @@ struct Interner {
 }
 
 thread_local! {
-    static INTERNER: RefCell<Interner> = RefCell::new(Interner::default());
+    static INTERNER: RefCell<Interner> = RefCell::new(Interner::with_anonymous());
+}
+
+impl Interner {
+    /// An interner whose first name is that of anonymous functions.
+    fn with_anonymous() -> Interner {
+        let mut i = Interner::default();
+        let rc: Rc<str> = Rc::from("<function>");
+        i.names.push(rc.clone());
+        i.ids.insert(rc, 0);
+        i
+    }
 }
 
 impl Sym {
+    /// `<function>`, the name of anonymous functions in call frames.
+    pub const ANONYMOUS: Sym = Sym(0);
+
     pub fn new(s: &str) -> Sym {
         INTERNER.with(|i| {
             let mut i = i.borrow_mut();

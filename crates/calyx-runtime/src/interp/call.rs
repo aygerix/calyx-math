@@ -205,7 +205,7 @@ impl Interp {
     ) -> RResult<Vals> {
         let code = &clo.code;
         let np = code.params.len();
-        let name = trace_name.or(code.name).unwrap_or_else(|| Sym::new("<function>"));
+        let name = trace_name.or(code.name).unwrap_or(Sym::ANONYMOUS);
         // A bad call is an error "in procedure call" only as a statement.
         let bad_call = |msg: String| if stmt { RuntimeError::statement("procedure call", msg) } else { RuntimeError::runtime(msg) };
         // The variadic parameter takes at least one argument.
