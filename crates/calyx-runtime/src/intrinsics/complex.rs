@@ -8,7 +8,7 @@
 
 use std::rc::Rc;
 
-use calyx_flint::Real;
+use calyx_flint::{Elementary, ModifiedPolylog, Real};
 use calyx_syntax::ast::BinOp;
 
 use super::reals::{self, default_bits, field_bits, to_real};
@@ -263,6 +263,128 @@ fn root(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(cv(magma_root(arg_c(a, 0), n)))
 }
 
+// ----- transcendental functions ------------------------------------------------
+
+/// Magma's error for complex functions at a pole: raised without a
+/// position (and so reported without the source line).
+fn pole() -> RuntimeError {
+    crate::error::ErrorInfo { style: crate::error::ErrStyle::Bare, ..crate::error::ErrorInfo::runtime("Division by zero") }.into()
+}
+
+/// `1/z`, as `z^-1`.
+fn recip(z: &ComplexV) -> RResult<ComplexV> {
+    ComplexV::from_real(Real::from_i64(1, z.prec())).div(z).ok_or_else(pole)
+}
+
+/// The inverse tangent; Magma excludes `i` (but not `-i`).
+fn arctan(z: &ComplexV) -> RResult<ComplexV> {
+    if z.re.is_zero() && z.im == Real::from_i64(1, z.prec()) {
+        return Err(RuntimeError::runtime("Cannot take Arctan of Sqrt(-1)").in_context("Arctan"));
+    }
+    Ok(z.elementary(Elementary::Atan))
+}
+
+/// A transcendental function of a complex number, by its Magma name (the
+/// names of `reals::REAL_FUNCTIONS`). The reciprocal functions divide by
+/// the value of the function (cotangent: the cosine by the sine), and the
+/// inverse ones apply the inverse function to `1/z`, as Magma does.
+pub fn complex_function_of(name: &str, z: &ComplexV) -> RResult<ComplexV> {
+    use Elementary::*;
+    let f = |g: Elementary| z.elementary(g);
+    Ok(match name {
+        "Exp" => f(Exp),
+        "Log" if z.is_zero() => return Err(RuntimeError::runtime("Can not take log of zero element")),
+        "Log" => f(Log),
+        "Dilog" => z.polylog(2),
+        "Sin" => f(Sin),
+        "Cos" => f(Cos),
+        "Tan" => f(Tan),
+        "Cot" => f(Cos).div(&f(Sin)).ok_or_else(pole)?,
+        "Sec" => recip(&f(Cos))?,
+        "Cosec" => recip(&f(Sin))?,
+        "Arcsin" => f(Asin),
+        "Arccos" => f(Acos),
+        "Arctan" => arctan(z)?,
+        "Arccot" => arctan(&recip(z)?)?,
+        "Arcsec" => recip(z)?.elementary(Acos),
+        "Arccosec" => recip(z)?.elementary(Asin),
+        "Sinh" => f(Sinh),
+        "Cosh" => f(Cosh),
+        "Tanh" => f(Tanh),
+        "Coth" => recip(&f(Tanh))?,
+        "Sech" => recip(&f(Cosh))?,
+        "Cosech" => recip(&f(Sinh))?,
+        "Argsinh" => f(Asinh),
+        "Argcosh" => f(Acosh),
+        "Argtanh" => f(Atanh),
+        "Argsech" => recip(z)?.elementary(Acosh),
+        "Argcosech" => recip(z)?.elementary(Asinh),
+        "Argcoth" => recip(z)?.elementary(Atanh),
+        _ => unreachable!("{name}"),
+    })
+}
+
+fn complex_function(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let z = match &a.args[0] {
+        Value::Complex(c) => (**c).clone(),
+        v => to_complex(v, default_bits()).unwrap(),
+    };
+    one(cv(complex_function_of(&a.name.as_rc(), &z)?))
+}
+
+fn sincos(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let z = arg_c(a, 0);
+    Ok(vals![cv(z.elementary(Elementary::Sin)), cv(z.elementary(Elementary::Cos))])
+}
+
+/// The index m >= 1 of a polylogarithm.
+fn polylog_index(a: &CallArgs) -> RResult<u64> {
+    let m = a.int(0)?;
+    if m.sign() <= 0 {
+        return Err(super::arg_not(1, "positive"));
+    }
+    m.to_u64().filter(|&m| m < 1 << 24).ok_or_else(|| RuntimeError::runtime("Argument 1 is too large"))
+}
+
+/// The argument of a polylogarithm as a complex number (integers and
+/// rationals in the default field).
+fn polylog_arg(a: &CallArgs) -> ComplexV {
+    let v = &a.args[1];
+    to_complex(v, reals::prec_of(v).unwrap_or_else(default_bits)).unwrap()
+}
+
+/// `Polylog(m, x)`: the m-th polylogarithm (computed like PARI's for real
+/// x > 1: the limit from below the cut).
+fn polylog(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let m = polylog_index(a)?;
+    let z = polylog_arg(a);
+    if m == 1 && z.im.is_zero() && z.re == Real::from_i64(1, z.prec()) {
+        return Err(RuntimeError::runtime("Arguments cannot both be 1"));
+    }
+    one(cv(z.polylog(m as i64)))
+}
+
+/// Zagier's modified polylogarithms (PARI's `polylog` with flag 1, 2 and
+/// 3): real numbers, complex for a complex argument.
+fn modified_polylog(a: &CallArgs, f: ModifiedPolylog) -> RResult<Vals> {
+    let m = polylog_index(a)?;
+    let z = polylog_arg(a);
+    let v = z.modified_polylog(m, f);
+    one(if matches!(a.args[1], Value::Complex(_)) { cv(ComplexV::from_real(v)) } else { Value::real(v) })
+}
+
+fn polylog_d(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    modified_polylog(a, ModifiedPolylog::DTilde)
+}
+
+fn polylog_d_old(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    modified_polylog(a, ModifiedPolylog::D)
+}
+
+fn polylog_p(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    modified_polylog(a, ModifiedPolylog::P)
+}
+
 pub fn register(it: &mut Interp) {
     it.def_params("ComplexField", "-> FldCom", &[("Bits", Value::Bool(false))], "The default complex field.", complex_field);
     it.def_params("ComplexField", "p::RngIntElt -> FldCom", &[("Bits", Value::Bool(false))], "The complex field with p decimal digits of precision (or p bits with Bits).", complex_field);
@@ -300,4 +422,53 @@ pub fn register(it: &mut Interp) {
         it.def(name, "x::FldComElt -> FldComElt", "The principal square root of x.", sqrt);
     }
     it.def("Root", "x::FldComElt, n::RngIntElt -> FldComElt", "An n-th root of x.", root);
+
+    // Transcendental functions.
+    for (name, _) in reals::REAL_FUNCTIONS {
+        it.def(name, "z::FldComElt -> FldComElt", &format!("The {} of z, on the principal branch.", complex_doc(name)), complex_function);
+    }
+    for t in ["RngIntElt", "FldRatElt"] {
+        it.def("Dilog", &format!("x::{t} -> FldComElt"), "The dilogarithm of x, in the default complex field.", complex_function);
+    }
+    it.def("Sincos", "z::FldComElt -> FldComElt, FldComElt", "The sine and the cosine of z.", sincos);
+    for t in ["RngIntElt", "FldRatElt", "FldReElt", "FldComElt"] {
+        it.def("Polylog", &format!("m::RngIntElt, x::{t} -> FldComElt"), "The m-th polylogarithm of x (m >= 1).", polylog);
+        let r = if t == "FldComElt" { "FldComElt" } else { "FldReElt" };
+        it.def("PolylogD", &format!("m::RngIntElt, x::{t} -> {r}"), "Zagier's modified m-th polylogarithm D~_m(x) (m >= 1).", polylog_d);
+        it.def("PolylogDold", &format!("m::RngIntElt, x::{t} -> {r}"), "Zagier's modified m-th polylogarithm D_m(x) (m >= 1).", polylog_d_old);
+        it.def("PolylogP", &format!("m::RngIntElt, x::{t} -> {r}"), "Zagier's modified m-th polylogarithm P_m(x) (m >= 1).", polylog_p);
+    }
+}
+
+/// What a function of `REAL_FUNCTIONS` computes, for its description.
+fn complex_doc(name: &str) -> &'static str {
+    match name {
+        "Exp" => "exponential",
+        "Log" => "natural logarithm",
+        "Dilog" => "dilogarithm",
+        "Sin" => "sine",
+        "Cos" => "cosine",
+        "Tan" => "tangent",
+        "Cot" => "cotangent",
+        "Sec" => "secant",
+        "Cosec" => "cosecant",
+        "Arcsin" => "inverse sine",
+        "Arccos" => "inverse cosine",
+        "Arctan" => "inverse tangent",
+        "Arccot" => "inverse cotangent",
+        "Arcsec" => "inverse secant",
+        "Arccosec" => "inverse cosecant",
+        "Sinh" => "hyperbolic sine",
+        "Cosh" => "hyperbolic cosine",
+        "Tanh" => "hyperbolic tangent",
+        "Coth" => "hyperbolic cotangent",
+        "Sech" => "hyperbolic secant",
+        "Cosech" => "hyperbolic cosecant",
+        "Argsinh" => "inverse hyperbolic sine",
+        "Argcosh" => "inverse hyperbolic cosine",
+        "Argtanh" => "inverse hyperbolic tangent",
+        "Argsech" => "inverse hyperbolic secant",
+        "Argcosech" => "inverse hyperbolic cosecant",
+        _ => "inverse hyperbolic cotangent",
+    }
 }

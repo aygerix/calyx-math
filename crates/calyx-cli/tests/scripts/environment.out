@@ -35,14 +35,44 @@ true
 true
 Abs(<FldRatElt> x) -> FldRatElt
 AbsoluteValue(<FldRatElt> x) -> FldRatElt
+Arccos(<FldRatElt> x) -> FldReElt
+Arccosec(<FldRatElt> x) -> FldReElt
+Arccot(<FldRatElt> x) -> FldReElt
+Arcsec(<FldRatElt> x) -> FldReElt
+Arcsin(<FldRatElt> x) -> FldReElt
+Arctan(<FldRatElt> x) -> FldReElt
+Arctan(<RngIntElt> x, <FldRatElt> y) -> FldReElt
+Arctan(<FldRatElt> x, <RngIntElt> y) -> FldReElt
+Arctan(<FldRatElt> x, <FldRatElt> y) -> FldReElt
+Arctan(<FldRatElt> x, <FldReElt> y) -> FldReElt
+Arctan(<FldReElt> x, <FldRatElt> y) -> FldReElt
+Arctan2(<RngIntElt> x, <FldRatElt> y) -> FldReElt
+Arctan2(<FldRatElt> x, <RngIntElt> y) -> FldReElt
+Arctan2(<FldRatElt> x, <FldRatElt> y) -> FldReElt
+Arctan2(<FldRatElt> x, <FldReElt> y) -> FldReElt
+Arctan2(<FldReElt> x, <FldRatElt> y) -> FldReElt
 Arg(<FldRatElt> x) -> FldReElt
+Argcosech(<FldRatElt> x) -> FldReElt
+Argcosh(<FldRatElt> x) -> FldReElt
+Argcoth(<FldRatElt> x) -> FldReElt
+Argsech(<FldRatElt> x) -> FldReElt
+Argsinh(<FldRatElt> x) -> FldReElt
+Argtanh(<FldRatElt> x) -> FldReElt
 Argument(<FldRatElt> x) -> FldReElt
 Ceiling(<FldRatElt> x) -> RngIntElt
+Cos(<FldRatElt> x) -> FldReElt
+Cosec(<FldRatElt> x) -> FldReElt
+Cosech(<FldRatElt> x) -> FldReElt
+Cosh(<FldRatElt> x) -> FldReElt
+Cot(<FldRatElt> x) -> FldReElt
+Coth(<FldRatElt> x) -> FldReElt
 Denominator(<FldRatElt> x) -> RngIntElt
 DickmanRho(<FldRatElt> u) -> FldReElt
 DicksonFirst(<RngIntElt> n, <RngElt> a) -> RngUPolElt
 DicksonSecond(<RngIntElt> n, <RngElt> a) -> RngUPolElt
+Dilog(<FldRatElt> x) -> FldComElt
 Evaluate(<RngUPolElt> f, <RngElt> r) -> RngElt
+Exp(<FldRatElt> x) -> FldReElt
 Floor(<FldRatElt> x) -> RngIntElt
 GCD(<FldRatElt> x, <FldRatElt> y) -> FldRatElt
 GCD(<RngIntElt> x, <FldRatElt> y) -> FldRatElt
@@ -68,6 +98,12 @@ IsUnit(<FldRatElt> x) -> BoolElt
 IsZero(<FldRatElt> x) -> BoolElt
 IsZeroDivisor(<RngElt> x) -> BoolElt
 LaguerrePolynomial(<RngIntElt> n, <RngElt> m) -> RngUPolElt
+Log(<FldRatElt> x) -> FldReElt
+Log(<RngIntElt> b, <FldRatElt> x) -> FldReElt
+Log(<FldRatElt> b, <RngIntElt> x) -> FldReElt
+Log(<FldRatElt> b, <FldRatElt> x) -> FldReElt
+Log(<FldRatElt> b, <FldReElt> x) -> FldReElt
+Log(<FldReElt> b, <FldRatElt> x) -> FldReElt
 Modulus(<FldRatElt> x) -> FldReElt
 Numerator(<FldRatElt> x) -> RngIntElt
 PolarToComplex(<RngIntElt> m, <FldRatElt> a) -> FldComElt
@@ -75,11 +111,22 @@ PolarToComplex(<FldRatElt> m, <RngIntElt> a) -> FldComElt
 PolarToComplex(<FldRatElt> m, <FldRatElt> a) -> FldComElt
 PolarToComplex(<FldRatElt> m, <FldReElt> a) -> FldComElt
 PolarToComplex(<FldReElt> m, <FldRatElt> a) -> FldComElt
+Polylog(<RngIntElt> m, <FldRatElt> x) -> FldComElt
+PolylogD(<RngIntElt> m, <FldRatElt> x) -> FldReElt
+PolylogDold(<RngIntElt> m, <FldRatElt> x) -> FldReElt
+PolylogP(<RngIntElt> m, <FldRatElt> x) -> FldReElt
 Re(<FldRatElt> x) -> FldReElt
 Real(<FldRatElt> x) -> FldReElt
 Root(<FldRatElt> x, <RngIntElt> n) -> FldReElt
 Round(<FldRatElt> x) -> RngIntElt
+Sec(<FldRatElt> x) -> FldReElt
+Sech(<FldRatElt> x) -> FldReElt
 Sign(<FldRatElt> x) -> RngIntElt
+Sin(<FldRatElt> x) -> FldReElt
+Sincos(<FldRatElt> x) -> FldReElt, FldReElt
+Sinh(<FldRatElt> x) -> FldReElt
 Sqrt(<FldRatElt> x) -> FldReElt
 SquareRoot(<FldRatElt> x) -> FldReElt
+Tan(<FldRatElt> x) -> FldReElt
+Tanh(<FldRatElt> x) -> FldReElt
 Truncate(<FldRatElt> x) -> RngIntElt

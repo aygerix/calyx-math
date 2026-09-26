@@ -465,6 +465,172 @@ fn diameter(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(if matches!(best, Value::Infinity(_)) { Value::int(0) } else { best })
 }
 
+// ----- transcendental functions ------------------------------------------------
+
+/// The error for an argument outside the domain of a real function.
+type Domain = fn(&Real) -> Option<&'static str>;
+
+/// A real function as Magma computes it: MPFR's function (of `1/x` for
+/// `recip`), after a check of the domain; for `finite`, a value that is
+/// not finite (a pole, an overflow, or NaN) is an error.
+struct RealFn {
+    f: calyx_flint::mpfr::Unary,
+    recip: bool,
+    domain: Domain,
+    finite: bool,
+}
+
+/// The real functions with their Magma names, and their descriptions.
+pub const REAL_FUNCTIONS: [(&str, &str); 27] = [
+    ("Exp", "The exponential of x."),
+    ("Log", "The natural logarithm of x > 0."),
+    ("Dilog", "The dilogarithm of x (its real part for x > 1)."),
+    ("Sin", "The sine of x."),
+    ("Cos", "The cosine of x."),
+    ("Tan", "The tangent of x."),
+    ("Cot", "The cotangent of x."),
+    ("Sec", "The secant of x."),
+    ("Cosec", "The cosecant of x."),
+    ("Arcsin", "The inverse sine of x, in [-pi/2, pi/2]."),
+    ("Arccos", "The inverse cosine of x, in [0, pi]."),
+    ("Arctan", "The inverse tangent of x, in (-pi/2, pi/2)."),
+    ("Arccot", "The inverse cotangent of x, the inverse tangent of 1/x."),
+    ("Arcsec", "The inverse secant of x, the inverse cosine of 1/x."),
+    ("Arccosec", "The inverse cosecant of x, the inverse sine of 1/x."),
+    ("Sinh", "The hyperbolic sine of x."),
+    ("Cosh", "The hyperbolic cosine of x."),
+    ("Tanh", "The hyperbolic tangent of x."),
+    ("Coth", "The hyperbolic cotangent of x."),
+    ("Sech", "The hyperbolic secant of x."),
+    ("Cosech", "The hyperbolic cosecant of x."),
+    ("Argsinh", "The inverse hyperbolic sine of x."),
+    ("Argcosh", "The inverse hyperbolic cosine of x >= 1."),
+    ("Argtanh", "The inverse hyperbolic tangent of x, |x| < 1."),
+    ("Argsech", "The inverse hyperbolic secant of x, the inverse hyperbolic cosine of 1/x."),
+    ("Argcosech", "The inverse hyperbolic cosecant of x, the inverse hyperbolic sine of 1/x."),
+    ("Argcoth", "The inverse hyperbolic cotangent of x, the inverse hyperbolic tangent of 1/x."),
+];
+
+fn cmp_one(x: &Real) -> Ordering {
+    x.cmp_magma(&Real::from_i64(1, 2))
+}
+
+fn abs_cmp_one(x: &Real) -> Ordering {
+    x.cmp_abs(&Real::from_i64(1, 2))
+}
+
+fn real_fn(name: &str) -> RealFn {
+    use calyx_flint::mpfr::*;
+    let any: Domain = |_| None;
+    let (f, recip, domain, finite): (Unary, bool, Domain, bool) = match name {
+        "Exp" => (mpfr_exp, false, any, false),
+        "Log" => (mpfr_log, false, |x| (x.is_zero() || x.sign() < 0).then_some("Argument 1 is not positive"), false),
+        "Dilog" => (mpfr_li2, false, any, false),
+        "Sin" => (mpfr_sin, false, any, true),
+        "Cos" => (mpfr_cos, false, any, true),
+        "Tan" => (mpfr_tan, false, any, true),
+        "Cot" => (mpfr_cot, false, any, true),
+        "Sec" => (mpfr_sec, false, any, true),
+        "Cosec" => (mpfr_csc, false, any, true),
+        "Arcsin" | "Arccos" => {
+            let f: Unary = if name == "Arcsin" { mpfr_asin } else { mpfr_acos };
+            (f, false, |x| abs_cmp_one(x).is_gt().then_some("Argument must have absolute value <= 1"), true)
+        }
+        "Arctan" => (mpfr_atan, false, any, true),
+        "Arccot" => (mpfr_atan, true, any, false),
+        "Arcsec" | "Arccosec" => {
+            let f: Unary = if name == "Arcsec" { mpfr_acos } else { mpfr_asin };
+            (f, true, |x| abs_cmp_one(x).is_lt().then_some("Argument must have absolute value >= 1"), false)
+        }
+        "Sinh" => (mpfr_sinh, false, any, true),
+        "Cosh" => (mpfr_cosh, false, any, true),
+        "Tanh" => (mpfr_tanh, false, any, true),
+        "Coth" => (mpfr_coth, false, |x| x.is_zero().then_some("Argument 1 is not non-zero"), true),
+        "Sech" => (mpfr_sech, false, any, true),
+        "Cosech" => (mpfr_csch, false, |x| x.is_zero().then_some("Argument 1 is not non-zero"), true),
+        "Argsinh" => (mpfr_asinh, false, any, true),
+        "Argcosh" => (mpfr_acosh, false, |x| cmp_one(x).is_lt().then_some("Argument must be at least 1"), true),
+        "Argtanh" => (mpfr_atanh, false, |x| (x.is_nan() || !abs_cmp_one(x).is_lt()).then_some("Argument must have absolute value < 1"), true),
+        "Argsech" => (
+            mpfr_acosh,
+            true,
+            |x| {
+                if x.is_zero() || x.sign() < 0 {
+                    Some("Argument must be positive")
+                } else {
+                    cmp_one(x).is_gt().then_some("Argument must be no more than 1")
+                }
+            },
+            false,
+        ),
+        "Argcosech" => (mpfr_asinh, true, |x| x.is_zero().then_some("Argument 1 is not non-zero"), false),
+        "Argcoth" => (mpfr_atanh, true, |x| (x.is_nan() || !abs_cmp_one(x).is_gt()).then_some("Argument must have absolute value > 1"), false),
+        _ => unreachable!("{name}"),
+    };
+    RealFn { f, recip, domain, finite }
+}
+
+/// The real functions of `REAL_FUNCTIONS`, by the name called.
+fn real_function(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let spec = real_fn(&a.name.as_rc());
+    let x = real_at(a, 0);
+    if let Some(msg) = (spec.domain)(&x) {
+        return Err(RuntimeError::runtime(msg));
+    }
+    let x = if spec.recip { Real::from_i64(1, x.prec()).binary(&x, calyx_flint::mpfr::mpfr_div) } else { x };
+    let y = x.unary(spec.f);
+    if spec.finite && !y.is_finite() {
+        return Err(RuntimeError::runtime("Function not defined for this argument"));
+    }
+    one(Value::real(y))
+}
+
+fn sincos(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let (s, c) = real_at(a, 0).sin_cos();
+    Ok(vals![Value::real(s), Value::real(c)])
+}
+
+/// The precision of a function of two real arguments: the smaller
+/// precision; the default one if neither is real.
+fn common_real_bits(a: &CallArgs) -> u64 {
+    let (x, y) = (prec_of(&a.args[0]), prec_of(&a.args[1]));
+    x.zip(y).map(|(x, y)| x.min(y)).or(x).or(y).unwrap_or_else(default_bits)
+}
+
+/// `Log(b, x)`: the logarithm of x to the base b, the quotient of the two
+/// logarithms, in the field of b and x if they are the same, else in the
+/// default real field.
+fn log_base(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let bits = match (&a.args[0], &a.args[1]) {
+        (Value::Real(b), Value::Real(x)) if b.x.prec() == x.x.prec() => b.x.prec(),
+        _ => default_bits(),
+    };
+    let (b, x) = (to_real(&a.args[0], bits).unwrap(), to_real(&a.args[1], bits).unwrap());
+    if b.sign() <= 0 {
+        return Err(super::arg_not(1, "positive"));
+    }
+    if x.sign() <= 0 {
+        return Err(super::arg_not(2, "positive"));
+    }
+    if cmp_one(&b).is_eq() {
+        return Err(RuntimeError::runtime("Base for logarithm should not be 1"));
+    }
+    let log = |v: &Real| v.unary(calyx_flint::mpfr::mpfr_log);
+    one(Value::real(log(&x).div(&log(&b)).unwrap()))
+}
+
+/// `Arctan(x, y)`: the angle of the point (x, y), in (-pi, pi]. Magma
+/// computes it with PARI, whose zeros have no sign: `Arctan(-1, -0)` is pi.
+fn arctan2(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let bits = common_real_bits(a);
+    let unsigned = |v: &Value| to_real(v, bits).map(|r| if r.is_zero() { Real::zero(bits) } else { r }).unwrap();
+    let (x, y) = (unsigned(&a.args[0]), unsigned(&a.args[1]));
+    if x.is_zero() && y.is_zero() {
+        return Err(RuntimeError::runtime("Arguments cannot both be zero"));
+    }
+    one(Value::real(y.binary(&x, calyx_flint::mpfr::mpfr_atan2)))
+}
+
 fn mpfr_version(_it: &mut Interp, _a: &mut CallArgs) -> RResult<Vals> {
     one(Value::str(&calyx_flint::mpfr::version()))
 }
@@ -565,6 +731,25 @@ pub fn register(it: &mut Interp) {
         }
         for name in ["Imaginary", "Im"] {
             it.def(name, &format!("x::{t} -> FldReElt"), "The imaginary part of x (zero).", imaginary_part);
+        }
+    }
+
+    // Transcendental functions; integers and rationals are in the default
+    // field (and their dilogarithm is complex, as in Magma).
+    for (name, doc) in REAL_FUNCTIONS {
+        for t in ["RngIntElt", "FldRatElt", "FldReElt"] {
+            if name != "Dilog" || t == "FldReElt" {
+                it.def(name, &format!("x::{t} -> FldReElt"), doc, real_function);
+            }
+        }
+    }
+    for t in ["RngIntElt", "FldRatElt", "FldReElt"] {
+        it.def("Sincos", &format!("x::{t} -> FldReElt, FldReElt"), "The sine and the cosine of x.", sincos);
+        for u in ["RngIntElt", "FldRatElt", "FldReElt"] {
+            it.def("Log", &format!("b::{t}, x::{u} -> FldReElt"), "The logarithm of x to the base b.", log_base);
+            for name in ["Arctan", "Arctan2"] {
+                it.def(name, &format!("x::{t}, y::{u} -> FldReElt"), "The angle of the point (x, y) in (-pi, pi], the inverse tangent of y/x.", arctan2);
+            }
         }
     }
 }

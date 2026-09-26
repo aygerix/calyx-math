@@ -15,7 +15,7 @@ mod nmod;
 mod rational;
 mod real;
 
-pub use complex::Complex;
+pub use complex::{Complex, Elementary, ModifiedPolylog};
 pub use integer::{Factorization, Integer};
 pub use nmod::{Nmod, gcd as gcd_u64};
 pub use rational::Rational;
