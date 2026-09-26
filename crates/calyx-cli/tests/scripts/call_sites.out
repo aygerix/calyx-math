@@ -9,7 +9,7 @@
 [ 1, 2, 3 ]
 [ 1/2, 1, 2 ]
 true false
-Bad argument types
+Runtime error in 'IsEven': Bad argument types
 Argument types given: FldRatElt
 true
 1 [ 1 ] a 1
