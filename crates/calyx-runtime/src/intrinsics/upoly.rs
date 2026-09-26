@@ -11,7 +11,7 @@ use std::cmp::Ordering;
 use std::rc::Rc;
 
 use calyx_flint::Integer;
-use calyx_flint::gr::{Ctx, CtxKind, Elem, GrError, Truth};
+use calyx_flint::gr::{Ctx, CtxKind, Elem, GrError, GrResult, Truth};
 use calyx_flint::upoly as fu;
 use calyx_syntax::ast::BinOp;
 
@@ -930,6 +930,267 @@ fn dedekind_test(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(d.poly_len() == 1)
 }
 
+// ----- polynomials over finite fields ----------------------------------------------------
+
+/// The coefficient field of a polynomial ring over a finite field (not a
+/// residue class ring), with its characteristic and degree.
+fn finite_base(r: &Ring) -> RResult<(Value, Integer, u64)> {
+    let base = r.base().expect("a polynomial ring").clone();
+    if let Some((_, k)) = ring_of(&base) {
+        if let RingKind::Finite(f) = &k.kind {
+            let (p, e) = (f.p.clone(), f.degree);
+            return Ok((base, p, e));
+        }
+    }
+    Err(RuntimeError::runtime("Polynomial ring must be defined over a finite field"))
+}
+
+/// The number of monic irreducible polynomials of degree `d` over the field
+/// of `q` elements, `(1/d) sum_{k | d} mu(k) q^(d/k)`.
+fn prime_poly_count(q: &Integer, d: u64) -> Integer {
+    let mut s = Integer::zero();
+    for k in (1..=d).filter(|k| d % k == 0) {
+        match Integer::from_u64(k).moebius_mu() {
+            1 => s = &s + &q.pow(d / k),
+            -1 => s = &s - &q.pow(d / k),
+            _ => {}
+        }
+    }
+    s.divexact(&Integer::from_u64(d))
+}
+
+fn degree_arg(a: &CallArgs, i: usize) -> RResult<u64> {
+    let d = a.int(i)?;
+    if d.sign() <= 0 {
+        return Err(arg_ge(i + 1, d, 1));
+    }
+    d.to_u64().filter(|&d| d < 1 << 30).ok_or_else(|| RuntimeError::runtime(format!("Argument {} ({d}) is too large", i + 1)))
+}
+
+fn number_of_prime_polynomials(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let q = match &a.args[0] {
+        Value::Int(q) => {
+            let pp = q > &Integer::one() && q.perfect_power().map_or(q.clone(), |(b, _)| b).is_prime();
+            if !pp {
+                return Err(RuntimeError::runtime(format!("Argument 1 ({q}) is not a prime power")));
+            }
+            q.clone()
+        }
+        Value::Struct(s) => match &s.kind {
+            StructKind::Ring(r) => match (&r.kind, r.finite_field()) {
+                (RingKind::UPoly { .. }, _) => {
+                    let (_, p, e) = finite_base(r)?;
+                    p.pow(e)
+                }
+                (_, Some(f)) => f.order(),
+                _ => unreachable!("a finite field or polynomial ring"),
+            },
+            _ => unreachable!("a finite field or polynomial ring"),
+        },
+        _ => unreachable!("a finite field or polynomial ring"),
+    };
+    let d = degree_arg(a, 1)?;
+    intv(prime_poly_count(&q, d))
+}
+
+/// The monic irreducible polynomials of degree `d` over `K = GF(q)` in
+/// Magma's order, at most `max` of them: `x` and then `x - a^k` for
+/// `k = 1, ..., q - 1` in degree 1, and otherwise the minimal polynomials of
+/// `a^k` for the least elements `k` of the classes `{k q^i mod (q^d - 1)}`
+/// of size `d`, by increasing `k`, where `a` is the primitive element of
+/// `GF(q^d)` (a root of its Conway polynomial).
+fn prime_polys_of_degree(it: &mut Interp, px: &Rc<Struct>, d: u64, max: usize) -> RResult<Vec<Elem>> {
+    let StructKind::Ring(pr) = &px.kind else { unreachable!() };
+    let (k, p, e) = finite_base(pr)?;
+    let kctx = ring_of(&k).expect("a finite field").1.ctx.clone();
+    let q = p.pow(e);
+    let mut out = Vec::new();
+    if max == 0 {
+        return Ok(out);
+    }
+    let mono = |c: Elem| Elem::poly_from_coeffs(&pr.ctx, &[c.neg()?, Elem::one(&kctx)?]);
+    let prim = |it: &mut Interp, f: &Value| -> RResult<Elem> {
+        let a = it.call_intrinsic_named(crate::sym::Sym::new("PrimitiveElement"), vec![f.clone()])?;
+        Ok(it.to_structure_elem(f, &a, false)?.expect("an element of the field"))
+    };
+    if d == 1 {
+        out.push(fu::monomial(&pr.ctx, &Elem::one(&kctx)?, 1)?);
+        let a = prim(it, &k)?;
+        let mut c = a.clone();
+        while out.len() < max && c.is_one() != Truth::True {
+            out.push(mono(c.clone())?);
+            c = c.mul(&a)?;
+        }
+        if out.len() < max {
+            out.push(mono(c)?);
+        }
+        return Ok(out);
+    }
+    // GF(q^d) with q = p^e, and the embedding of K in it.
+    let lv = it.finite_field(&p, e * d)?;
+    let Some((_, lr)) = ring_of(&lv) else { unreachable!() };
+    let lctx = lr.ctx.clone();
+    let conway = |r: &Ring| r.finite_field().is_some_and(|f| f.conway || f.degree == 1);
+    let kr = ring_of(&k).expect("a finite field").1;
+    if e > 1 && !(conway(kr) && conway(lr) && kr.finite_field().is_some_and(|f| f.default)) {
+        return Err(not_available());
+    }
+    let a = prim(it, &lv)?;
+    let n = &q.pow(d) - &Integer::one();
+    // The subfield GF(q) is generated by b = a^((q^d - 1)/(q - 1)), the
+    // image of the generator of K; coefficients map back by logarithms.
+    let r = n.divexact(&(&q - &Integer::one()));
+    let mut logs: std::collections::HashMap<Vec<Integer>, u64> = Default::default();
+    if e > 1 {
+        let qm1 = (&q - &Integer::one()).to_u64().filter(|&m| m <= 1 << 20).ok_or_else(not_available)?;
+        let b = a.pow(&r)?;
+        let mut c = Elem::one(&lctx)?;
+        for j in 0..qm1 {
+            logs.insert(c.fq_coords(), j);
+            c = c.mul(&b)?;
+        }
+    }
+    let w = if e > 1 { Some(kctx.generator()?) } else { None };
+    let to_k = |c: &Elem| -> RResult<Elem> {
+        if c.is_zero() == Truth::True {
+            return Ok(Elem::zero(&kctx));
+        }
+        match &w {
+            None => Ok(Elem::from_integer(&kctx, &c.fq_prime_value().expect("a coefficient in the prime field"))?),
+            Some(w) => Ok(w.pow_i64(*logs.get(&c.fq_coords()).expect("a coefficient in the subfield") as i64)?),
+        }
+    };
+    let qi = q.to_u64();
+    let mut kk = Integer::one();
+    while out.len() < max && kk < n {
+        // Is kk the least element of its class, of size d?
+        let mut m = kk.clone();
+        let mut leader = true;
+        for _ in 1..d {
+            m = (&m * &q).div_rem_euclid(&n).expect("a non-zero modulus").1;
+            if m <= kk {
+                leader = false;
+                break;
+            }
+        }
+        if leader {
+            // The product of x - g over the conjugates g of a^kk.
+            let mut g = a.pow(&kk)?;
+            let mut cs = vec![Elem::one(&lctx)?];
+            for _ in 0..d {
+                let mut next = vec![Elem::zero(&lctx); cs.len() + 1];
+                for (j, c) in cs.iter().enumerate() {
+                    next[j + 1] = next[j + 1].add(c)?;
+                    next[j] = next[j].sub(&g.mul(c)?)?;
+                }
+                cs = next;
+                g = match qi {
+                    Some(_) => g.fq_frobenius(e as i64)?,
+                    None => g.pow(&q)?,
+                };
+            }
+            let kcs: Vec<Elem> = cs.iter().map(&to_k).collect::<RResult<_>>()?;
+            out.push(Elem::poly_from_coeffs(&pr.ctx, &kcs)?);
+        }
+        kk = &kk + &Integer::one();
+    }
+    Ok(out)
+}
+
+/// The polynomials of degree `d` (or the first `n`, continuing into higher
+/// degrees if needed).
+fn prime_polynomials(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let (px, pr) = ring_arg(a, 0);
+    let (_, p, e) = finite_base(&pr)?;
+    let d = degree_arg(a, 1)?;
+    let n = if a.args.len() > 2 {
+        let n = a.int(2)?;
+        if n.sign() < 0 {
+            return Err(arg_ge(3, n, 0));
+        }
+        n.to_u64().unwrap_or(u64::MAX)
+    } else {
+        prime_poly_count(&p.pow(e), d).to_u64().unwrap_or(u64::MAX)
+    };
+    if n > 1 << 24 {
+        return Err(RuntimeError::runtime("Too many polynomials requested"));
+    }
+    let mut out = Vec::new();
+    let mut deg = d;
+    while (out.len() as u64) < n {
+        let more = prime_polys_of_degree(it, &px, deg, (n - out.len() as u64) as usize)?;
+        out.extend(more);
+        deg += 1;
+    }
+    let vals = out.into_iter().map(|x| make_elt(&px, x)).collect();
+    one(Value::seq(Some(Value::Struct(px)), vals))
+}
+
+/// A random monic irreducible polynomial of degree `d`.
+fn random_prime_polynomial(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let (px, pr) = ring_arg(a, 0);
+    let (k, p, e) = finite_base(&pr)?;
+    let d = degree_arg(a, 1)?;
+    let kctx = ring_of(&k).expect("a finite field").1.ctx.clone();
+    for _ in 0..1_000_000 {
+        let mut cs = Vec::with_capacity(d as usize + 1);
+        for _ in 0..d {
+            let coords: Vec<Integer> = (0..e).map(|_| it.rng.below(&p)).collect();
+            cs.push(if e == 1 { Elem::from_integer(&kctx, &coords[0])? } else { Elem::fq_from_coords(&kctx, &coords)? });
+        }
+        cs.push(Elem::one(&kctx)?);
+        let f = Elem::poly_from_coeffs(&pr.ctx, &cs)?;
+        if fu::is_irreducible(&f)? {
+            return one(make_elt(&px, f));
+        }
+    }
+    Err(RuntimeError::runtime("No irreducible polynomial found"))
+}
+
+/// The Jacobi symbol `(a/b)` over `GF(q)`, q odd: multiplicative in `b`,
+/// and for irreducible `b` whether `a` is a square modulo `b` (0 if `b`
+/// divides `a`). Computed by the Euclidean algorithm with the reciprocity
+/// law `(a/b) = (-1)^((q-1)/2 deg a deg b) (b/a)` for monic coprime `a`,
+/// `b`, and `(c/b) = chi(c)^deg b` for constants `c`.
+fn jacobi_symbol(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let (fa, fb) = (pol(a, 0), pol(a, 1));
+    if fa.ring().id != fb.ring().id {
+        return Err(bare(RuntimeError::runtime(format!("Arguments are not compatible\nArgument types given: {}, {}", it.type_name_ext(&fa.parent_value()), it.type_name_ext(&fb.parent_value())))));
+    }
+    let q = match finite_base(fa.ring()) {
+        Ok((_, p, e)) if p != Integer::from_i64(2) => p.pow(e),
+        _ => return Err(bare(RuntimeError::runtime("Only polynomials over finite fields of odd characteristic are supported"))),
+    };
+    if len(&fb) < 2 {
+        return Err(bare(RuntimeError::runtime("The second polynomial must have degree at least 1")));
+    }
+    let half = (&q - &Integer::one()).divexact(&Integer::from_i64(2));
+    let half_odd = !half.is_even();
+    let mut b = fu::make_monic(&fb.x)?;
+    let mut x = fu::divrem(&fa.x, &b)?.1;
+    let mut sign = 1;
+    loop {
+        let db = b.poly_len() - 1;
+        if db == 0 {
+            return intv(Integer::from_i64(sign));
+        }
+        if x.poly_len() == 0 {
+            return intv(Integer::zero());
+        }
+        let c = fu::lead(&x);
+        if c.pow(&half)?.is_one() != Truth::True && db % 2 == 1 {
+            sign = -sign;
+        }
+        let x1 = fu::make_monic(&x)?;
+        if half_odd && (x1.poly_len() - 1) % 2 == 1 && db % 2 == 1 {
+            sign = -sign;
+        }
+        let r = fu::divrem(&b, &x1)?.1;
+        b = x1;
+        x = r;
+    }
+}
+
 // ----- factorization -------------------------------------------------------------------
 
 fn not_available() -> RuntimeError {
@@ -1181,6 +1442,160 @@ fn hensel_lift(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::seq(Some(Value::Struct(pst)), out))
 }
 
+// ----- special families ------------------------------------------------------------------
+
+/// Argument 1 of the families: one of Magma's small non-negative integers.
+fn family_index(a: &CallArgs) -> RResult<u64> {
+    let n = a.int(0)?;
+    match n.to_u64() {
+        Some(k) if k < 1 << 30 => Ok(k),
+        _ => Err(RuntimeError::runtime(format!("Argument 1 ({n}) is not small and non-negative"))),
+    }
+}
+
+/// A polynomial of a family computed by FLINT, in the global polynomial
+/// ring over `base` (the integers or the rationals).
+fn family_poly(it: &mut Interp, base: Value, fam: fu::Family, n: Option<u64>) -> RResult<Vals> {
+    let px = it.poly_ring(&base, true)?;
+    let Some((st, r)) = ring_of(&px) else { unreachable!() };
+    let f = match n {
+        Some(n) => fu::family(&r.ctx, fam, n),
+        None => Elem::zero(&r.ctx),
+    };
+    one(make_elt(st, f))
+}
+
+fn chebyshev_t(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let n = family_index(a)?;
+    family_poly(it, Value::integers(), fu::Family::ChebyshevT, Some(n))
+}
+
+/// Magma's `ChebyshevU(n)` is `U_(n-1)`, of degree `n - 1` (0 for n = 0).
+fn chebyshev_u(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let n = family_index(a)?;
+    family_poly(it, Value::integers(), fu::Family::ChebyshevU, n.checked_sub(1))
+}
+
+fn legendre_polynomial(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let n = family_index(a)?;
+    family_poly(it, Value::rationals(), fu::Family::Legendre, Some(n))
+}
+
+fn hermite_polynomial(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let n = family_index(a)?;
+    family_poly(it, Value::integers(), fu::Family::Hermite, Some(n))
+}
+
+fn bernoulli_polynomial(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let n = a.int(0)?;
+    if n.sign() < 0 {
+        return Err(RuntimeError::runtime(format!("Argument 1 ({n}) should be non-negative")));
+    }
+    let n = n.to_u64().filter(|&k| k < 1 << 30).ok_or_else(|| RuntimeError::runtime(format!("Argument 1 ({n}) is too large")))?;
+    family_poly(it, Value::rationals(), fu::Family::Bernoulli, Some(n))
+}
+
+/// The polynomials of a family with parameter `m` are computed over the
+/// parent of `m` (its field of fractions if `field`): the global polynomial
+/// ring there, its context, and `m` as a coefficient.
+fn param_ring(it: &mut Interp, m: &Value, field: bool) -> RResult<(Rc<Struct>, Rc<Ctx>, Elem)> {
+    let mut k = it.parent_of(m)?;
+    if field && !is_field(&k) {
+        if !matches!(k.as_struct(), Some(StructKind::Integers)) {
+            return Err(RuntimeError::runtime("Ring does not have a determinable field of fractions"));
+        }
+        k = Value::rationals();
+    }
+    let px = it.poly_ring(&k, true)?;
+    let Some((st, r)) = ring_of(&px) else { unreachable!() };
+    let (st, pctx) = (st.clone(), r.ctx.clone());
+    let me = it.to_structure_elem(&k, m, false)?.ok_or_else(|| RuntimeError::runtime("Bad argument types"))?;
+    Ok((st, pctx, me))
+}
+
+/// The three-term recurrence `f_n = (s_n x + t_n) f_(n-1) + u_n f_(n-2)`
+/// in `pctx` from `f_0` and `f_1`, where `coeffs(n)` gives `(s_n, t_n, u_n)`.
+fn recurrence(pctx: &Rc<Ctx>, n: u64, f0: Elem, f1: Elem, mut coeffs: impl FnMut(u64) -> GrResult<(Elem, Elem, Elem)>) -> GrResult<Elem> {
+    if n == 0 {
+        return Ok(f0);
+    }
+    let (mut a, mut b) = (f0, f1);
+    for k in 2..=n {
+        let (s, t, u) = coeffs(k)?;
+        let lin = Elem::poly_from_coeffs(pctx, &[t, s])?;
+        let c = lin.mul(&b)?.add(&a.poly_mul_scalar(&u)?)?;
+        a = std::mem::replace(&mut b, c);
+    }
+    Ok(b)
+}
+
+/// `1/n` in the coefficient field (0 where n is not invertible there, which
+/// is what Magma's recurrences give).
+fn inv_or_zero(k: &Rc<Ctx>, n: u64) -> GrResult<Elem> {
+    Ok(Elem::from_i64(k, n as i64)?.inv().unwrap_or_else(|_| Elem::zero(k)))
+}
+
+/// The generalized Laguerre polynomial `L_n^(m)`: `L_0 = 1`,
+/// `L_1 = 1 + m - x`, `n L_n = (2n + m - 1 - x) L_(n-1) - (n - 1 + m) L_(n-2)`.
+fn laguerre_polynomial(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let n = family_index(a)?;
+    if a.args.len() == 1 {
+        return family_poly(it, Value::rationals(), fu::Family::Laguerre, Some(n));
+    }
+    let (st, pctx, m) = param_ring(it, &a.args[1].clone(), true)?;
+    let k = pctx.base().expect("a polynomial ring").clone();
+    let int = |v: i64| Elem::from_i64(&k, v);
+    let f0 = Elem::one(&pctx)?;
+    let f1 = Elem::poly_from_coeffs(&pctx, &[int(1)?.add(&m)?, int(-1)?])?;
+    let f = recurrence(&pctx, n, f0, f1, |j| {
+        let inv = inv_or_zero(&k, j)?;
+        let t = int(2 * j as i64 - 1)?.add(&m)?.mul(&inv)?;
+        let u = int(j as i64 - 1)?.add(&m)?.neg()?.mul(&inv)?;
+        Ok((inv.neg()?, t, u))
+    })?;
+    one(make_elt(&st, f))
+}
+
+/// The Gegenbauer polynomial `C_n^(m)`: `C_0 = 1`, `C_1 = 2 m x`,
+/// `n C_n = 2 (n - 1 + m) x C_(n-1) - (n + 2m - 2) C_(n-2)`.
+fn gegenbauer_polynomial(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let n = family_index(a)?;
+    let (st, pctx, m) = param_ring(it, &a.args[1].clone(), true)?;
+    let k = pctx.base().expect("a polynomial ring").clone();
+    let int = |v: i64| Elem::from_i64(&k, v);
+    let f0 = Elem::one(&pctx)?;
+    let f1 = Elem::poly_from_coeffs(&pctx, &[Elem::zero(&k), m.add(&m)?])?;
+    let f = recurrence(&pctx, n, f0, f1, |j| {
+        let inv = inv_or_zero(&k, j)?;
+        let s = int(j as i64 - 1)?.add(&m)?.mul(&int(2)?)?.mul(&inv)?;
+        let u = int(j as i64 - 2)?.add(&m)?.add(&m)?.neg()?.mul(&inv)?;
+        Ok((s, Elem::zero(&k), u))
+    })?;
+    one(make_elt(&st, f))
+}
+
+/// The Dickson polynomials `D_n(x, a)` (first kind, `D_0 = 2`) and
+/// `E_n(x, a)` (second kind, `E_0 = 1`), with `f_1 = x` and
+/// `f_n = x f_(n-1) - a f_(n-2)`, over the parent of `a`.
+fn dickson(it: &mut Interp, a: &mut CallArgs, first: bool) -> RResult<Vals> {
+    let n = family_index(a)?;
+    let (st, pctx, c) = param_ring(it, &a.args[1].clone(), false)?;
+    let k = pctx.base().expect("a polynomial ring").clone();
+    let f0 = Elem::poly_from_coeffs(&pctx, &[Elem::from_i64(&k, if first { 2 } else { 1 })?])?;
+    let f1 = fu::monomial(&pctx, &Elem::one(&k)?, 1)?;
+    let nc = c.neg()?;
+    let f = recurrence(&pctx, n, f0, f1, |_| Ok((Elem::one(&k)?, Elem::zero(&k), nc.clone())))?;
+    one(make_elt(&st, f))
+}
+
+fn dickson_first(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    dickson(it, a, true)
+}
+
+fn dickson_second(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    dickson(it, a, false)
+}
+
 /// The n-th Swinnerton-Dyer polynomial, over the integers.
 fn swinnerton_dyer_polynomial(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int(0)?;
@@ -1289,6 +1704,15 @@ pub fn register(it: &mut Interp) {
     it.def("SumNorm", "f::RngUPolElt -> RngIntElt", "The sum of the absolute values of the coefficients of f.", sum_norm);
     it.def("DedekindTest", "f::RngUPolElt, p::RngIntElt -> BoolElt", "Whether the equation order of the monic f is maximal at the prime p.", dedekind_test);
 
+    // Polynomials over finite fields.
+    it.def("PrimePolynomials", "R::RngUPol, d::RngIntElt -> [RngUPolElt]", "The monic irreducible polynomials of degree d over the finite field of R.", prime_polynomials);
+    it.def("PrimePolynomials", "R::RngUPol, d::RngIntElt, n::RngIntElt -> [RngUPolElt]", "The first n monic irreducible polynomials of degree d (and more) over the finite field of R.", prime_polynomials);
+    it.def("RandomPrimePolynomial", "R::RngUPol, d::RngIntElt -> RngUPolElt", "A random monic irreducible polynomial of degree d over the finite field of R.", random_prime_polynomial);
+    for t in ["RngIntElt", "FldFin", "RngUPol"] {
+        it.def("NumberOfPrimePolynomials", &format!("q::{t}, d::RngIntElt -> RngIntElt"), "The number of monic irreducible polynomials of degree d over the finite field of size q.", number_of_prime_polynomials);
+    }
+    it.def("JacobiSymbol", "a::RngUPolElt, b::RngUPolElt -> RngIntElt", "The Jacobi symbol (a/b) of polynomials over a finite field of odd characteristic.", jacobi_symbol);
+
     // Factorization.
     for name in ["Factorization", "Factorisation"] {
         let al = [("Al", Value::str("Default"))];
@@ -1305,6 +1729,22 @@ pub fn register(it: &mut Interp) {
     for name in ["FactorisationToPolynomial", "Facpol"] {
         it.def(name, "Q::[Tup] -> RngElt", "The product of the factorization sequence Q of a polynomial.", facpol);
     }
+
+    // Special families.
+    for name in ["ChebyshevFirst", "ChebyshevT"] {
+        it.def(name, "n::RngIntElt -> RngUPolElt", "The Chebyshev polynomial of the first kind T_n.", chebyshev_t);
+    }
+    for name in ["ChebyshevSecond", "ChebyshevU"] {
+        it.def(name, "n::RngIntElt -> RngUPolElt", "The Chebyshev polynomial of the second kind of degree n - 1.", chebyshev_u);
+    }
+    it.def("LegendrePolynomial", "n::RngIntElt -> RngUPolElt", "The Legendre polynomial P_n.", legendre_polynomial);
+    it.def("LaguerrePolynomial", "n::RngIntElt -> RngUPolElt", "The Laguerre polynomial L_n.", laguerre_polynomial);
+    it.def("LaguerrePolynomial", "n::RngIntElt, m::RngElt -> RngUPolElt", "The generalized Laguerre polynomial L_n^m.", laguerre_polynomial);
+    it.def("HermitePolynomial", "n::RngIntElt -> RngUPolElt", "The Hermite polynomial H_n.", hermite_polynomial);
+    it.def("GegenbauerPolynomial", "n::RngIntElt, m::RngElt -> RngUPolElt", "The Gegenbauer polynomial C_n^m.", gegenbauer_polynomial);
+    it.def("DicksonFirst", "n::RngIntElt, a::RngElt -> RngUPolElt", "The Dickson polynomial of the first kind D_n(x, a).", dickson_first);
+    it.def("DicksonSecond", "n::RngIntElt, a::RngElt -> RngUPolElt", "The Dickson polynomial of the second kind E_n(x, a).", dickson_second);
+    it.def("BernoulliPolynomial", "n::RngIntElt -> RngUPolElt", "The n-th Bernoulli polynomial.", bernoulli_polynomial);
     it.def("SwinnertonDyerPolynomial", "n::RngIntElt -> RngUPolElt", "The minimal polynomial of the sum of the square roots of the first n primes.", swinnerton_dyer_polynomial);
 
     // Resultants, discriminants and Hensel lifting.

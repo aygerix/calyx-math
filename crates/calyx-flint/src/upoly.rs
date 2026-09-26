@@ -1189,6 +1189,47 @@ pub fn swinnerton_dyer(zx: &Rc<Ctx>, n: u64) -> Elem {
     f
 }
 
+/// The classical families with FLINT constructions.
+#[derive(Clone, Copy)]
+pub enum Family {
+    /// Chebyshev polynomials of the first kind, over Z.
+    ChebyshevT,
+    /// Chebyshev polynomials of the second kind `U_n`, over Z.
+    ChebyshevU,
+    /// Hermite polynomials (physicists'), over Z.
+    Hermite,
+    /// Legendre polynomials, over Q.
+    Legendre,
+    /// Laguerre polynomials, over Q.
+    Laguerre,
+    /// Bernoulli polynomials, over Q.
+    Bernoulli,
+}
+
+/// The n-th polynomial of a family in `ctx`, a polynomial ring over the
+/// integers or the rationals as the family has it.
+pub fn family(ctx: &Rc<Ctx>, fam: Family, n: u64) -> Elem {
+    let n = n as sys::ulong;
+    let mut f = Elem::new(ctx);
+    unsafe {
+        match fam {
+            Family::ChebyshevT => sys::fmpz_poly_chebyshev_t(fz_mut(&mut f), n),
+            Family::ChebyshevU => sys::fmpz_poly_chebyshev_u(fz_mut(&mut f), n),
+            Family::Hermite => sys::fmpz_poly_hermite_h(fz_mut(&mut f), n),
+            Family::Legendre | Family::Laguerre | Family::Bernoulli => {
+                let mut q = QPoly::new();
+                match fam {
+                    Family::Legendre => sys::fmpq_poly_legendre_p(&mut q.0, n),
+                    Family::Laguerre => sys::fmpq_poly_laguerre_l(&mut q.0, n),
+                    _ => sys::arith_bernoulli_polynomial(&mut q.0, n),
+                }
+                return q.to_elem(ctx);
+            }
+        }
+    }
+    f
+}
+
 /// The rational numbers as coefficients, for callers that build rational
 /// polynomials.
 pub fn rational_coeff(f: &Elem, i: usize) -> Option<Rational> {
