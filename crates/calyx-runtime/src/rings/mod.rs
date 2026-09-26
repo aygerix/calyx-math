@@ -481,43 +481,57 @@ impl Interp {
             _ => return Err(RuntimeError::runtime(crate::error::NOT_ITERABLE)),
         };
         let n = size.to_u64().filter(|&n| n <= 1 << 26).ok_or_else(|| RuntimeError::runtime("The ring is too large to enumerate"))?;
+        let elts = self.ring_elements(st).ok_or_else(|| RuntimeError::runtime("The ring is too large to enumerate"))?;
         let mut out = Vec::with_capacity(n as usize);
-        let ctx = r.ctx.clone();
-        match &r.kind {
-            RingKind::Finite(f) if f.degree > 1 => {
-                if let Some(s) = r.small {
-                    // Zero, then the powers of the primitive element.
-                    out.push(Value::Small(s, n - 1));
-                    out.extend((0..n - 1).map(|k| Value::Small(s, k)));
-                    return Ok(out);
-                }
-                out.push(make_elt(st, Elem::zero(&ctx)));
-                let p = f.p.to_u64().unwrap();
-                let d = f.degree as usize;
-                let mut coords = vec![0u64; d];
-                for _ in 1..n {
-                    // Next coordinate vector (counting in base p).
-                    for c in coords.iter_mut() {
-                        *c += 1;
-                        if *c < p {
-                            break;
-                        }
-                        *c = 0;
-                    }
-                    let cs: Vec<Integer> = coords.iter().map(|&c| Integer::from_u64(c)).collect();
-                    out.push(make_elt(st, Elem::fq_from_coords(&ctx, &cs).map_err(|e| gr_error(e, "Arithmetic error"))?));
-                }
-            }
-            _ => match r.small {
-                Some(s) => out.extend((0..n).map(|i| Value::Small(s, i))),
-                None => {
-                    for i in 0..n {
-                        out.push(make_elt(st, Elem::from_integer(&ctx, &Integer::from_u64(i)).map_err(|e| gr_error(e, "Arithmetic error"))?));
-                    }
-                }
-            },
-        }
+        out.extend(elts);
         Ok(out)
+    }
+
+    /// The elements of a residue class ring or a finite field one at a time,
+    /// in the order Magma enumerates them, or `None` for other rings.
+    pub fn ring_elements(&self, st: &Rc<Struct>) -> Option<Box<dyn Iterator<Item = Value>>> {
+        let StructKind::Ring(r) = &st.kind else { return None };
+        let (ctx, st) = (r.ctx.clone(), st.clone());
+        Some(match (&r.kind, r.small) {
+            (RingKind::Finite(f), Some(s)) if f.degree > 1 => {
+                // Zero, then the powers of the primitive element.
+                let n = s.zech()?.zero();
+                Box::new(std::iter::once(n).chain(0..n).map(move |k| Value::Small(s, k)))
+            }
+            (RingKind::Finite(f), None) if f.degree > 1 => {
+                // The coordinates counting in base p, the constant term fastest.
+                let p = f.p.to_u64()?;
+                let mut coords = Some(vec![0u64; f.degree as usize]);
+                Box::new(std::iter::from_fn(move || {
+                    let cs = coords.as_mut()?;
+                    let x = Elem::fq_from_coords(&ctx, &cs.iter().map(|&c| Integer::from_u64(c)).collect::<Vec<_>>()).ok()?;
+                    if !next_digits(cs, p) {
+                        coords = None;
+                    }
+                    Some(make_elt(&st, x))
+                }))
+            }
+            (RingKind::Finite(_) | RingKind::Residue(_), Some(s)) => {
+                let n = s.modulus().modulus();
+                Box::new((0..n).map(move |i| Value::Small(s, i)))
+            }
+            (RingKind::Finite(_) | RingKind::Residue(_), None) => {
+                let m = match &r.kind {
+                    RingKind::Residue(m) => m.clone(),
+                    _ => r.finite_field()?.p.clone(),
+                };
+                let mut i = Integer::zero();
+                Box::new(std::iter::from_fn(move || {
+                    if i >= m {
+                        return None;
+                    }
+                    let x = Elem::from_integer(&ctx, &i).ok()?;
+                    i = &i + &Integer::one();
+                    Some(make_elt(&st, x))
+                }))
+            }
+            _ => return None,
+        })
     }
 
     /// The FLINT context for the reals with the given precision in bits.
@@ -556,4 +570,17 @@ impl Interp {
             _ => Value::Undef,
         }
     }
+}
+
+/// Step the base-p digits `ds` (least significant first) to the next number;
+/// false when they wrap round to zero.
+fn next_digits(ds: &mut [u64], p: u64) -> bool {
+    for d in ds.iter_mut() {
+        *d += 1;
+        if *d < p {
+            return true;
+        }
+        *d = 0;
+    }
+    false
 }
