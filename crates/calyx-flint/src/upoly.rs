@@ -555,7 +555,8 @@ pub fn gcd(f: &Elem, g: &Elem) -> GrResult<Elem> {
 pub fn xgcd(f: &Elem, g: &Elem) -> GrResult<(Elem, Elem, Elem)> {
     let ctx = f.ctx();
     let base = base_of(ctx);
-    if !over_field(ctx) {
+    let float = matches!(base.kind(), CtxKind::RealFloat(_) | CtxKind::ComplexFloat(_));
+    if !over_field(ctx) && !float {
         return Err(GrError::Domain);
     }
     let zero = Elem::zero(ctx);
@@ -573,6 +574,9 @@ pub fn xgcd(f: &Elem, g: &Elem) -> GrResult<(Elem, Elem, Elem)> {
     if !fz0 && divrem(g, f)?.1.is_zero() == Truth::True {
         let u = unit_of(f)?;
         return Ok((f.poly_mul_scalar(&u)?, Elem::poly_from_coeffs(ctx, &[u])?, zero));
+    }
+    if float {
+        return euclid_xgcd(f, g);
     }
     let (mut d, mut a, mut b) = (Elem::new(ctx), Elem::new(ctx), Elem::new(ctx));
     unsafe {
@@ -595,6 +599,23 @@ pub fn xgcd(f: &Elem, g: &Elem) -> GrResult<(Elem, Elem, Elem)> {
         }
     }
     Ok((d, a, b))
+}
+
+/// The extended Euclidean algorithm on `(f, g)`, `g` non-zero, made monic:
+/// over the floating-point fields, which gr does not count as fields.
+fn euclid_xgcd(f: &Elem, g: &Elem) -> GrResult<(Elem, Elem, Elem)> {
+    let ctx = f.ctx();
+    let (mut r0, mut r1) = (f.clone(), g.clone());
+    let (mut s0, mut s1) = (Elem::one(ctx)?, Elem::zero(ctx));
+    let (mut t0, mut t1) = (Elem::zero(ctx), Elem::one(ctx)?);
+    while len(&r1) > 0 {
+        let (q, r) = divrem(&r0, &r1)?;
+        let s = s0.sub(&q.mul(&s1)?)?;
+        let t = t0.sub(&q.mul(&t1)?)?;
+        (r0, r1, s0, s1, t0, t1) = (r1, r, s1, s, t1, t);
+    }
+    let u = lead(&r0).inv()?;
+    Ok((r0.poly_mul_scalar(&u)?, s0.poly_mul_scalar(&u)?, t0.poly_mul_scalar(&u)?))
 }
 
 // ----- division --------------------------------------------------------------------

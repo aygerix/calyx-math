@@ -1,13 +1,17 @@
 //! Factorization of univariate polynomials, resultants and discriminants,
-//! and Hensel lifting.
+//! and Hensel lifting. Over polynomial rings the polynomials are flattened
+//! (`tower`).
 
 use std::cmp::Ordering;
 
 use calyx_flint::Integer;
-use calyx_flint::gr::{Ctx, Elem, Truth};
+use calyx_flint::gr::{Ctx, CtxKind, Elem, Truth};
+use calyx_flint::mpoly as fm;
 use calyx_flint::upoly as fu;
 use calyx_syntax::ast::BinOp;
 
+use super::gcd::normalized;
+use super::tower::{Tower, poly_divides};
 use super::{base_of, bctx, cval, is_integers, len, like, nonzero, not_available, pair, pol, poly_seq, ring_arg};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
@@ -61,12 +65,44 @@ fn factorization_seq(it: &mut Interp, f: &Elt, mut v: Vec<(Elem, u64)>, by_mult:
     Value::seq(None, v.into_iter().map(|(q, k)| Value::tuple(vec![like(f, q), Value::int(k as i64)])).collect())
 }
 
+/// The factorization of `f` over a polynomial ring (see `tower`): the
+/// normalized factors, the content's factors among them as constants, and
+/// the unit, an element of the coefficient ring. Over the integers the
+/// primes of the integer content come as constant factors and the unit is
+/// the sign; otherwise the unit is the leading coefficient of f over those
+/// of the factors.
+fn tower_factorization(it: &mut Interp, f: &Elt, t: &Tower) -> RResult<(Vec<(Elem, u64)>, Elem)> {
+    let (k, fs) = fm::factor(&t.flatten(&f.x)?, false)?;
+    let mut v = Vec::with_capacity(fs.len());
+    for (q, e) in fs {
+        v.push((normalized(it, &Elt { parent: f.parent.clone(), x: t.unflatten(&q)? })?, e));
+    }
+    let b = bctx(f);
+    if matches!(k.ctx().kind(), CtxKind::Integers) {
+        let c = k.to_integer()?;
+        v.extend(prime_factors(f, &c)?);
+        return Ok((v, Elem::from_i64(&b, if c.sign() < 0 { -1 } else { 1 })?));
+    }
+    let mut lead = Elem::one(&b)?;
+    for (q, e) in &v {
+        lead = lead.mul(&fu::lead(q).pow(&Integer::from_u64(*e))?)?;
+    }
+    let u = poly_divides(&fu::lead(&f.x), &lead)?.expect("the leading coefficients divide");
+    Ok((v, u))
+}
+
 /// The factorization into irreducibles, normalized as `Normalize` does,
 /// and the unit: over the integers the prime factors of the content come
 /// first as constant factors and the unit is the sign.
 pub(super) fn factorization(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = pol(a, 0);
     nonzero(&f)?;
+    if let Some(t) = Tower::of(f.x.ctx()) {
+        let (v, u) = tower_factorization(it, &f, &t)?;
+        let seq = factorization_seq(it, &f, v, false);
+        let unit = cval(it, &f, u);
+        return if a.nresults >= 2 { Ok(vals![seq, unit]) } else { one(seq) };
+    }
     can_factor(&f)?;
     let fac = fu::factor(&f.x)?;
     let mut v = fac.factors;
@@ -81,9 +117,18 @@ pub(super) fn factorization(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> 
     if a.nresults >= 2 { Ok(vals![seq, unit]) } else { one(seq) }
 }
 
-pub(super) fn is_irreducible(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+/// Whether `f` is irreducible: over a polynomial ring, of positive degree
+/// with one factor of multiplicity 1 and a unit content.
+pub(super) fn is_irreducible(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = pol(a, 0);
     nonzero(&f)?;
+    if let Some(t) = Tower::of(f.x.ctx()) {
+        if len(&f) < 2 {
+            return boolv(false);
+        }
+        let (v, _) = tower_factorization(it, &f, &t)?;
+        return boolv(matches!(v.as_slice(), [(_, 1)]));
+    }
     can_factor(&f)?;
     boolv(fu::is_irreducible(&f.x)?)
 }
@@ -93,7 +138,13 @@ pub(super) fn is_irreducible(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals
 pub(super) fn squarefree_factorization(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = pol(a, 0);
     nonzero(&f)?;
-    can_factor(&f)?;
+    if !fu::can_factor(f.x.ctx()) {
+        return Err(match ring_of(&base_of(&f)).map(|(_, r)| &r.kind) {
+            Some(RingKind::Residue(_)) => RuntimeError::runtime("Coefficient ring of argument 1 must be Z or a finite field"),
+            Some(RingKind::UPoly { .. } | RingKind::MPoly { .. }) => RuntimeError::runtime("Coefficient ring of argument 1 must be Z or a field"),
+            _ => not_available(),
+        });
+    }
     let fac = fu::factor_squarefree(&f.x)?;
     let mut v = fac.factors;
     if is_integers(&f) {
@@ -201,7 +252,11 @@ pub(super) fn discriminant(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     if len(&f) < 2 {
         return Err(RuntimeError::runtime("Degree of argument is less than 1"));
     }
-    one(cval(it, &f, fu::discriminant(&f.x)?))
+    let d = match Tower::of(f.x.ctx()) {
+        Some(t) => t.unflatten_coeff(&fm::discriminant(&t.flatten(&f.x)?, 0)?)?,
+        None => fu::discriminant(&f.x)?,
+    };
+    one(cval(it, &f, d))
 }
 
 // ----- Hensel lifting ------------------------------------------------------------------

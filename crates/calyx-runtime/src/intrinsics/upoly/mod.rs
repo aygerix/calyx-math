@@ -1,11 +1,13 @@
 //! Univariate polynomial rings (the handbook chapter of that name):
 //! creating polynomials, changing coefficient rings, the functions of
 //! polynomials, greatest common divisors and content, the functions for
-//! integer polynomials, factorization, resultants and Hensel lifting.
+//! integer polynomials, factorization, resultants and Hensel lifting, and
+//! small roots modulo an integer (`small_roots`).
 //!
 //! Polynomials are `gr_poly`s. The algorithms beyond generic arithmetic run
 //! on FLINT's specialised types through `calyx_flint::upoly`, over the
-//! integers, the rationals, prime residue rings and finite fields.
+//! integers, the rationals, prime residue rings and finite fields, and over
+//! polynomial rings over these flattened (`tower`).
 //!
 //! The submodules follow the sections of the handbook chapter; this module
 //! has the helpers they share and the registration.
@@ -19,7 +21,9 @@ mod gcd;
 mod ideals;
 mod integers;
 mod roots;
+mod small_roots;
 mod special;
+mod tower;
 
 use std::cmp::Ordering;
 use std::rc::Rc;
@@ -42,10 +46,12 @@ use gcd::*;
 use ideals::*;
 use integers::*;
 use roots::*;
+use small_roots::*;
 use special::*;
 
 pub use division::quotrem;
 pub(crate) use gcd::norm_unit;
+pub(crate) use tower::{Tower, over_ground, poly_divides, poly_gcd};
 pub use ideals::{enumerate_res, format_ideal, ideal_binop, ideal_constructor, ideal_member, quo_constructor};
 pub use ideals::{res_div, res_is_domain, res_modulus, res_pow, res_reduce};
 
@@ -205,6 +211,9 @@ pub fn register(it: &mut Interp) {
     it.def_params("Roots", "f::RngUPolElt, S::Rng -> [Tup]", &[("Max", Value::Undef)], "The roots of f in S with their multiplicities.", roots_in);
     it.def("HasRoot", "f::RngUPolElt -> BoolElt, RngElt", "Whether f has a root in its coefficient ring, and a root.", has_root);
     it.def("HasRoot", "f::RngUPolElt, S::Rng -> BoolElt, RngElt", "Whether f has a root in S, and a root.", has_root_in);
+    let small = [("Bits", Value::Bool(false)), ("Beta", Value::Undef), ("Exponent", Value::Undef), ("Finalshifts", Value::Undef), ("Direct", Value::Bool(false))];
+    let doc = "The integers x0 with |x0| <= X and p(x0) = 0 modulo a divisor of N of at least N^Beta, by Coppersmith's method.";
+    it.def_params("SmallRoots", "p::RngUPolElt, N::RngIntElt, X::RngIntElt -> [RngIntElt]", &small, doc, small_roots_fn);
 
     // Derivatives, evaluation and interpolation.
     it.def("Derivative", "f::RngUPolElt -> RngUPolElt", "The derivative of f.", derivative);

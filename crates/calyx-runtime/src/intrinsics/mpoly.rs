@@ -5,17 +5,19 @@
 //!
 //! Polynomials are `gr_mpoly`s, whose generic arithmetic is fast enough
 //! (it beats Magma on Fateman's benchmark). The algorithms beyond it run
-//! on FLINT's specialised types through `calyx_flint::mpoly`.
+//! on FLINT's specialised types through `calyx_flint::mpoly`, over
+//! polynomial rings flattened (`upoly::Tower`).
 
 use std::collections::{BTreeMap, HashMap, hash_map::Entry};
 use std::rc::Rc;
 
-use calyx_flint::gr::{Elem, GrError, Truth};
+use calyx_flint::gr::{Ctx, CtxKind, Elem, GrError, Truth};
 use calyx_flint::mpoly as fm;
 use calyx_flint::{Integer, Rational};
 use calyx_groebner::{Order, OrderArg};
 use calyx_syntax::ast::{AggKind, BinOp};
 
+use super::upoly::{Tower, norm_unit, over_ground, poly_divides, poly_gcd};
 use super::{arg_ge, boolv, intv, one};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
@@ -1018,6 +1020,9 @@ pub fn exact_div(f: &Elem, g: &Elem) -> RResult<Option<Elem>> {
         Err(GrError::Unable) => {}
         r => return Ok(r?),
     }
+    if let Some(t) = Tower::of(f.ctx()) {
+        return Ok(t.divides(f, g)?);
+    }
     let ctx = f.ctx().clone();
     let (lc, le) = g.mpoly_term(0);
     let mut q = Vec::new();
@@ -1107,7 +1112,7 @@ fn same_ring(a: &CallArgs) -> RResult<(Rc<Elt>, Rc<Elt>)> {
 /// a field, positive over the integers).
 pub(super) fn normalized(it: &mut Interp, f: &Elt) -> RResult<Elem> {
     let Some((lc, _)) = leading(f.ring(), &f.x) else { return Ok(f.x.clone()) };
-    let u = super::upoly::norm_unit(it, &base_of(f), &lc)?;
+    let u = norm_unit(it, &base_of(f), &lc)?;
     Ok(f.x.mpoly_mul_scalar(&u)?)
 }
 
@@ -1116,9 +1121,17 @@ fn normalize(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(like(&f, normalized(it, &f)?))
 }
 
+/// The gcd on FLINT's types, over a polynomial ring flattened.
+fn flint_gcd(f: &Elem, g: &Elem) -> RResult<Elem> {
+    match Tower::of(f.ctx()) {
+        Some(t) => Ok(t.gcd(f, g)?),
+        None => flint(fm::gcd(f, g)),
+    }
+}
+
 /// The normalized greatest common divisor.
 fn gcd_of(it: &mut Interp, f: &Elt, g: &Elem) -> RResult<Elem> {
-    let d = flint(fm::gcd(&f.x, g))?;
+    let d = flint_gcd(&f.x, g)?;
     normalized(it, &Elt { parent: f.parent.clone(), x: d })
 }
 
@@ -1127,7 +1140,7 @@ fn lcm_of(it: &mut Interp, f: &Elt, g: &Elem) -> RResult<Elem> {
     if f.x.mpoly_len() == 0 || g.mpoly_len() == 0 {
         return Ok(Elem::zero(f.x.ctx()));
     }
-    let d = flint(fm::gcd(&f.x, g))?;
+    let d = flint_gcd(&f.x, g)?;
     let q = exact_div(&f.x, &d)?.expect("the gcd divides");
     normalized(it, &Elt { parent: f.parent.clone(), x: q.mul(g)? })
 }
@@ -1167,12 +1180,14 @@ fn lcm_seq(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 }
 
 /// The content of `f` (the gcd of its coefficients over the integers, 1 over
-/// a field; 0 for zero) and its primitive part.
-fn contpp(it: &Interp, f: &Elt) -> RResult<(Value, Value)> {
+/// a field, the gcd of the coefficients and n over Z/nZ, the normalized gcd
+/// of the coefficients over a polynomial ring; 0 for zero) and its
+/// primitive part, the quotient by it.
+fn contpp(it: &mut Interp, f: &Elt) -> RResult<(Value, Value)> {
     let b = f.x.ctx().base().expect("a polynomial ring").clone();
+    let ts = terms(&f.x);
     match b.kind() {
-        calyx_flint::gr::CtxKind::Integers => {
-            let ts = terms(&f.x);
+        CtxKind::Integers => {
             let mut c = Integer::zero();
             for (x, _) in &ts {
                 c = c.gcd(&x.to_integer()?);
@@ -1181,11 +1196,37 @@ fn contpp(it: &Interp, f: &Elt) -> RResult<(Value, Value)> {
                 return Ok((Value::Int(c), like(f, f.x.clone())));
             }
             let pp = ts.into_iter().map(|(x, e)| Ok((Elem::from_integer(&b, &x.to_integer()?.divexact(&c))?, e))).collect::<RResult<Vec<_>>>()?;
-            Ok((Value::Int(c), like(f, Elem::mpoly_from_terms(f.x.ctx(), &pp)?)))
+            return Ok((Value::Int(c), like(f, Elem::mpoly_from_terms(f.x.ctx(), &pp)?)));
         }
         _ if ring_props(&base_of(f)).is_some_and(|p| p.field) => {
             let c = if f.x.mpoly_len() == 0 { Elem::zero(&b) } else { Elem::one(&b)? };
-            Ok((cval(it, f, c), like(f, f.x.clone())))
+            return Ok((cval(it, f, c), like(f, f.x.clone())));
+        }
+        _ => {}
+    }
+    let pp = |c: &Elem, div: &dyn Fn(&Elem) -> RResult<Elem>| -> RResult<Value> {
+        let ts = ts.iter().map(|(x, e)| Ok((div(x)?, e.clone()))).collect::<RResult<Vec<_>>>()?;
+        Ok(like(f, if c.is_zero() == Truth::True { f.x.clone() } else { Elem::mpoly_from_terms(f.x.ctx(), &ts)? }))
+    };
+    let base = base_of(f);
+    let kind = ring_of(&base).map(|(_, r)| &r.kind);
+    match kind {
+        Some(RingKind::Residue(m)) => {
+            let mut c = m.clone();
+            for (x, _) in &ts {
+                c = c.gcd(&x.to_integer()?);
+            }
+            let q = pp(&Elem::from_integer(&b, &c)?, &|x| Ok(Elem::from_integer(&b, &x.to_integer()?.divexact(&c))?))?;
+            Ok((cval(it, f, Elem::from_integer(&b, &c)?), q))
+        }
+        Some(RingKind::UPoly { .. } | RingKind::MPoly { .. }) if over_ground(&b) => {
+            let mut c = Elem::zero(&b);
+            for (x, _) in &ts {
+                c = poly_gcd(&c, x)?;
+            }
+            let c = c.mul(&norm_unit(it, &base_of(f), &c)?)?;
+            let q = pp(&c, &|x| Ok(poly_divides(x, &c)?.expect("the content divides")))?;
+            Ok((cval(it, f, c), q))
         }
         _ => Err(not_available()),
     }
@@ -1261,32 +1302,57 @@ fn factorization_seq(it: &mut Interp, f: &Elt, mut v: Vec<(Elem, u64)>, by_mult:
     Value::seq(None, v.into_iter().map(|(q, k)| Value::tuple(vec![like(f, q), Value::int(k as i64)])).collect())
 }
 
+fn no_factorization() -> RuntimeError {
+    RuntimeError::runtime("Coefficient ring of argument 1 does not have a polynomial factorization algorithm")
+}
+
+fn is_constant(q: &Elem) -> bool {
+    (0..q.mpoly_len()).all(|i| q.mpoly_term(i).1.iter().all(|&e| e == 0))
+}
+
 /// The normalized factors of `f` (squarefree ones, merged by multiplicity,
 /// with `squarefree`) and the unit: over the integers the prime powers of
 /// the content come first as constant factors and the unit is the sign.
+/// Over a polynomial ring (flattened) the factors of the content come as
+/// constants, merged apart from the others, and as in Magma they are left
+/// out of the unit.
 fn factors(it: &mut Interp, f: &Elt, squarefree: bool) -> RResult<(Vec<(Elem, u64)>, Value)> {
     nonzero(f)?;
-    let (k, fs) = flint(fm::factor(&f.x, squarefree))?;
+    let tower = Tower::of(f.x.ctx());
+    let (k, fs) = match &tower {
+        Some(t) => {
+            let (k, fs) = fm::factor(&t.flatten(&f.x)?, squarefree)?;
+            (k, fs.into_iter().map(|(q, e)| Ok((t.unflatten(&q)?, e))).collect::<RResult<Vec<_>>>()?)
+        }
+        None => fm::factor(&f.x, squarefree).map_err(|e| if e == GrError::Unable { no_factorization() } else { e.into() })?,
+    };
     let mut v: Vec<(Elem, u64)> = Vec::with_capacity(fs.len());
     for (q, e) in fs {
         let q = normalized(it, &Elt { parent: f.parent.clone(), x: q })?;
-        match v.iter_mut().find(|(_, m)| squarefree && *m == e) {
+        match v.iter_mut().find(|(p, m)| squarefree && *m == e && is_constant(p) == is_constant(&q)) {
             Some(p) => p.0 = normalized(it, &Elt { parent: f.parent.clone(), x: p.0.mul(&q)? })?,
             None => v.push((q, e)),
         }
     }
-    if is_integers(f) {
+    if matches!(k.ctx().kind(), CtxKind::Integers) {
         let c = k.to_integer()?;
         v.extend(prime_factors(f, &c)?);
-        return Ok((v, Value::int(if c.sign() < 0 { -1 } else { 1 })));
+        if tower.is_none() {
+            return Ok((v, Value::int(if c.sign() < 0 { -1 } else { 1 })));
+        }
     }
     // The unit is the leading coefficient of f over that of the product of
-    // the (normalized) factors.
-    let mut lead = Elem::one(k.ctx())?;
-    for (q, e) in &v {
+    // the (normalized) factors of positive degree: in Magma it keeps the
+    // constant factors.
+    let mut lead = Elem::one(&czero(f).ctx().clone())?;
+    for (q, e) in v.iter().filter(|(q, _)| !is_constant(q)) {
         lead = lead.mul(&q.mpoly_term(0).0.pow(&Integer::from_u64(*e))?)?;
     }
-    let u = f.x.mpoly_term(0).0.div(&lead)?;
+    let lf = f.x.mpoly_term(0).0;
+    let u = match lf.div(&lead) {
+        Ok(u) => u,
+        Err(_) => poly_divides(&lf, &lead)?.expect("the leading coefficients divide"),
+    };
     Ok((v, cval(it, f, u)))
 }
 
@@ -1325,16 +1391,47 @@ fn is_irreducible(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 
 // ----- resultants and discriminants ------------------------------------------------------
 
+/// The resultant of `f` and `g` in the variable `i`, or with no `g` the
+/// discriminant of `f`: on FLINT's types, over polynomial rings flattened,
+/// and over Z/nZ through the integers (it is a polynomial in the
+/// coefficients).
+fn res_disc(f: &Elem, g: Option<&Elem>, i: usize) -> RResult<Elem> {
+    let run = |x: &Elem, y: Option<&Elem>| match y {
+        Some(y) => fm::resultant(x, y, i),
+        None => fm::discriminant(x, i),
+    };
+    if let Some(t) = Tower::of(f.ctx()) {
+        let y = g.map(|g| t.flatten(g)).transpose()?;
+        return Ok(t.unflatten(&run(&t.flatten(f)?, y.as_ref())?)?);
+    }
+    match run(f, g) {
+        Err(GrError::Unable) => {}
+        r => return Ok(r?),
+    }
+    let b = f.ctx().base().expect("a polynomial ring").clone();
+    let (CtxKind::Nmod(_) | CtxKind::FmpzMod(_), CtxKind::MPoly { nvars, order }) = (b.kind(), f.ctx().kind()) else { return Err(not_available()) };
+    let zz = Ctx::integers();
+    let zx = Ctx::mpoly(&zz, *nvars, *order);
+    let lift = |x: &Elem| -> RResult<Elem> {
+        let ts = terms(x).into_iter().map(|(c, e)| Ok((Elem::from_integer(&zz, &c.to_integer()?)?, e))).collect::<RResult<Vec<_>>>()?;
+        Ok(Elem::mpoly_from_terms(&zx, &ts)?)
+    };
+    let y = g.map(lift).transpose()?;
+    let r = flint(run(&lift(f)?, y.as_ref()))?;
+    let ts = terms(&r).into_iter().map(|(c, e)| Ok((Elem::from_integer(&b, &c.to_integer()?)?, e))).collect::<RResult<Vec<_>>>()?;
+    Ok(Elem::mpoly_from_terms(f.ctx(), &ts)?)
+}
+
 fn resultant(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (f, g) = same_ring(a)?;
     let i = var_arg(a, 2, &f, "variable number")?;
-    one(like(&f, flint(fm::resultant(&f.x, &g.x, i))?))
+    one(like(&f, res_disc(&f.x, Some(&g.x), i)?))
 }
 
 fn discriminant(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = mpol(a, 0);
     let i = var_arg(a, 1, &f, "variable number")?;
-    one(like(&f, flint(fm::discriminant(&f.x, i))?))
+    one(like(&f, res_disc(&f.x, None, i)?))
 }
 
 // ----- polynomials over the integers ---------------------------------------------------------
