@@ -396,6 +396,24 @@ pub fn bare(e: RuntimeError) -> RuntimeError {
     e.in_context("")
 }
 
+/// An error raised in the code of a package intrinsic that Magma reports
+/// with its traceback hidden: the call frames, the intrinsic's own among
+/// them, then "[Magma package traceback hidden]" and the error, unnamed.
+pub fn hidden(e: RuntimeError) -> RuntimeError {
+    let mut e = bare(e);
+    e.hidden = Some(true);
+    e
+}
+
+/// As `hidden`, for an error raised deeper in the package code, whose
+/// report lacks the intrinsic's call frame. An error of another intrinsic
+/// called there keeps its name.
+pub fn hidden_inner(e: RuntimeError) -> RuntimeError {
+    let mut e = bare(e);
+    e.hidden = Some(false);
+    e
+}
+
 /// A failed requirement of a package intrinsic: as Magma reports them, it
 /// names the intrinsic unless the call is a statement of its own.
 pub fn require(e: RuntimeError) -> RuntimeError {

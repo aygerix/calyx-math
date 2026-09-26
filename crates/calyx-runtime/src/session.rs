@@ -412,6 +412,19 @@ impl Interp {
             return format!("{}\n", e.headline());
         }
         let mut out = String::new();
+        if e.hidden.is_some() {
+            // An error in the code of a package intrinsic: the call frames,
+            // but no positions.
+            out.push('\n');
+            self.push_frames(&mut out, e);
+            out.push_str("[Magma package traceback hidden]\n");
+            out.push_str(&crate::print::wrap_text_output(&e.headline(), 0, 80));
+            out.push('\n');
+            if e.trailing_blank() {
+                out.push('\n');
+            }
+            return out;
+        }
         if let Some((outer, compile)) = e.eval_outer {
             // An error in eval code: where it is in that code, and where the
             // eval is.

@@ -508,6 +508,12 @@ impl Interp {
                 *args = ca.args;
                 args.resize_with(n, Value::default);
                 r.map_err(|mut e| {
+                    if e.hidden == Some(true) {
+                        // The intrinsic's call frame, as a user function's.
+                        e.hidden = Some(false);
+                        let targs = sig.args.iter().zip(args.iter()).map(|(a, v)| (a.name.to_string(), self.format_flat(v, crate::print::Level::Default).unwrap_or_default())).collect();
+                        e.trace.push(TraceFrame { name, span: None, args: targs });
+                    }
                     if e.require && !stmt {
                         e.context = None;
                     }
