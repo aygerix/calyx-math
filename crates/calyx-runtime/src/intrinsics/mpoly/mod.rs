@@ -1707,6 +1707,8 @@ pub fn register(it: &mut Interp) {
     it.def("JacobianMatrix", "S::[RngMPolElt] -> Mtrx", "The matrix of the partial derivatives of the polynomials of S (rows) by the variables (columns).", jacobian_matrix);
     let doc = "The symmetric matrix B with f = v B v^T for f of total degree 2, v the variables (and 1 after them unless f is homogeneous).";
     it.def("SymmetricBilinearForm", "f::RngMPolElt -> ModMatRngElt", doc, symmetric_bilinear_form);
+    let doc = "The diagonal form of f of total degree 2 over a field, and the matrix T with T B T^t diagonal for the symmetric bilinear form B of f.";
+    it.def("DiagonalForm", "f::RngMPolElt -> RngMPolElt, ModMatRngElt", doc, diagonal_form);
     // Elements of affine algebras are their normal forms, whose terms these
     // functions see.
     it.def("Coefficients", "f::RngMPolResElt -> [RngElt]", "The coefficients of the terms of the normal form of f, largest first.", coefficients);
