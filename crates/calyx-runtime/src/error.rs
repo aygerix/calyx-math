@@ -89,8 +89,10 @@ pub struct ErrorInfo {
     /// A failed requirement of a package intrinsic, which names the
     /// intrinsic unless the call is a statement of its own.
     pub require: bool,
-    /// Raised in the code of a package intrinsic, whose traceback Magma
-    /// hides; `Some(true)` until the intrinsic's call frame is added.
+    /// Raised in the code of a package intrinsic, where Magma's report
+    /// quotes its package sources, shown as "[Magma package traceback
+    /// hidden]" (see `intrinsics::hidden`); `Some(true)` until the
+    /// intrinsic's call frame is added.
     pub hidden: Option<bool>,
 }
 

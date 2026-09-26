@@ -414,7 +414,7 @@ impl Interp {
         let mut out = String::new();
         if e.hidden.is_some() {
             // An error in the code of a package intrinsic: the call frames,
-            // but no positions.
+            // and the package positions as the reference outputs hide them.
             out.push('\n');
             self.push_frames(&mut out, e);
             out.push_str("[Magma package traceback hidden]\n");

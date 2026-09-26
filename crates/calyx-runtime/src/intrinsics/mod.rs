@@ -396,9 +396,12 @@ pub fn bare(e: RuntimeError) -> RuntimeError {
     e.in_context("")
 }
 
-/// An error raised in the code of a package intrinsic that Magma reports
-/// with its traceback hidden: the call frames, the intrinsic's own among
-/// them, then "[Magma package traceback hidden]" and the error, unnamed.
+/// An error raised in the code of a package intrinsic, which Magma reports
+/// with the call frames and positions in its package sources. Those
+/// positions are not ours to show (they quote Magma's code): the reference
+/// outputs have them replaced by "[Magma package traceback hidden]", and so
+/// does calyx. The frames printed are the intrinsic's own and those of the
+/// user functions calling it; the error is unnamed.
 pub fn hidden(e: RuntimeError) -> RuntimeError {
     let mut e = bare(e);
     e.hidden = Some(true);
