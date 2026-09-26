@@ -251,6 +251,62 @@ impl Drop for QiPoly<'_> {
     }
 }
 
+/// An nmod_poly that clears itself.
+struct NPoly(sys::nmod_poly_struct);
+
+impl NPoly {
+    fn new(p: u64) -> NPoly {
+        let mut a = sys::nmod_poly_struct::default();
+        unsafe { sys::nmod_poly_init(&mut a, p as sys::ulong) };
+        NPoly(a)
+    }
+
+    fn degree(&self) -> i64 {
+        unsafe { sys::nmod_poly_degree(&self.0) as i64 }
+    }
+}
+
+impl Drop for NPoly {
+    fn drop(&mut self) {
+        unsafe { sys::nmod_poly_clear(&mut self.0) };
+    }
+}
+
+/// Whether `g` is squarefree by a test modulo primes: its image modulo a
+/// prime ideal `(p, i - j)` of Z[i], `p ≡ 1 (mod 4)` and `j^2 ≡ -1`, has the
+/// same degree and is prime to its derivative. (A common factor of g and g'
+/// over Q(i) would divide both images with its degree.) False means only
+/// that three primes did not show it.
+fn surely_squarefree(g: &GPoly) -> bool {
+    let n = g.len();
+    let mut p: u64 = 1 << 62;
+    for _ in 0..3 {
+        p = loop {
+            p = unsafe { sys::n_nextprime(p as sys::ulong, 1) as u64 };
+            if p % 4 == 1 {
+                break p;
+            }
+        };
+        let j = unsafe { sys::n_sqrtmod(p as sys::ulong - 1, p as sys::ulong) };
+        let (mut f, mut d, mut h) = (NPoly::new(p), NPoly::new(p), NPoly::new(p));
+        unsafe {
+            for k in 0..n {
+                let (a, b) = (sys::fmpz_fdiv_ui(g.re.coeff(k).raw_ptr(), p as sys::ulong), sys::fmpz_fdiv_ui(g.im.coeff(k).raw_ptr(), p as sys::ulong));
+                sys::nmod_poly_set_coeff_ui(&mut f.0, k as sys::slong, sys::n_addmod(a, sys::n_mulmod2(b, j, p as sys::ulong), p as sys::ulong));
+            }
+            if f.degree() + 1 != n as i64 {
+                continue;
+            }
+            sys::nmod_poly_derivative(&mut d.0, &f.0);
+            sys::nmod_poly_gcd(&mut h.0, &f.0, &d.0);
+        }
+        if h.degree() == 0 {
+            return true;
+        }
+    }
+    false
+}
+
 /// The squarefree factorisation of `g` (with `g(0) != 0`): the factors of
 /// positive degree with their multiplicities.
 fn squarefree(g: &GPoly) -> Option<Vec<(GPoly, u64)>> {
@@ -269,7 +325,11 @@ fn squarefree(g: &GPoly) -> Option<Vec<(GPoly, u64)>> {
         }
         return Some(out);
     }
-    // Yun's algorithm over Q(i).
+    // Yun's algorithm over Q(i), whose gcds are slow for large degrees, for
+    // the rare polynomials that are not squarefree.
+    if surely_squarefree(g) {
+        return Some(vec![(g.clone(), 1)]);
+    }
     let qi = Qi::new();
     let f = QiPoly::from_gpoly(&qi, g);
     let df = f.derivative()?;
