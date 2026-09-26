@@ -140,3 +140,22 @@ Vector(GF(3), 2, [1, 2, 3]);
 Matrix([[GF(3)|]]);
 Matrix(Integers(), [[]]);
 Matrix([Vector([1,2]), Vector([1,2,3])]);
+
+// Parameters: the forms that Magma writes in its own language (those of
+// Matrix taking sequences of sequences, the zero, identity, diagonal and
+// random matrices) report them without the argument types
+Matrix([[1,2],[3,4]] : Foo := 1);
+Matrix([Vector([1,2]), Vector([3,4])] : Foo := 1);
+Matrix(Rationals(), [[1,2],[3,4]] : Foo := 1);
+Matrix(Rationals(), 2, 2, [1,2,3,4] : Foo := 1);
+Matrix(2, [1,2,3,4] : Foo := 1);
+ZeroMatrix(Rationals(), 2, 2 : Foo := 1);
+IdentityMatrix(Rationals(), 2 : Foo := 1);
+ScalarMatrix(2, 3 : Foo := 1);
+DiagonalMatrix([1,2] : Foo := 1);
+DiagonalMatrix(Rationals(), 2, [1,2] : Foo := 1);
+UpperTriangularMatrix([1,2,3] : Foo := 1);
+RandomMatrix(GF(5), 2, 2 : Foo := 1);
+RandomSLnZ(3, 2, 2 : Foo := 1);
+RandomSymplecticMatrix(2, 2 : Foo := 1);
+Vector([1,2] : Foo := 1);

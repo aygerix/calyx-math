@@ -617,16 +617,18 @@ pub fn register(it: &mut Interp) {
     it.def("Matrix", "m::RngIntElt, n::RngIntElt, Q::SeqEnum -> Mtrx", "The m by n matrix given by Q.", matrix_mnq);
     it.def("Matrix", "R::Rng, n::RngIntElt, Q::SeqEnum -> Mtrx", "The matrix over R with rows of length n given by Q.", matrix_nq);
     it.def("Matrix", "n::RngIntElt, Q::SeqEnum -> Mtrx", "The matrix with rows of length n given by Q.", matrix_nq);
-    it.def("Matrix", "Q::SeqEnum -> Mtrx", "The matrix with the rows Q.", matrix_rows);
-    it.def("Matrix", "R::Rng, Q::SeqEnum -> Mtrx", "The matrix over R with the rows Q.", matrix_rows);
+    // Magma writes the forms taking sequences of sequences in its own language.
+    it.def("Matrix", "Q::[ModTupRngElt] -> Mtrx", "The matrix with the rows Q.", matrix_rows);
+    it.def("Matrix", "Q::SeqEnum -> Mtrx", "The matrix with the rows Q.", matrix_rows).package = true;
+    it.def("Matrix", "R::Rng, Q::SeqEnum -> Mtrx", "The matrix over R with the rows Q.", matrix_rows).package = true;
     it.def("Matrix", "A::Mtrx -> Mtrx", "A in the matrix algebra or space of its shape.", matrix_of);
-    it.def("ZeroMatrix", "R::Rng, m::RngIntElt, n::RngIntElt -> Mtrx", "The m by n zero matrix over R.", zero_matrix);
-    it.def("IdentityMatrix", "R::Rng, n::RngIntElt -> Mtrx", "The n by n identity matrix over R.", identity_matrix);
+    it.def("ZeroMatrix", "R::Rng, m::RngIntElt, n::RngIntElt -> Mtrx", "The m by n zero matrix over R.", zero_matrix).package = true;
+    it.def("IdentityMatrix", "R::Rng, n::RngIntElt -> Mtrx", "The n by n identity matrix over R.", identity_matrix).package = true;
     it.def("ScalarMatrix", "n::RngIntElt, s::RngElt -> Mtrx", "The n by n scalar matrix s.", scalar_matrix);
     it.def("ScalarMatrix", "R::Rng, n::RngIntElt, s::RngElt -> Mtrx", "The n by n scalar matrix s over R.", scalar_matrix);
-    it.def("DiagonalMatrix", "R::Rng, n::RngIntElt, Q::SeqEnum -> Mtrx", "The n by n diagonal matrix over R with diagonal Q.", diagonal_matrix);
-    it.def("DiagonalMatrix", "R::Rng, Q::SeqEnum -> Mtrx", "The diagonal matrix over R with diagonal Q.", diagonal_matrix);
-    it.def("DiagonalMatrix", "Q::SeqEnum -> Mtrx", "The diagonal matrix with diagonal Q.", diagonal_matrix);
+    it.def("DiagonalMatrix", "R::Rng, n::RngIntElt, Q::SeqEnum -> Mtrx", "The n by n diagonal matrix over R with diagonal Q.", diagonal_matrix).package = true;
+    it.def("DiagonalMatrix", "R::Rng, Q::SeqEnum -> Mtrx", "The diagonal matrix over R with diagonal Q.", diagonal_matrix).package = true;
+    it.def("DiagonalMatrix", "Q::SeqEnum -> Mtrx", "The diagonal matrix with diagonal Q.", diagonal_matrix).package = true;
     for (name, f) in [
         ("LowerTriangularMatrix", lower_triangular as crate::intrinsics::NativeFn),
         ("UpperTriangularMatrix", upper_triangular),
@@ -638,14 +640,20 @@ pub fn register(it: &mut Interp) {
     }
     it.def("PermutationMatrix", "R::Rng, Q::[RngIntElt] -> Mtrx", "The permutation matrix over R of Q.", permutation_matrix_seq);
     it.def("PermutationMatrix", "R::Rng, x::GrpPermElt -> Mtrx", "The permutation matrix over R of x.", permutation_matrix_perm);
-    it.def("RandomMatrix", "R::Rng, m::RngIntElt, n::RngIntElt -> Mtrx", "A random m by n matrix over the finite ring R.", random_matrix);
-    it.def("RandomUnimodularMatrix", "n::RngIntElt, M::RngIntElt -> Mtrx", "A random n by n integral matrix of determinant 1 or -1.", random_unimodular);
-    it.def("RandomSLnZ", "n::RngIntElt, k::RngIntElt, l::RngIntElt -> AlgMatElt", "A random element of SL(n, Z).", random_sln_z);
-    it.def("RandomGLnZ", "n::RngIntElt, k::RngIntElt, l::RngIntElt -> AlgMatElt", "A random element of GL(n, Z).", random_gln_z);
-    it.def("RandomSymplecticMatrix", "g::RngIntElt, m::RngIntElt -> Mtrx", "A random 2g by 2g integral symplectic matrix.", random_symplectic);
-    it.def("RandomSymmetricMatrix", "R::Rng, n::RngIntElt -> AlgMatElt", "A random n by n symmetric matrix over R.", random_symmetric);
-    it.def("RandomSymmetricMatrix", "R::Rng, n::RngIntElt, M::RngIntElt -> AlgMatElt", "A random n by n symmetric matrix over R with entries in [-M, M].", random_symmetric);
-    it.def("RandomPositiveDefiniteSymmetricMatrix", "n::RngIntElt, M::RngIntElt -> AlgMatElt", "A random positive definite symmetric integral matrix.", random_positive_definite);
+    // Magma writes the random generators in its own language.
+    let random: [(&str, &str, &str, crate::intrinsics::NativeFn); 8] = [
+        ("RandomMatrix", "R::Rng, m::RngIntElt, n::RngIntElt -> Mtrx", "A random m by n matrix over the finite ring R.", random_matrix),
+        ("RandomUnimodularMatrix", "n::RngIntElt, M::RngIntElt -> Mtrx", "A random n by n integral matrix of determinant 1 or -1.", random_unimodular),
+        ("RandomSLnZ", "n::RngIntElt, k::RngIntElt, l::RngIntElt -> AlgMatElt", "A random element of SL(n, Z).", random_sln_z),
+        ("RandomGLnZ", "n::RngIntElt, k::RngIntElt, l::RngIntElt -> AlgMatElt", "A random element of GL(n, Z).", random_gln_z),
+        ("RandomSymplecticMatrix", "g::RngIntElt, m::RngIntElt -> Mtrx", "A random 2g by 2g integral symplectic matrix.", random_symplectic),
+        ("RandomSymmetricMatrix", "R::Rng, n::RngIntElt -> AlgMatElt", "A random n by n symmetric matrix over R.", random_symmetric),
+        ("RandomSymmetricMatrix", "R::Rng, n::RngIntElt, M::RngIntElt -> AlgMatElt", "A random symmetric matrix with entries in [-M, M].", random_symmetric),
+        ("RandomPositiveDefiniteSymmetricMatrix", "n::RngIntElt, M::RngIntElt -> AlgMatElt", "A random positive definite matrix.", random_positive_definite),
+    ];
+    for (name, sig, doc, f) in random {
+        it.def(name, sig, doc, f).package = true;
+    }
     it.def("Vector", "n::RngIntElt, Q::SeqEnum -> ModTupRngElt", "The vector of length n with entries Q.", vector_of);
     it.def("Vector", "Q::SeqEnum -> ModTupRngElt", "The vector with entries Q.", vector_of);
     it.def("Vector", "R::Rng, n::RngIntElt, Q::SeqEnum -> ModTupRngElt", "The vector over R of length n with entries Q.", vector_of);

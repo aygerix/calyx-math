@@ -76,12 +76,14 @@ pub fn rank_of(x: &Mtrx) -> RResult<usize> {
     }
 }
 
-fn rank(_: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+fn rank(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    check_params(it, a, &proof_params(), &[])?;
     let x = mat_arg(a, 0)?.clone();
     intv(Integer::from_u64(rank_of(&x)? as u64))
 }
 
 fn determinant(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    check_params(it, a, &proof_params(), &[])?;
     let x = square(a, 0)?;
     let d = x.m.det().map_err(gr)?;
     one(it.elem_to_value(x.ring(), d))
@@ -839,6 +841,7 @@ fn echelon_form(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 }
 
 fn hermite_form(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    check_params(it, a, &hermite_params(), &["Classical", "Default", "Modular"])?;
     let x = mat_arg(a, 0)?.clone();
     if kind(&x) != Kind::Integers {
         return Err(unsupported("The Hermite form"));
@@ -888,11 +891,13 @@ fn kernel_space(it: &mut Interp, x: &Mtrx) -> RResult<Value> {
 }
 
 fn kernel(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    check_params(it, a, &kernel_params(), KERNEL_ALS)?;
     let x = mat_arg(a, 0)?.clone();
     one(kernel_space(it, &x)?)
 }
 
 fn kernel_matrix(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    check_params(it, a, &kernel_params(), KERNEL_ALS)?;
     let x = mat_arg(a, 0)?.clone();
     let k = kernel_matrix_of(&x)?;
     let ring = x.ring().clone();
@@ -1176,39 +1181,84 @@ fn is_consistent(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     Ok(vals![Value::Bool(true), v, kernel_space(it, &x)?])
 }
 
+// ----- parameters ------------------------------------------------------------------
+
+/// The parameters of `Determinant` (and the first two of `Rank`), which the
+/// exact algorithms here have no use for.
+fn proof_params() -> [(&'static str, Value); 4] {
+    [("MonteCarloLevel", Value::int(0)), ("Proof", Value::Bool(true)), ("pAdic", Value::Bool(true)), ("Divisor", Value::int(0))]
+}
+
+fn hermite_params() -> [(&'static str, Value); 4] {
+    [("Al", Value::str("Default")), ("Optimize", Value::Bool(true)), ("Integral", Value::Bool(true)), ("InitialSort", Value::Bool(false))]
+}
+
+/// `Kernel`, `KernelMatrix` and `NullspaceMatrix` take an `Al` among
+/// `KERNEL_ALS`; every one of them gives the same basis in Magma.
+fn kernel_params() -> [(&'static str, Value); 1] {
+    [("Al", Value::str("Default"))]
+}
+
+const KERNEL_ALS: &[&str] = &["Default", "Hermite", "LLL", "Modular"];
+
+/// Magma's errors for a parameter whose value does not have the type of its
+/// default, or for an `Al` that is not one of `als`.
+fn check_params(it: &Interp, a: &CallArgs, params: &[(&str, Value)], als: &[&str]) -> RResult<()> {
+    let error = |msg: String| {
+        let types: Vec<String> = a.args.iter().map(|v| it.type_name_ext(v)).collect();
+        Err(RuntimeError::runtime(format!("{msg}\nArgument types given: {}", types.join(", "))))
+    };
+    for (p, default) in params {
+        match a.param(p) {
+            Some(v) if std::mem::discriminant(v) != std::mem::discriminant(default) => return error(format!("Bad type for parameter '{p}'")),
+            Some(Value::Str(s)) if !als.contains(&s.as_str()) => return error(format!("Bad value for parameter '{p}' ({})", s.as_str())),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 pub fn register(it: &mut Interp) {
     for ty in ["AlgMatElt", "ModMatRngElt"] {
         it.def("Transpose", &format!("A::{ty} -> Mtrx"), "The transpose of A.", transpose);
     }
-    it.def("Rank", "A::Mtrx -> RngIntElt", "The rank of A.", rank);
-    let params = [("MonteCarloLevel", Value::int(0)), ("Proof", Value::Bool(true)), ("pAdic", Value::Bool(true)), ("Divisor", Value::int(0))];
-    it.def_params("Determinant", "A::Mtrx -> RngElt", &params, "The determinant of A.", determinant);
+    it.def_params("Rank", "A::Mtrx -> RngIntElt", &proof_params()[..2], "The rank of A.", rank);
+    it.def_params("Determinant", "A::Mtrx -> RngElt", &proof_params(), "The determinant of A.", determinant);
     it.def("Trace", "A::Mtrx -> RngElt", "The trace of A.", trace);
     it.def("TraceOfProduct", "A::Mtrx, B::Mtrx -> RngElt", "The trace of A*B.", trace_of_product);
-    it.def("Minor", "M::Mtrx, i::RngIntElt, j::RngIntElt -> RngElt", "The minor of M without row i and column j.", minor);
-    it.def("Minor", "M::Mtrx, I::[RngIntElt], J::[RngIntElt] -> RngElt", "The minor of M with rows I and columns J.", minor_seqs);
-    it.def("Minors", "M::Mtrx, r::RngIntElt -> SeqEnum", "The r by r minors of M.", minors);
-    it.def("Cofactor", "M::Mtrx, i::RngIntElt, j::RngIntElt -> RngElt", "The cofactor of M at (i, j).", cofactor);
-    it.def("Cofactors", "M::Mtrx -> SeqEnum", "The cofactors of M.", cofactors);
-    it.def("Cofactors", "M::Mtrx, r::RngIntElt -> SeqEnum", "The r by r cofactors of M.", cofactors);
+    // Magma writes the minors, cofactors and Pfaffians in its own language.
+    let package: [(&str, &str, &str, crate::intrinsics::NativeFn); 9] = [
+        ("Minor", "M::Mtrx, i::RngIntElt, j::RngIntElt -> RngElt", "The minor of M without row i and column j.", minor),
+        ("Minor", "M::Mtrx, I::[RngIntElt], J::[RngIntElt] -> RngElt", "The minor of M with rows I and columns J.", minor_seqs),
+        ("Minors", "M::Mtrx, r::RngIntElt -> SeqEnum", "The r by r minors of M.", minors),
+        ("Cofactor", "M::Mtrx, i::RngIntElt, j::RngIntElt -> RngElt", "The cofactor of M at (i, j).", cofactor),
+        ("Cofactors", "M::Mtrx -> SeqEnum", "The cofactors of M.", cofactors),
+        ("Cofactors", "M::Mtrx, r::RngIntElt -> SeqEnum", "The r by r cofactors of M.", cofactors),
+        ("Pfaffian", "M::Mtrx -> RngElt", "The Pfaffian of the anti-symmetric matrix M.", pfaffian),
+        ("Pfaffian", "M::Mtrx, I::[RngIntElt], J::[RngIntElt] -> RngElt", "The Pfaffian of the rows I and columns J of M.", pfaffian),
+        ("Pfaffians", "M::Mtrx, r::RngIntElt -> SeqEnum", "The Pfaffians of the principal r by r submatrices of M.", pfaffians),
+    ];
+    for (name, sig, doc, f) in package {
+        it.def(name, sig, doc, f).package = true;
+    }
     it.def("Adjoint", "A::Mtrx -> AlgMatElt", "The adjoint of A.", adjoint);
     it.def("IsUnit", "A::Mtrx -> BoolElt", "Whether A is invertible.", is_unit);
     it.def("IsSingular", "A::Mtrx -> BoolElt", "Whether the determinant of A is zero.", is_singular);
-    it.def("Pfaffian", "M::Mtrx -> RngElt", "The Pfaffian of the anti-symmetric matrix M.", pfaffian);
-    it.def("Pfaffian", "M::Mtrx, I::[RngIntElt], J::[RngIntElt] -> RngElt", "The Pfaffian of the rows I and columns J of M.", pfaffian);
-    it.def("Pfaffians", "M::Mtrx, r::RngIntElt -> SeqEnum", "The Pfaffians of the principal r by r submatrices of M.", pfaffians);
     it.def("EchelonForm", "A::Mtrx -> Mtrx, AlgMatElt", "The reduced echelon form E of A and T with T*A = E.", echelon_form);
-    let params = [("Al", Value::str("Default")), ("Optimize", Value::Bool(true)), ("Integral", Value::Bool(true))];
-    it.def_params("HermiteForm", "A::Mtrx -> Mtrx, AlgMatElt", &params, "The Hermite form H of A and T with T*A = H.", hermite_form);
-    for name in ["Nullspace", "Kernel"] {
-        it.def(name, "A::Mtrx -> ModTupRng", "The space of vectors v with v*A = 0.", kernel);
-    }
+    it.def_params("HermiteForm", "A::Mtrx -> Mtrx, AlgMatElt", &hermite_params(), "The Hermite form H of A and T with T*A = H.", hermite_form);
+    it.def("Nullspace", "A::Mtrx -> ModTupRng", "The space of vectors v with v*A = 0.", kernel);
+    it.def_params("Kernel", "A::Mtrx -> ModTupRng", &kernel_params(), "The space of vectors v with v*A = 0.", kernel);
     for name in ["NullspaceMatrix", "KernelMatrix"] {
-        it.def(name, "A::Mtrx -> Mtrx", "A basis of the nullspace of A as the rows of a matrix.", kernel_matrix);
+        it.def_params(name, "A::Mtrx -> Mtrx", &kernel_params(), "A basis of the nullspace of A as the rows of a matrix.", kernel_matrix);
     }
     it.def("NullspaceOfTranspose", "A::Mtrx -> ModTupRng", "The nullspace of the transpose of A.", nullspace_of_transpose);
     it.def("IsConsistent", "A::Mtrx, W::Mtrx -> BoolElt, Mtrx, ModTupRng", "Whether V*A = W has a solution; a solution and the nullspace.", is_consistent);
-    it.def("IsConsistent", "A::Mtrx, Q::[ModTupRngElt] -> BoolElt, SeqEnum, ModTupRng", "Whether V*A = Q[i] has solutions; solutions and the nullspace.", is_consistent);
+    it.def(
+        "IsConsistent",
+        "A::Mtrx, Q::[ModTupRngElt] -> BoolElt, SeqEnum, ModTupRng",
+        "Whether V*A = Q[i] has solutions; solutions and the nullspace.",
+        is_consistent,
+    );
     it.def("Solution", "A::Mtrx, W::Mtrx -> Mtrx, ModTupRng", "A solution of V*A = W and the nullspace of A.", solution);
     it.def("Solution", "A::Mtrx, Q::[ModTupRngElt] -> SeqEnum, ModTupRng", "Solutions of V*A = Q[i] and the nullspace of A.", solution);
 }

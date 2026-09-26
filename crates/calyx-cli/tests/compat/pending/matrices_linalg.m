@@ -203,3 +203,34 @@ Solution(B, [Vector(Rationals(), [1, 2]), Vector(Rationals(), [1, 1])]);
 Solution(Matrix(GF(7), 3, 2, [1,2, 2,4, 3,6]), [Vector(GF(7), [1, 1])]);
 IsConsistent(Matrix(Integers(), 2, 2, [2, 1, 0, 3]), [Vector(Integers(), [4, 5]), Vector(Integers(), [2, 7])]);
 IsConsistent(Matrix(Integers(6), 3, 2, [1,2, 2,4, 3,0]), [Vector(Integers(6), [1, 2])]);
+
+// Parameters: those of Rank, Determinant, HermiteForm and the kernels are
+// checked; minors, cofactors and Pfaffians are written in Magma's language
+M := Matrix(Rationals(), 2, 2, [1,2,3,4]);
+Z := Matrix(Integers(), 3, 2, [1,2,3,4,5,6]);
+Rank(M : Proof := false, MonteCarloLevel := 1);
+Rank(M : Foo := 1);
+Rank(M : Proof := 1);
+Rank(M : pAdic := true);
+Determinant(M : Proof := false);
+Determinant(M : MonteCarloLevel := false);
+Determinant(M : pAdic := 1);
+Determinant(M : Divisor := false);
+HermiteForm(Z : Al := "Classical", Optimize := false, InitialSort := true);
+HermiteForm(Z : Al := "Foo");
+HermiteForm(Z : Al := 1);
+HermiteForm(Z : Integral := 1);
+KernelMatrix(Z : Al := "LLL");
+NullspaceMatrix(Z : Al := "Modular");
+Kernel(Z : Al := "Hermite");
+Kernel(M : Al := "Foo");
+KernelMatrix(M : Al := 1);
+Nullspace(M : Al := "Default");
+EchelonForm(M : Foo := 1);
+Minor(M, 1, 1 : Foo := 1);
+Minors(M, 1 : Foo := 1);
+Cofactors(M : Foo := 1);
+Pfaffian(M : Foo := 1);
+Pfaffians(M, 2 : Foo := 1);
+Adjoint(M : Foo := 1);
+Trace(M : Foo := 1);
