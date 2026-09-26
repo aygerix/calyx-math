@@ -555,6 +555,66 @@ pub fn complex_roots(re: &[Integer], im: &[Integer], bits: u64) -> Option<Vec<(C
     Some(rs.into_iter().map(|(r, e)| (Complex::new(r.re, r.im), e)).collect())
 }
 
+// ----- Newton's iteration --------------------------------------------------
+
+/// Why Newton's iteration gave no root.
+#[derive(Debug, PartialEq, Eq)]
+pub enum NewtonError {
+    /// The derivative is zero at an iterate.
+    DivisionByZero,
+    /// No step was small enough within the allowed number of steps.
+    NoConvergence,
+}
+
+/// `f(x)` by Horner's rule for the coefficients `f` (constant term first),
+/// of the precision of x, each operation rounded.
+pub fn horner(f: &[Complex], x: &Complex) -> Complex {
+    let zero = Real::zero(x.prec());
+    f.iter().rev().fold(Complex::new(zero.clone(), zero), |r, c| r.mul(x).add(c))
+}
+
+/// The coefficients of the derivative, each rounded.
+pub fn derivative(f: &[Complex]) -> Vec<Complex> {
+    f.iter().enumerate().skip(1).map(|(i, c)| Complex::new(c.re.mul_i64(i as i64), c.im.mul_i64(i as i64))).collect()
+}
+
+/// Newton's iteration `x - f(x)/f'(x)` for the coefficients `f` (constant
+/// term first) from `x`, as in Magma's HenselLift: the first step at
+/// `first` bits, the others at the precision of x (and of the
+/// coefficients). It stops after the first step smaller than `10^-t max(1,
+/// |x|)` (Magma takes `t = ⌊3(k - 1)/4⌋` for k digits), so that below 1 the
+/// step is small in absolute terms and above 1 relative to x. Gives the
+/// last iterate and the number of steps, at most `max_steps`.
+pub fn newton(f: &[Complex], x: &Complex, t: u64, first: u64, max_steps: u64) -> Result<(Complex, u64), NewtonError> {
+    let prec = x.prec();
+    let df = derivative(f);
+    let low: Vec<Complex> = f.iter().map(|c| c.round_to(first)).collect();
+    let dlow = derivative(&low);
+    let scale = Real::from_integer(&Integer::from_u64(10).pow(t), prec);
+    let one = Real::from_i64(1, prec);
+    let mut x = x.clone();
+    for n in 1..=max_steps {
+        let c = if n == 1 {
+            let y = x.round_to(first);
+            let c = horner(&low, &y).div(&horner(&dlow, &y)).ok_or(NewtonError::DivisionByZero)?;
+            x = y.sub(&c).round_to(prec);
+            c.round_to(prec)
+        } else {
+            let c = horner(f, &x).div(&horner(&df, &x)).ok_or(NewtonError::DivisionByZero)?;
+            x = x.sub(&c);
+            c
+        };
+        let (step, size) = (c.abs().mul(&scale), x.abs());
+        if !step.is_finite() || !size.is_finite() {
+            break;
+        }
+        if step.cmp_abs(if size.cmp_abs(&one) == Ordering::Greater { &size } else { &one }) == Ordering::Less {
+            return Ok((x, n));
+        }
+    }
+    Err(NewtonError::NoConvergence)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -606,5 +666,61 @@ mod tests {
         let rs = complex_roots(&ints(&[3, 1, 1]), &ints(&[-1, 2, 0]), 67).unwrap();
         let got: Vec<(String, String)> = rs.iter().map(|(z, _)| (show(&z.re), show(&z.im))).collect();
         assert_eq!(got, vec![(m.into(), "-3.0000000000000000000".into()), (z.into(), o.into())]);
+    }
+
+    /// Real coefficients as complex numbers of `prec` bits.
+    fn poly(f: &[i64], prec: u64) -> Vec<Complex> {
+        f.iter().map(|&c| Complex::from_real(Real::from_i64(c, prec))).collect()
+    }
+
+    /// The number of Newton steps HenselLift takes for k digits.
+    fn steps(f: &[Complex], x: &Complex, k: u64) -> u64 {
+        newton(f, x, 3 * (k - 1) / 4, 200, 1000).unwrap().1
+    }
+
+    #[test]
+    fn newton_stops_after_a_small_step() {
+        // z^2 + 1 from 0.1 + 0.9i: quadratic convergence.
+        let c = |n, d| Real::from_rational(&Rational::new(&Integer::from_i64(n), &Integer::from_i64(d)).unwrap(), 67).round_to(200);
+        let z = Complex::new(c(1, 10), c(9, 10));
+        let got: Vec<u64> = [1, 2, 3, 4, 7, 8, 12, 13, 24, 25, 45, 50].iter().map(|&k| steps(&poly(&[1, 0, 1], 200), &z, k)).collect();
+        assert_eq!(got, vec![1, 1, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7]);
+        // The double root 1 of x^4 - 4x + 3 from 0: linear convergence.
+        let got: Vec<u64> = (3..=20).map(|k| steps(&poly(&[3, -4, 0, 0, 1], 200), &Complex::from_real(Real::zero(200)), k)).collect();
+        assert_eq!(got, vec![3, 6, 9, 9, 13, 16, 19, 19, 22, 26, 29, 29, 32, 36, 39, 39, 42, 46]);
+        // Scaled to the root s: relative steps above 1, absolute below.
+        let scaled = |s: i64, d: i64| {
+            let s = Rational::new(&Integer::from_i64(s), &Integer::from_i64(d)).unwrap();
+            let r = |q: &Rational| Complex::from_real(Real::from_rational(q, 200));
+            let s3 = &(&s * &s) * &s;
+            vec![r(&(&(&s3 * &s) * &Rational::from_integer(&Integer::from_i64(3)))), r(&(&s3 * &Rational::from_integer(&Integer::from_i64(-4)))), r(&Rational::zero()), r(&Rational::zero()), r(&Rational::one())]
+        };
+        let zero = Complex::from_real(Real::zero(200));
+        assert_eq!([8, 12, 16, 20].map(|k| steps(&scaled(1000, 1), &zero, k)), [16, 26, 36, 46]);
+        assert_eq!([8, 12, 16, 20].map(|k| steps(&scaled(1, 1000), &zero, k)), [6, 16, 26, 36]);
+    }
+
+    #[test]
+    fn newton_first_step_rounds() {
+        // x^2 + x from 0.1 converges to 0: the result keeps the error of a
+        // first step at 37 bits, doubled at each step.
+        let x = Complex::from_real(Real::from_rational(&Rational::new(&Integer::from_i64(1), &Integer::from_i64(10)).unwrap(), 200));
+        let exact = newton(&poly(&[0, 1, 1], 200), &x, 9, 200, 100).unwrap();
+        let magma = newton(&poly(&[0, 1, 1], 200), &x, 9, 37, 100).unwrap();
+        assert_eq!((exact.1, magma.1), (5, 5));
+        let rel = magma.0.re.sub(&exact.0.re).div(&exact.0.re).unwrap().abs();
+        assert!(rel.to_f64() > 2e-10 && rel.to_f64() < 3e-10);
+    }
+
+    #[test]
+    fn newton_failures() {
+        let one = Complex::from_real(Real::from_i64(1, 100));
+        assert_eq!(newton(&poly(&[3], 100), &one, 5, 100, 100), Err(NewtonError::DivisionByZero));
+        assert_eq!(newton(&poly(&[-2, 0, 1], 100), &Complex::from_real(Real::zero(100)), 5, 100, 100), Err(NewtonError::DivisionByZero));
+        // x^3 - 2x + 2 from 0 cycles through 0 and 1.
+        assert_eq!(newton(&poly(&[2, -2, 0, 1], 100), &Complex::from_real(Real::zero(100)), 5, 100, 100), Err(NewtonError::NoConvergence));
+        // An exact root: the step 0 stops it.
+        let (x, n) = newton(&poly(&[-2, 1], 100), &Complex::from_real(Real::from_i64(2, 100)), 5, 100, 100).unwrap();
+        assert_eq!((x.re, n), (Real::from_i64(2, 100), 1));
     }
 }

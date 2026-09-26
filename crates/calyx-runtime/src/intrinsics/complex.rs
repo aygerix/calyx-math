@@ -6,16 +6,18 @@
 //! elements are `Value::Complex`. Operations are rounded correctly in each
 //! part, as with MPC, which Magma uses.
 
+use std::cmp::Ordering;
 use std::rc::Rc;
 
+use calyx_flint::approx::{self, ApproxError};
 use calyx_flint::gr::CtxKind;
-use calyx_flint::polroots;
-use calyx_flint::{Elementary, Integer, ModifiedPolylog, Modular, Rational, Real, ThetaCost};
+use calyx_flint::polroots::{self, NewtonError};
+use calyx_flint::{Elementary, Integer, ModifiedPolylog, Modular, Rational, Real, ThetaCost, bits_for_digits};
 use calyx_syntax::ast::BinOp;
 
 use super::reals::{self, default_bits, field_bits, to_real};
-use super::{arg_not, boolv, one};
-use crate::error::{RResult, RuntimeError};
+use super::{arg_not, boolv, hidden, one};
+use crate::error::{RResult, RuntimeError, TraceFrame};
 use crate::interp::{CallArgs, Interp};
 use crate::ops::div_by_zero;
 use crate::print::Level;
@@ -653,6 +655,146 @@ fn has_root(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     }
 }
 
+/// Argument i, a real number or a complex one that is real, as Magma's
+/// real intrinsics take it.
+fn real_valued(it: &Interp, a: &CallArgs, i: usize) -> RResult<Real> {
+    match &a.args[i] {
+        Value::Real(r) => Ok(r.x.clone()),
+        Value::Complex(c) if c.im.is_zero() => Ok(c.re.clone()),
+        _ => {
+            let types: Vec<String> = a.args.iter().map(|v| it.type_name_ext(v)).collect();
+            Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}", types.join(", "))))
+        }
+    }
+}
+
+/// `ContinuedFraction(x : Bound)`: the continued fraction of x up to its
+/// precision (see `calyx_flint::approx`).
+fn continued_fraction(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let bound = match a.param("Bound") {
+        None | Some(Value::Undef) => None,
+        Some(Value::Int(n)) if n.sign() < 0 => return Err(RuntimeError::runtime("Bad value for parameter 'Bound'")),
+        Some(Value::Int(n)) => Some(n.clone()),
+        Some(_) => return Err(reals::bad_param(it, a, "Bound")),
+    };
+    let x = real_valued(it, a, 0)?;
+    let terms = approx::continued_fraction(&x, bound.as_ref()).ok_or_else(|| RuntimeError::runtime("Undefined sequence element"))?;
+    one(Value::int_seq(terms))
+}
+
+/// `BestApproximation(x, k)`: PARI's best approximation of x by a rational
+/// of denominator at most k (see `calyx_flint::approx`).
+fn best_approximation(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let x = real_valued(it, a, 0)?;
+    match approx::best_approximation(&x, a.int(1)?) {
+        Ok(q) => one(Value::rat(q)),
+        Err(ApproxError::DivisionByZero) => Err(RuntimeError::runtime("Division by zero in (possibly) real or complex division. Maybe loss of precision?")),
+        Err(ApproxError::PrecisionLoss) => Err(RuntimeError::runtime("Overflow or precision loss in truncation")),
+    }
+}
+
+// ----- Newton's iteration ---------------------------------------------------
+
+/// The coefficients of `f`, constant term first, as complex numbers of
+/// `bits` bits, if its coefficient ring is the integers, the rationals or a
+/// real or complex field.
+fn float_coefficients(f: &Elt, bits: u64) -> Option<Vec<ComplexV>> {
+    let kind = f.x.ctx().base()?.kind().clone();
+    (0..f.x.poly_len())
+        .map(|k| {
+            let c = f.x.poly_coeff(k);
+            Some(match kind {
+                CtxKind::Integers => ComplexV::from_real(Real::from_integer(&c.to_integer().ok()?, bits)),
+                CtxKind::Rationals => ComplexV::from_real(Real::from_rational(&c.to_rational().ok()?, bits)),
+                CtxKind::RealFloat(_) => ComplexV::from_real(c.to_real()?.round_to(bits)),
+                CtxKind::ComplexFloat(_) => {
+                    let (x, y) = c.to_complex_parts()?;
+                    ComplexV::new(x.round_to(bits), y.round_to(bits))
+                }
+                _ => return None,
+            })
+        })
+        .collect()
+}
+
+/// An error in the code HenselLift runs through Magma's InternalHenselLift,
+/// which takes the constructor of the field of the result as `R`.
+fn internal_hensel_error(it: &mut Interp, a: &CallArgs, field: &str, e: RuntimeError) -> RuntimeError {
+    let mut args: Vec<(String, String)> = ["f", "x", "k"].iter().zip(&a.args).map(|(p, v)| (p.to_string(), it.frame_arg(v))).collect();
+    args.push(("R".into(), format!("Intrinsic '{field}' ")));
+    let mut e = hidden(e);
+    e.trace.push(TraceFrame { name: crate::sym::Sym::new("InternalHenselLift"), span: None, args });
+    e
+}
+
+/// The precision of Magma's first Newton step in HenselLift.
+const HENSEL_FIRST_BITS: u64 = 37;
+
+/// `HenselLift(f, x, k)`: Newton's iteration for f from x to k digits, in
+/// the real or complex field of k digits (see `polroots::newton`). As in
+/// Magma, x must satisfy Kantorovich's condition `|f(x) f''(x)| <
+/// |f'(x)|^2/2`, checked at the precision of x (at most that of the
+/// coefficients), and a real x needs a real polynomial.
+///
+/// A root 0 (or a part 0 of a complex root) comes out as a tiny number,
+/// whose digits are the rounding errors of the steps. For the polynomials
+/// tried, Magma takes the first step at 37 bits (11 digits), though at 7 to
+/// 14 digits for some, and the last steps at 2k + 19 digits, with steps in
+/// between at precisions not identified; calyx takes the first step at 37
+/// bits and the others at 2k + 19 digits, which gives Magma's digits in
+/// those cases up to about 25 digits. Magma also returns x unchanged, or
+/// fails to make a field of precision below 1, for polynomials with small
+/// coefficients (such as 10^-4 (x^2 - 2)), returns x unchanged for small k
+/// from starting points far from the root (1.5*10^m for x^2 - 2 and k up
+/// to 3m - 1), and loops forever where the iteration diverges; here the
+/// iteration gives up after a bounded number of steps.
+fn hensel_lift(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let Value::Elt(f) = &a.args[0] else { unreachable!("a polynomial") };
+    let f = f.clone();
+    let (real, px) = match &a.args[1] {
+        Value::Real(r) => (true, r.x.prec()),
+        Value::Complex(c) => (false, c.prec()),
+        _ => unreachable!("a real or complex number"),
+    };
+    let field = if real { "RealField" } else { "ComplexField" };
+    // f(x)/f'(x) and the condition at the precision of x.
+    let p = match f.x.ctx().base().map(|b| b.kind().clone()) {
+        Some(CtxKind::RealFloat(q) | CtxKind::ComplexFloat(q)) => px.min(q),
+        _ => px,
+    };
+    let Some(g) = float_coefficients(&f, p) else {
+        let e = RuntimeError::runtime("Arguments have incompatible coefficient rings").in_context("Evaluate");
+        return Err(internal_hensel_error(it, a, field, e));
+    };
+    let x = to_complex(&a.args[1], p).expect("a number");
+    let dg = polroots::derivative(&g);
+    let (fx, dfx) = (polroots::horner(&g, &x), polroots::horner(&dg, &x));
+    if dfx.is_zero() {
+        return Err(internal_hensel_error(it, a, field, div_by_zero().in_context("/")));
+    }
+    let lhs = fx.mul(&polroots::horner(&polroots::derivative(&dg), &x)).abs();
+    if lhs.cmp_abs(&dfx.abs().sqr().div_i64(2)) != Ordering::Less {
+        return Err(hidden(RuntimeError::statement("assert", "Assertion failed")));
+    }
+    let k = a.int(2)?.clone();
+    if k.sign() <= 0 {
+        return Err(hidden(arg_not(1, "positive").in_context(field)));
+    }
+    let digits = k.to_u64().filter(|&d| d < 1 << 38).ok_or_else(|| hidden(RuntimeError::runtime("Precision is too large").in_context(field)))?;
+    if real && g.iter().any(|c| !c.im.is_zero()) {
+        return Err(hidden(RuntimeError::runtime("Argument 2 is not coercible over argument 1").in_context("Polynomial")));
+    }
+    let bits = bits_for_digits(digits);
+    let wp = bits_for_digits(2 * digits + 19);
+    let g = float_coefficients(&f, wp).expect("coefficients");
+    let x = to_complex(&a.args[1], wp).expect("a number");
+    match polroots::newton(&g, &x, 3 * (digits - 1) / 4, HENSEL_FIRST_BITS, 8 * bits + 10_000) {
+        Ok((z, _)) => one(if real { Value::real(z.re.round_to(bits)) } else { cv(z.round_to(bits)) }),
+        Err(NewtonError::DivisionByZero) => Err(internal_hensel_error(it, a, field, div_by_zero().in_context("/"))),
+        Err(NewtonError::NoConvergence) => Err(RuntimeError::runtime("Newton's iteration does not converge")),
+    }
+}
+
 pub fn register(it: &mut Interp) {
     it.def_params("ComplexField", "-> FldCom", &[("Bits", Value::Bool(false))], "The default complex field.", complex_field);
     it.def_params("ComplexField", "p::RngIntElt -> FldCom", &[("Bits", Value::Bool(false))], "The complex field with p decimal digits of precision (or p bits with Bits).", complex_field);
@@ -736,6 +878,16 @@ pub fn register(it: &mut Interp) {
         it.def_params("Roots", &format!("p::RngUPolElt, S::{t} -> [Tup]"), &params, "The roots of p in S with their multiplicities, rounded correctly.", roots);
         it.def("HasRoot", &format!("p::RngUPolElt[{t}] -> BoolElt, {t}Elt"), "Whether p has a root in its coefficient field, and a root (0 if it is one, else the first of its roots).", has_root);
         it.def("HasRoot", &format!("p::RngUPolElt, S::{t} -> BoolElt, {t}Elt"), "Whether p has a root in S, and a root (0 if it is one, else the first of its roots).", has_root);
+    }
+    // Continued fractions, of real numbers and of complex numbers that are
+    // real.
+    for t in ["FldReElt", "FldComElt"] {
+        let doc = "The partial quotients of the continued fraction of x, as far as the precision of x determines them (at most Bound of them).";
+        it.def_params("ContinuedFraction", &format!("x::{t} -> [RngIntElt]"), &[("Bound", Value::Undef)], doc, continued_fraction);
+        let doc = "A rational approximation to x of denominator at most k, at least as close as the convergents of such denominators (PARI's bestappr).";
+        it.def("BestApproximation", &format!("x::{t}, k::RngIntElt -> FldRatElt"), doc, best_approximation);
+        let doc = "A root of f to k digits, by Newton's iteration from x (which must satisfy Kantorovich's condition |f(x) f''(x)| < |f'(x)|^2/2).";
+        it.def("HenselLift", &format!("f::RngUPolElt, x::{t}, k::RngIntElt -> {t}"), doc, hensel_lift);
     }
     for s in ["RngIntElt", "FldRatElt", "FldReElt", "FldComElt"] {
         it.def("JacobiThetaNullK", &format!("q::{s}, k::RngIntElt -> FldReElt"), "The k-th derivative at 0 of Jacobi's first theta function with nome q (real).", jacobi_theta_null);

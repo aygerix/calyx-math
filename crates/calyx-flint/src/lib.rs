@@ -5,6 +5,7 @@
 //! arithmetic backend can be swapped or extended without touching the
 //! interpreter.
 
+pub mod approx;
 pub mod ball;
 mod complex;
 mod crt;
