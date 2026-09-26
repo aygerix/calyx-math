@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 use calyx_flint::{Integer, Rational};
 
+use super::numtheory::{prime_test, proof};
 use super::{arg_ge, arg_not, boolv, intv, one};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
@@ -608,6 +609,7 @@ fn random_bits(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 }
 
 fn random_prime(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let proof = proof(it, a)?;
     // n is small and non-negative (positive with a congruence).
     let n = a.int_ge(0, if a.args.len() == 1 { 0 } else { 1 })?;
     let n = n.to_u64().filter(|&n| n < 1 << 30).ok_or_else(|| super::arg_le(1, &n, (1 << 30) - 1))?;
@@ -619,7 +621,7 @@ fn random_prime(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
         }
         loop {
             let p = it.rng.below(&bound);
-            if p.is_probable_prime() && p.is_prime() {
+            if prime_test(&p, proof) {
                 return intv(p);
             }
         }
@@ -634,7 +636,7 @@ fn random_prime(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     if count.sign() > 0 {
         for _ in 0..tries {
             let p = &r + &(&m * &it.rng.below(&count));
-            if p.is_probable_prime() && p.is_prime() {
+            if prime_test(&p, proof) {
                 return Ok(vals![Value::Bool(true), Value::Int(p)]);
             }
         }

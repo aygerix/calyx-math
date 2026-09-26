@@ -1,0 +1,93 @@
+true
+true
+false
+true
+false
+false
+false
+true
+false
+true
+false
+false
+
+>> IsProbablePrime(n : Bases := 0);
+                  ^
+Runtime error in 'IsProbablePrime': Value for 'Bases' must be small and positive
+
+
+>> IsProbablePrime(97 : Bases := -1);
+                  ^
+Runtime error in 'IsProbablePrime': Value for 'Bases' must be small and positive
+
+
+>> IsProbablePrime(4 : Bases := 2^30);
+                  ^
+Runtime error in 'IsProbablePrime': Value for 'Bases' must be small and positive
+
+
+>> IsProbablePrime(n : Bases := 10^30);
+                  ^
+Runtime error in 'IsProbablePrime': Value for 'Bases' must be small and positive
+
+
+>> IsProbablePrime(n : Bases := 1.5);
+                  ^
+Runtime error in 'IsProbablePrime': Bad type for parameter 'Bases'
+Argument types given: RngIntElt
+
+
+>> IsProbablePrime(1 : Bases := "x");
+                  ^
+Runtime error in 'IsProbablePrime': Bad type for parameter 'Bases'
+Argument types given: RngIntElt
+
+true
+false
+false
+true
+1000000000000000000000000000057
+3317044064679887385962123
+2
+3
+999999999999999999999999999989
+3317044064679887385961813
+3
+2
+
+>> PreviousPrime(2 : Proof := false);
+                ^
+Runtime error in 'PreviousPrime': Argument 1 (2) should be >= 3
+
+true
+true 3 true true
+
+>> IsPrime(97 : Proof := 1);
+          ^
+Runtime error in 'IsPrime': Bad type for parameter 'Proof'
+Argument types given: RngIntElt
+
+
+>> NextPrime(97 : Proof := 1);
+            ^
+Runtime error in 'NextPrime': Bad type for parameter 'Proof'
+Argument types given: RngIntElt
+
+
+>> PreviousPrime(97 : Proof := "x");
+                ^
+Runtime error in 'PreviousPrime': Bad type for parameter 'Proof'
+Argument types given: RngIntElt
+
+
+>> RandomPrime(10 : Proof := 1);
+              ^
+Runtime error in 'RandomPrime': Bad type for parameter 'Proof'
+Argument types given: RngIntElt
+
+
+>> RandomPrime(10, 1, 4, 10 : Proof := 1);
+              ^
+Runtime error in 'RandomPrime': Bad type for parameter 'Proof'
+Argument types given: RngIntElt, RngIntElt, RngIntElt, RngIntElt
+

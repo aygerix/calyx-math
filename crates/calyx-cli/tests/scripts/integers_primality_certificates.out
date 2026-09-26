@@ -1,0 +1,82 @@
+[ [* Det, 1000003 *] ]
+SeqEnum
+1
+true
+[ [* Det, 2 *] ]
+[ [* Det, 3317044064679887385961813 *] ]
+true
+true
+true true
+true true
+true true
+true true
+true true
+true
+[* 1000000000000000000000000000057, 3, -1, 999999999999998058691781125968, [* 0,
+1 *], [* 946760654256043643941398750617, 870117905989289906146832602557, 1 *], 
+[* [* 623786892692306107, 1 *] *] *]
+true
+false
+false
+false
+false
+false
+false
+true
+false
+false
+true
+false
+true
+false
+false
+[* [* 13, -1, 0, [* 13, 2, [* [* 2, 1 *], [* 3, 2, [* [* 2, 1 *] *] *] *] *] *] 
+*]
+[* [* 2, -1, 0, [* 2, 1 *] *] *]
+
+>> PrimalityCertificate(0);
+                       ^
+Runtime error in 'PrimalityCertificate': Argument 1 (0) should be >= 1
+
+
+>> PrimalityCertificate(-7);
+                       ^
+Runtime error in 'PrimalityCertificate': Argument 1 (-7) should be >= 1
+
+
+>> PrimalityCertificate(1);
+                       ^
+Runtime error in 'PrimalityCertificate': Argument 1 was not proven to be prime
+
+
+>> PrimalityCertificate(15);
+                       ^
+Runtime error in 'PrimalityCertificate': Argument 1 was not proven to be prime
+
+
+>> PrimalityCertificate(3317044064679887385961981);
+                       ^
+Runtime error in 'PrimalityCertificate': Argument 1 was not proven to be prime
+
+
+>> PrimalityCertificate(2^89 + 1);
+                       ^
+Runtime error in 'PrimalityCertificate': Argument 1 was not proven to be prime
+
+
+>> PrimalityCertificate(7 : Foo := 1);
+                       ^
+Runtime error in 'PrimalityCertificate': No parameters are possible
+Argument types given: RngIntElt
+
+
+>> CheckCertificate(PrimalityCertificate(7) : Foo := 1);
+                   ^
+Runtime error in 'CheckCertificate': Parameter 'Foo' is not defined for this 
+function
+
+
+>> OldCertificate(PrimalityCertificate(7) : Foo := 1);
+                 ^
+Runtime error in 'OldCertificate': No parameters are possible
+

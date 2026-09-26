@@ -6,7 +6,10 @@ use calyx_flint::{Integer, Real};
 use super::{arg_ge, arg_le, arg_prime, boolv, intv, one};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
+use crate::intrinsics::factoring::arith::{Ring, with_ring};
 use crate::value::*;
+
+mod ecpp;
 
 /// `x mod m` in `[0, m)` for `m > 0`.
 pub fn modp(x: &Integer, m: &Integer) -> Integer {
@@ -15,22 +18,102 @@ pub fn modp(x: &Integer, m: &Integer) -> Integer {
 
 // ----- primes -------------------------------------------------------------------
 
+/// Below this bound a number is prime if it is a strong probable prime to
+/// the prime bases up to 37 (Sorenson and Webster).
+pub(crate) const SW_BOUND: i128 = 3317044064679887385961981;
+const SW_BASES: [u64; 12] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37];
+
+pub(crate) fn sw_bound() -> Integer {
+    Integer::from_i128(SW_BOUND)
+}
+
+/// Primality of n below the Sorenson-Webster bound.
+pub(crate) fn det_prime(n: &Integer) -> bool {
+    if n.sign() <= 0 || n.is_one() {
+        return false;
+    }
+    if let Some(&b) = SW_BASES.iter().find(|&&b| n.mod_u64(b) == 0) {
+        return *n == Integer::from_u64(b);
+    }
+    SW_BASES.iter().all(|&b| n.is_strong_probable_prime(&Integer::from_u64(b)))
+}
+
 /// Primality as the `Proof` parameter asks for (negatives of primes are
-/// prime too).
-fn prime_test(n: &Integer, proof: bool) -> bool {
-    if proof { n.is_prime() } else { n.is_probable_prime() }
+/// prime too). Below the Sorenson-Webster bound the answer is exact either
+/// way (FLINT's tests are exact below 2^64); above it, without proof, it
+/// is BPSW's.
+pub(crate) fn prime_test(n: &Integer, proof: bool) -> bool {
+    let n = n.abs();
+    if n.bits() > 64 && n < sw_bound() {
+        det_prime(&n)
+    } else if proof {
+        n.is_prime()
+    } else {
+        n.is_probable_prime()
+    }
 }
 
-fn proof(a: &CallArgs) -> bool {
-    !matches!(a.param("Proof"), Some(Value::Bool(false)))
+/// Magma's error for a parameter of the wrong type.
+fn bad_param(it: &Interp, a: &CallArgs, p: &str) -> RuntimeError {
+    let types: Vec<String> = a.args.iter().map(|v| it.type_name_ext(v)).collect();
+    RuntimeError::runtime(format!("Bad type for parameter '{p}'\nArgument types given: {}", types.join(", ")))
 }
 
-fn is_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    boolv(prime_test(a.int(0)?, proof(a)))
+/// The parameter `Proof` (true by default).
+pub(crate) fn proof(it: &Interp, a: &CallArgs) -> RResult<bool> {
+    match a.param("Proof") {
+        Some(Value::Bool(b)) => Ok(*b),
+        Some(_) => Err(bad_param(it, a, "Proof")),
+        None => Ok(true),
+    }
 }
 
-fn is_probable_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    boolv(a.int(0)?.is_probable_prime())
+fn is_prime(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    boolv(prime_test(a.int(0)?, proof(it, a)?))
+}
+
+/// Exact below the Sorenson-Webster bound; above it, strong probable-prime
+/// tests to `Bases` random bases, after the primes below 1000.
+fn is_probable_prime(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let bases = match a.param("Bases") {
+        Some(Value::Int(b)) => b.to_u64().filter(|b| (1..1 << 30).contains(b)),
+        _ => return Err(bad_param(it, a, "Bases")),
+    };
+    let bases = bases.ok_or_else(|| RuntimeError::runtime("Value for 'Bases' must be small and positive"))?;
+    let n = a.int(0)?.abs();
+    if n < sw_bound() {
+        return boolv(prime_test(&n, false));
+    }
+    if n.is_even() || (3..1000).step_by(2).any(|p| n.mod_u64(p) == 0) {
+        return boolv(false);
+    }
+    let range = &n - 3;
+    let rng = &mut it.rng;
+    boolv(with_ring!(&n, |r| strong_tests(r, (0..bases).map(|_| &rng.below(&range) + 2))))
+}
+
+/// Whether the odd n > 3 is a strong probable prime to each of the bases,
+/// which lie in [2, n - 2] (Miller and Rabin).
+fn strong_tests<R: Ring>(r: &R, mut bases: impl Iterator<Item = Integer>) -> bool {
+    let n1 = r.modulus() - 1;
+    let (s, t) = n1.remove(&Integer::from_u64(2));
+    let (one, minus) = (r.one(), r.from_int(&n1));
+    bases.all(|b| {
+        let mut y = r.pow(&r.from_int(&b), &t);
+        if y == one || y == minus {
+            return true;
+        }
+        for _ in 1..s {
+            y = r.sqr(&y);
+            if y == minus {
+                return true;
+            }
+            if y == one {
+                break;
+            }
+        }
+        false
+    })
 }
 
 fn is_prime_power(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
@@ -43,20 +126,30 @@ fn is_prime_power(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     Ok(vals![Value::Bool(false), Value::Undef, Value::Undef])
 }
 
-fn next_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+fn next_prime(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int_ge(0, 0)?;
-    if proof(a) {
+    if proof(it, a)? || n < Integer::from_u64(2) {
         return intv(n.next_prime());
     }
-    let mut p = &n + 1;
-    while !p.is_probable_prime() {
-        p = &p + 1;
+    // The odd numbers above n.
+    let mut p = &n + if n.is_even() { 1 } else { 2 };
+    while !prime_test(&p, false) {
+        p = &p + 2;
     }
     intv(p)
 }
 
-fn previous_prime(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    intv(a.int_ge(0, 3)?.previous_prime().unwrap())
+fn previous_prime(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let n = a.int_ge(0, 3)?;
+    if proof(it, a)? || n <= Integer::from_u64(3) {
+        return intv(n.previous_prime().unwrap());
+    }
+    // The odd numbers below n, down to 3.
+    let mut p = &n - if n.is_even() { 1 } else { 2 };
+    while !prime_test(&p, false) {
+        p = &p - 2;
+    }
+    intv(p)
 }
 
 /// Calls `f` with the primes in `[lo, hi]` in increasing order until it
@@ -854,6 +947,7 @@ fn dickman_rho_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 }
 
 pub fn register(it: &mut Interp) {
+    ecpp::register(it);
     it.def_params("IsPrime", "n::RngIntElt -> BoolElt", &[("Proof", Value::Bool(true))], "Whether n is a prime number (or the negative of one).", is_prime);
     for name in ["IsProbablePrime", "IsProbablyPrime"] {
         it.def_params(name, "n::RngIntElt -> BoolElt", &[("Bases", Value::int(20))], "Whether |n| passes a strong probable-prime test.", is_probable_prime);
@@ -908,6 +1002,26 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
+
+    #[test]
+    fn strong_tests_find_liars() {
+        let int = Integer::from_u64;
+        let tests = |n: &Integer, bases: &[u64]| with_ring!(n, |r| strong_tests(r, bases.iter().map(|&b| int(b))));
+        // 3215031751 = 151 * 751 * 28351 is a strong pseudoprime to the
+        // bases 2, 3, 5 and 7, but not to 11.
+        let n = int(3215031751);
+        assert!(tests(&n, &[2, 3, 5, 7]) && !tests(&n, &[2, 11]));
+        assert!(!prime_test(&n, false) && !det_prime(&n));
+        // The Sorenson-Webster bound itself is one to every prime base up to
+        // 41, but not to 43.
+        let n = sw_bound();
+        assert!(tests(&n, &SW_BASES) && tests(&n, &[41]) && !tests(&n, &[43]));
+        let p = Integer::one().mul_2exp(521) - Integer::one();
+        assert!(tests(&p, &[2, 3, 1000, 12345]) && !tests(&(&p * &int(1000003)), &[2]));
+        // Below the bound the answers are exact.
+        let near = &n - &int(168);
+        assert!(prime_test(&near, false) && prime_test(&near, true) && !prime_test(&n, false) && !prime_test(&n, true));
+    }
 
     #[test]
     fn segmented_sieve_matches_trial_division() {

@@ -1,13 +1,14 @@
-//! Arithmetic modulo an odd n > 1 for ECM and the p ± 1 methods: numbers in
-//! Montgomery form in fixed arrays of words for n of up to 1024 bits, and
-//! FLINT's normalised limbs (calyx_flint::modn) beyond.
+//! Arithmetic modulo an odd n > 1 for ECM, the p ± 1 methods and ECPP:
+//! numbers in Montgomery form in fixed arrays of words for n of up to 1024
+//! bits, and FLINT's normalised limbs (calyx_flint::modn) beyond.
 
 use calyx_flint::Integer;
 use calyx_flint::modn::ModN;
 
-/// The residues modulo n that the factoring methods compute with.
+/// The residues modulo n that the factoring methods compute with. Each has
+/// one form, so residues are equal when their forms are.
 pub trait Ring {
-    type E: Clone;
+    type E: Clone + PartialEq;
     fn modulus(&self) -> &Integer;
     /// The residue of any integer.
     fn from_int(&self, x: &Integer) -> Self::E;
