@@ -25,6 +25,11 @@
 //! With an order graded by the degree, the reduced reducers of the degrees
 //! below the least degree of the new polynomials are the same in the next
 //! matrix, and are carried over to it.
+//!
+//! For the modular method a run can be traced and replayed modulo other
+//! primes (Traverso's Gröbner trace): the replay takes, from each matrix,
+//! only the rows that its new polynomials needed, and has neither pairs nor
+//! symbolic preprocessing.
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -34,6 +39,7 @@ use crate::order::Order;
 use crate::poly::{self, Ring};
 
 /// Monomials, each stored once and referred to by index.
+#[derive(Clone)]
 struct Monomials {
     n: usize,
     exps: Vec<u32>,
@@ -133,9 +139,17 @@ impl Monomials {
         }
     }
 
+    fn hash_of(&self, e: &[u32]) -> u64 {
+        e.iter().zip(&self.rnd).fold(0u64, |h, (&x, &r)| h.wrapping_add(r.wrapping_mul(x as u64)))
+    }
+
     fn insert(&mut self, e: &[u32]) -> u32 {
-        let h = e.iter().zip(&self.rnd).fold(0u64, |h, (&x, &r)| h.wrapping_add(r.wrapping_mul(x as u64)));
-        self.insert_hashed(e, h)
+        self.insert_hashed(e, self.hash_of(e))
+    }
+
+    /// The index of the monomial `e`, if it is stored.
+    fn lookup(&self, e: &[u32]) -> Option<u32> {
+        self.find(self.hash_of(e), |x| x == e).ok()
     }
 
     fn mul(&mut self, a: u32, b: u32) -> u32 {
@@ -427,6 +441,109 @@ struct F4<'a, E> {
     /// reduced pivot rows can be carried over.
     graded: bool,
     cache: Cache<E>,
+    /// The steps traced so far, when the run is traced.
+    steps: Option<Vec<Traced>>,
+}
+
+/// A run of F4 to replay modulo other primes: its monomials, the monomials
+/// of the generators as they were taken, the matrix of each step reduced to
+/// the rows its new polynomials needed, and the interreduction at the end.
+pub(crate) struct Trace {
+    mons: Monomials,
+    graded: bool,
+    inputs: Vec<Vec<u32>>,
+    steps: Vec<Traced>,
+    last: Traced,
+}
+
+/// A matrix of a traced run, reduced to the rows that its new polynomials
+/// needed, and the monomials of each new polynomial (of each polynomial of
+/// the basis at the end), by decreasing order.
+struct Traced {
+    mat: Matrix,
+    new: Vec<Vec<u32>>,
+}
+
+/// What reducing a matrix gives: the new rows of the echelon form (see
+/// `reduce_matrix`), which of the rows reduced gave each, the free columns,
+/// the pivot row of each column, and the rows reduced.
+struct Reduction {
+    new: Vec<(usize, Vec<u32>)>,
+    gave: Vec<usize>,
+    free: Vec<u32>,
+    pivot: Vec<u32>,
+    rest: Vec<usize>,
+}
+
+/// The rows of `mat` that the rows `start` need: those, and the pivot rows
+/// of the columns of the rows needed. The columns are those they meet, in
+/// the same order.
+fn needed(mat: Matrix, pivot: &[u32], start: impl Iterator<Item = usize>) -> Matrix {
+    let mut need = vec![false; mat.rows.len()];
+    let mut stack: Vec<usize> = start.collect();
+    stack.iter().for_each(|&r| need[r] = true);
+    while let Some(r) = stack.pop() {
+        for &c in &mat.rows[r].0 {
+            let q = pivot[c as usize];
+            if q != NONE && !need[q as usize] {
+                need[q as usize] = true;
+                stack.push(q as usize);
+            }
+        }
+    }
+    let mut col = vec![NONE; mat.cols.len()];
+    for r in (0..mat.rows.len()).filter(|&r| need[r]) {
+        mat.rows[r].0.iter().for_each(|&c| col[c as usize] = 0);
+    }
+    let mut cols = Vec::new();
+    for (c, k) in col.iter_mut().enumerate().filter(|(_, k)| **k == 0) {
+        *k = cols.len() as u32;
+        cols.push(mat.cols[c]);
+    }
+    let given = (0..mat.given).filter(|&r| need[r]).count();
+    let mut rows = mat.rows;
+    let mut r = 0;
+    rows.retain_mut(|(cs, _)| {
+        r += 1;
+        cs.iter_mut().for_each(|c| *c = col[*c as usize]);
+        need[r - 1]
+    });
+    Matrix { cols, rows, given }
+}
+
+/// The polynomial of the new row of `mat` with leading column `l` among the
+/// `free` columns and entries `xs` from there.
+fn new_poly(mat: &Matrix, free: &[u32], l: usize, xs: &[u32]) -> Poly {
+    let (mut m, mut c) = (vec![mat.cols[free[l] as usize]], vec![1]);
+    for (j, &x) in xs.iter().enumerate().skip(1) {
+        if x != 0 {
+            m.push(mat.cols[free[l + j] as usize]);
+            c.push(x);
+        }
+    }
+    Poly { c, m }
+}
+
+/// As `new_poly` in a replay, over the monomials `sup` the polynomial had in
+/// the run traced (with zero coefficients where it has fewer terms); None if
+/// it has another leading monomial or other terms.
+fn traced_poly(mat: &Matrix, free: &[u32], l: usize, xs: &[u32], sup: &[u32]) -> Option<Poly> {
+    if mat.cols[free[l] as usize] != sup[0] {
+        return None;
+    }
+    let mut c = vec![0; sup.len()];
+    c[0] = 1;
+    let mut k = 1;
+    for (j, &x) in xs.iter().enumerate().skip(1) {
+        // The monomials of sup are free columns, in the same order.
+        if k < sup.len() && mat.cols[free[l + j] as usize] == sup[k] {
+            c[k] = x;
+            k += 1;
+        } else if x != 0 {
+            return None;
+        }
+    }
+    (k == sup.len()).then_some(Poly { c, m: sup.to_vec() })
 }
 
 impl<E: Entry> F4<'_, E> {
@@ -436,6 +553,19 @@ impl<E: Entry> F4<'_, E> {
 
     fn lm(&self, i: u32) -> u32 {
         self.polys[i as usize].m[0]
+    }
+
+    /// `f` with its exponents, dropping zero terms.
+    fn export(&self, f: &Poly) -> poly::Poly<u64> {
+        let n = self.mons.n;
+        let (mut c, mut e) = (Vec::with_capacity(f.c.len()), Vec::with_capacity(f.m.len() * n));
+        for (&x, &m) in f.c.iter().zip(&f.m) {
+            if x != 0 {
+                c.push(x as u64);
+                e.extend_from_slice(self.mons.exp(m));
+            }
+        }
+        poly::Poly { c, e }
     }
 
     fn inv(&self, a: u64) -> u64 {
@@ -820,21 +950,22 @@ impl<E: Entry> F4<'_, E> {
     }
 
     /// The reduced echelon form of the dense rows `rows` of width `nf`: for
-    /// each row, its leading column and its entries from there on, monic.
+    /// each row, its leading column and its entries from there on, monic;
+    /// and which of the rows gave each.
     ///
     /// The rows found so far are kept reduced by each other, so a row is
     /// reduced by subtracting multiples of them, one for each of its terms
     /// in their leading columns, with no cascade, as in `eliminate`.
-    fn echelon(&self, rows: &[u32], nf: usize) -> Vec<(usize, Vec<u32>)> {
+    fn echelon(&self, rows: &[u32], nf: usize) -> (Vec<(usize, Vec<u32>)>, Vec<usize>) {
         let (p, md) = (self.p, self.md);
         // The row with leading column l has its tail in `store` from
         // start[l], over the columns after l (which `before` gives).
         let (mut before, mut lead, mut start): (Vec<u32>, Vec<u32>, Vec<usize>) = ((0..nf as u32).collect(), vec![NONE; nf], vec![NOWHERE; nf]);
         let mut store: Vec<u32> = Vec::new();
-        let mut leads: Vec<usize> = Vec::new();
+        let (mut leads, mut gave): (Vec<usize>, Vec<usize>) = (Vec::new(), Vec::new());
         let mut acc = vec![0u64; nf];
         let (mut cols, mut xs) = (Vec::new(), Vec::new());
-        for row in rows.chunks_exact(nf.max(1)) {
+        for (i, row) in rows.chunks_exact(nf.max(1)).enumerate() {
             cols.clear();
             xs.clear();
             for (j, &x) in row.iter().enumerate() {
@@ -871,8 +1002,10 @@ impl<E: Entry> F4<'_, E> {
             start[l] = store.len();
             store.extend_from_slice(&tail);
             leads.push(l);
+            gave.push(i);
         }
-        leads.into_iter().map(|l| (l, std::iter::once(1).chain(store[start[l]..start[l] + nf - l - 1].iter().copied()).collect())).collect()
+        let new = leads.into_iter().map(|l| (l, std::iter::once(1).chain(store[start[l]..start[l] + nf - l - 1].iter().copied()).collect())).collect();
+        (new, gave)
     }
 
     /// Reduce the rows `(t, g)` of `todo` by each other and by the reducers
@@ -881,6 +1014,21 @@ impl<E: Entry> F4<'_, E> {
     /// and reduced by each other.
     fn reduce(&mut self, todo: &[(u32, u32)]) -> Vec<Poly> {
         let mat = self.symbolic(todo);
+        let red = self.reduce_matrix(&mat);
+        let new: Vec<Poly> = red.new.iter().map(|(l, xs)| new_poly(&mat, &red.free, *l, xs)).collect();
+        if let Some(steps) = &mut self.steps {
+            let mat = needed(mat, &red.pivot, red.gave.iter().map(|&k| red.rest[k]));
+            steps.push(Traced { mat, new: new.iter().map(|f| f.m.clone()).collect() });
+        }
+        new
+    }
+
+    /// Reduce the rows asked for of `mat` by each other and by its other
+    /// rows. The new rows are those of the echelon form whose leading
+    /// monomials are not those of rows of the matrix, each with its leading
+    /// column among the free columns and its entries from there: monic and
+    /// reduced by each other.
+    fn reduce_matrix(&mut self, mat: &Matrix) -> Reduction {
         let width = mat.cols.len();
         // The pivots: the reducers, and for each leading column of the rows
         // asked for, the one with the fewest terms; the others are reduced.
@@ -890,35 +1038,25 @@ impl<E: Entry> F4<'_, E> {
         }
         let mut asked: Vec<usize> = (0..mat.given).collect();
         asked.sort_by_key(|&r| (mat.rows[r].0[0], mat.rows[r].0.len()));
-        let mut rest: Vec<(&[u32], &[u32])> = Vec::new();
+        let mut rest: Vec<usize> = Vec::new();
         for r in asked {
-            let (cols, g) = &mat.rows[r];
-            if pivot[cols[0] as usize] == NONE {
-                pivot[cols[0] as usize] = r as u32;
+            let c = mat.rows[r].0[0] as usize;
+            if pivot[c] == NONE {
+                pivot[c] = r as u32;
             } else {
-                rest.push((cols, &self.polys[*g as usize].c));
+                rest.push(r);
             }
         }
+        let rows: Vec<(&[u32], &[u32])> = rest.iter().map(|&r| (&mat.rows[r].0[..], &self.polys[mat.rows[r].1 as usize].c[..])).collect();
         let mut cache = std::mem::take(&mut self.cache);
-        let (free, reduced, red) = self.eliminate(&mat, &pivot, &rest, Some(&mut cache).filter(|_| self.graded));
-        let new = self.echelon(&reduced, free.len());
+        let (free, reduced, red) = self.eliminate(mat, &pivot, &rows, Some(&mut cache).filter(|_| self.graded));
+        let (new, gave) = self.echelon(&reduced, free.len());
         if let Some(red) = red {
             let deg = new.iter().map(|&(l, _)| self.mons.deg[mat.cols[free[l] as usize] as usize]).min().unwrap_or(u64::MAX);
-            self.remember(&mut cache, &mat, &pivot, &free, red, deg);
+            self.remember(&mut cache, mat, &pivot, &free, red, deg);
         }
         self.cache = cache;
-        new.into_iter()
-            .map(|(l, xs)| {
-                let (mut m, mut c) = (vec![mat.cols[free[l] as usize]], vec![1]);
-                for (j, &x) in xs.iter().enumerate().skip(1) {
-                    if x != 0 {
-                        m.push(mat.cols[free[l + j] as usize]);
-                        c.push(x);
-                    }
-                }
-                Poly { c, m }
-            })
-            .collect()
+        Reduction { new, gave, free, pivot, rest }
     }
 
     /// The basis after the last step: minimal, reduced and sorted by
@@ -937,10 +1075,22 @@ impl<E: Entry> F4<'_, E> {
         for (r, row) in mat.rows.iter().enumerate() {
             pivot[row.0[0] as usize] = r as u32;
         }
+        let out = self.interreduce(&mat, &pivot, None).expect("no trace");
+        if let Some(steps) = &mut self.steps {
+            let given = mat.given;
+            steps.push(Traced { mat: needed(mat, &pivot, 0..given), new: out.iter().map(|f| f.m.clone()).collect() });
+        }
+        self.sorted(out)
+    }
+
+    /// The rows asked for of `mat`, all pivots, with their tails reduced by
+    /// all rows. In a replay, `sups` are the monomials of the polynomials in
+    /// the run traced, and None comes when one has others.
+    fn interreduce(&self, mat: &Matrix, pivot: &[u32], sups: Option<&[Vec<u32>]>) -> Option<Vec<Poly>> {
         let tails: Vec<(&[u32], &[u32])> = mat.rows[..mat.given].iter().map(|(cols, g)| (&cols[1..], &self.polys[*g as usize].c[1..])).collect();
-        let (free, reduced, _) = self.eliminate(&mat, &pivot, &tails, None);
+        let (free, reduced, _) = self.eliminate(mat, pivot, &tails, None);
         let nf = free.len();
-        let mut out: Vec<Poly> = Vec::with_capacity(minimal.len());
+        let mut out: Vec<Poly> = Vec::with_capacity(mat.given);
         for (i, (cols, _)) in mat.rows[..mat.given].iter().enumerate() {
             let (mut m, mut c) = (vec![mat.cols[cols[0] as usize]], vec![1]);
             for (j, &x) in reduced[i * nf..(i + 1) * nf].iter().enumerate() {
@@ -949,8 +1099,20 @@ impl<E: Entry> F4<'_, E> {
                     c.push(x);
                 }
             }
+            // The terms are among those of the polynomial traced, in order.
+            if let Some(sup) = sups.map(|s| &s[i]) {
+                let mut k = 0;
+                if !m.iter().all(|x| sup[k..].iter().position(|y| y == x).map(|j| k += j + 1).is_some()) {
+                    return None;
+                }
+            }
             out.push(Poly { c, m });
         }
+        Some(out)
+    }
+
+    /// The polynomials `out`, by decreasing leading monomial.
+    fn sorted(&self, mut out: Vec<Poly>) -> Vec<Poly> {
         out.sort_by(|a, b| self.cmp(b.m[0], a.m[0]));
         out
     }
@@ -964,13 +1126,85 @@ impl<E: Entry> F4<'_, E> {
 pub fn groebner(field: &Zp, ring: &Ring, gens: Vec<poly::Poly<u64>>, weights: &[u64], limit: Option<i128>) -> Vec<poly::Poly<u64>> {
     debug_assert!(field.modulus() < 1 << 31);
     if field.modulus() < 1 << 16 {
-        run::<u16>(field, ring, gens, weights, limit)
+        run::<u16>(field, ring, gens, weights, limit, false).0
     } else {
-        run::<u32>(field, ring, gens, weights, limit)
+        run::<u32>(field, ring, gens, weights, limit, false).0
     }
 }
 
-fn run<E: Entry>(field: &Zp, ring: &Ring, gens: Vec<poly::Poly<u64>>, weights: &[u64], limit: Option<i128>) -> Vec<poly::Poly<u64>> {
+/// As `groebner` (with no limit), with a trace of the run to replay modulo
+/// other primes; none for the unit ideal.
+pub(crate) fn learn(field: &Zp, ring: &Ring, gens: Vec<poly::Poly<u64>>, weights: &[u64]) -> Run {
+    debug_assert!(field.modulus() < 1 << 31);
+    if field.modulus() < 1 << 16 {
+        run::<u16>(field, ring, gens, weights, None, true)
+    } else {
+        run::<u32>(field, ring, gens, weights, None, true)
+    }
+}
+
+/// The reduced Gröbner basis over GF(p) of the ideal generated by `gens`,
+/// by replaying `trace`, a run modulo another prime with generators of the
+/// same monomials; None if the run goes otherwise modulo p: a leading
+/// coefficient vanishes, or a polynomial has terms that it had not. Rows
+/// that reduced to zero in the run traced are left out, so a prime unlucky
+/// for the trace can give a basis that is not the reduced basis modulo p.
+pub(crate) fn replay(trace: &Trace, field: &Zp, ring: &Ring, gens: &[poly::Poly<u64>]) -> Option<Vec<poly::Poly<u64>>> {
+    debug_assert!(field.modulus() < 1 << 31);
+    if field.modulus() < 1 << 16 { replay_in::<u16>(trace, field, ring, gens) } else { replay_in::<u32>(trace, field, ring, gens) }
+}
+
+fn replay_in<E: Entry>(trace: &Trace, field: &Zp, ring: &Ring, gens: &[poly::Poly<u64>]) -> Option<Vec<poly::Poly<u64>>> {
+    let (n, p) = (ring.n, field.modulus());
+    let mons = trace.mons.clone();
+    let (polys, basis, pairs) = (Vec::new(), Vec::new(), Vec::new());
+    let graded = trace.graded;
+    let mut f4: F4<E> = F4 { p, md: Modulus::new(p), ring, mons, polys, basis, pairs, limit: None, graded, cache: Cache::default(), steps: None };
+    let gens: Vec<&poly::Poly<u64>> = gens.iter().filter(|g| !g.is_zero()).collect();
+    if gens.len() != trace.inputs.len() {
+        return None;
+    }
+    for (g, sup) in gens.into_iter().zip(&trace.inputs) {
+        let mut g = g.clone();
+        g.make_monic(field);
+        // The terms are among those the generator had, in order.
+        let mut c = vec![0; sup.len()];
+        let mut k = 0;
+        for i in 0..g.len() {
+            let m = f4.mons.lookup(g.exp(i, n))?;
+            k += sup[k..].iter().position(|&x| x == m)?;
+            c[k] = g.c[i] as u32;
+            k += 1;
+        }
+        if c[0] != 1 {
+            return None;
+        }
+        f4.polys.push(Poly { c, m: sup.clone() });
+    }
+    for step in &trace.steps {
+        let red = f4.reduce_matrix(&step.mat);
+        if red.new.len() != step.new.len() {
+            return None;
+        }
+        for ((l, xs), sup) in red.new.iter().zip(&step.new) {
+            let f = traced_poly(&step.mat, &red.free, *l, xs, sup)?;
+            f4.polys.push(f);
+        }
+    }
+    f4.cache = Cache::default();
+    let mat = &trace.last.mat;
+    let mut pivot = vec![NONE; mat.cols.len()];
+    for (r, row) in mat.rows.iter().enumerate() {
+        pivot[row.0[0] as usize] = r as u32;
+    }
+    let out = f4.interreduce(mat, &pivot, Some(&trace.last.new))?;
+    Some(f4.sorted(out).into_iter().map(|f| f4.export(&f)).collect())
+}
+
+/// A basis and, when asked to `record`, the trace of the run.
+type Run = (Vec<poly::Poly<u64>>, Option<Trace>);
+
+fn run<E: Entry>(field: &Zp, ring: &Ring, gens: Vec<poly::Poly<u64>>, weights: &[u64], limit: Option<i128>, record: bool) -> Run {
     let (n, p) = (ring.n, field.modulus());
     let graded = match &ring.order {
         Order::GRevLex | Order::GLex => weights.iter().all(|&w| w == 1),
@@ -979,14 +1213,17 @@ fn run<E: Entry>(field: &Zp, ring: &Ring, gens: Vec<poly::Poly<u64>>, weights: &
     };
     let mons = Monomials::new(n, weights);
     let (polys, basis, pairs) = (Vec::new(), Vec::new(), Vec::new());
-    let mut f4: F4<E> = F4 { p, md: Modulus::new(p), ring, mons, polys, basis, pairs, limit, graded, cache: Cache::default() };
+    let steps = record.then(Vec::new);
+    let mut f4: F4<E> = F4 { p, md: Modulus::new(p), ring, mons, polys, basis, pairs, limit, graded, cache: Cache::default(), steps };
+    let one = || (vec![poly::Poly { c: vec![1], e: vec![0; n] }], None);
     for mut g in gens.into_iter().filter(|g| !g.is_zero()) {
         g.make_monic(field);
         let m = (0..g.len()).map(|i| f4.mons.insert(g.exp(i, n))).collect();
         if f4.add(Poly { c: g.c.iter().map(|&x| x as u32).collect(), m }) {
-            return vec![poly::Poly { c: vec![1], e: vec![0; n] }];
+            return one();
         }
     }
+    let inputs: Vec<Vec<u32>> = f4.polys.iter().map(|f| f.m.clone()).collect();
     while !f4.pairs.is_empty() {
         // The pairs of least degree.
         let d = f4.pairs.iter().map(|q| f4.mons.deg[q.lcm as usize]).min().unwrap();
@@ -1003,16 +1240,14 @@ fn run<E: Entry>(field: &Zp, ring: &Ring, gens: Vec<poly::Poly<u64>>, weights: &
         todo.dedup();
         for f in f4.reduce(&todo) {
             if f4.add(f) {
-                return vec![poly::Poly { c: vec![1], e: vec![0; n] }];
+                return one();
             }
         }
     }
-    f4.reduced_basis()
-        .into_iter()
-        .map(|f| {
-            let mut e = Vec::with_capacity(f.m.len() * n);
-            f.m.iter().for_each(|&m| e.extend_from_slice(f4.mons.exp(m)));
-            poly::Poly { c: f.c.iter().map(|&x| x as u64).collect(), e }
-        })
-        .collect()
+    let basis: Vec<poly::Poly<u64>> = f4.reduced_basis().iter().map(|f| f4.export(f)).collect();
+    let trace = f4.steps.take().map(|mut steps| {
+        let last = steps.pop().expect("the interreduction");
+        Trace { mons: f4.mons, graded, inputs, steps, last }
+    });
+    (basis, trace)
 }

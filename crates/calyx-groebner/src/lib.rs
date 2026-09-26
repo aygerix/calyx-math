@@ -602,6 +602,47 @@ mod tests {
     }
 
     #[test]
+    fn traces_of_f4_replay_modulo_other_primes() {
+        // A run of F4 traced modulo one prime and replayed modulo others gives
+        // the bases of full runs, in the graded orders.
+        let z = Ctx::integers();
+        let mut s = 0x452821e638d01377;
+        let orders = [Order::GRevLex, Order::GLex, Order::GRevLexW(vec![1, 2, 3])];
+        let fields: Vec<field::Zp> = [2147483647u64, 2147483629, 2147483587, 65521].iter().map(|&p| field::Zp::new(&gf(p))).collect();
+        for round in 0..12 {
+            let gens = random_system(&z, &mut s, 3, 2 + round % 3, 4, 3);
+            for o in &orders {
+                let ring = Ring { n: 3, order: o.clone() };
+                let weights = match o {
+                    Order::GRevLexW(w) => w.clone(),
+                    _ => vec![1; 3],
+                };
+                let polys = |f: &field::Zp| gens.iter().map(|t| import(f, &ring, &reduce_terms(f, t)).unwrap()).collect::<Vec<_>>();
+                let (g, trace) = f4::learn(&fields[0], &ring, polys(&fields[0]), &weights);
+                assert_eq!(g, f4::groebner(&fields[0], &ring, polys(&fields[0]), &weights, None));
+                let Some(trace) = trace else { continue };
+                for f in &fields[1..] {
+                    let full = f4::groebner(f, &ring, polys(f), &weights, None);
+                    assert_eq!(f4::replay(&trace, f, &ring, &polys(f)), Some(full), "{o:?} round {round}");
+                }
+            }
+        }
+        // A generator with a term that vanishes modulo the prime traced does
+        // not replay.
+        let ring = Ring { n: 2, order: Order::GRevLex };
+        let gens = [parse(&z, "xy", "x^2 + 2147483647*x*y + y^2"), parse(&z, "xy", "x*y + 1")];
+        let polys = |f: &field::Zp| gens.iter().map(|t| import(f, &ring, &reduce_terms(f, t)).unwrap()).collect::<Vec<_>>();
+        let (_, trace) = f4::learn(&fields[0], &ring, polys(&fields[0]), &[1, 1]);
+        assert_eq!(f4::replay(&trace.unwrap(), &fields[1], &ring, &polys(&fields[1])), None);
+    }
+
+    /// The terms `t` over the integers reduced modulo the prime of `f`.
+    fn reduce_terms(f: &field::Zp, t: &Terms) -> Terms {
+        let ctx = gf(f.modulus());
+        t.iter().map(|(c, e)| (Elem::from_integer(&ctx, &c.to_integer().unwrap()).unwrap(), e.clone())).collect()
+    }
+
+    #[test]
     fn modular_bases_over_the_rationals() {
         // The modular method gives the bases computed over the rationals, in
         // graded orders and others, for ideals of dimension zero or more.
@@ -631,6 +672,16 @@ mod tests {
         }
         let gens = [parse(&q, "xy", "x*y - 2147483647"), parse(&q, "xy", "x^2 - 1")];
         assert_eq!(shows("xy", &groebner(&q, 2, &Order::Lex, &gens).unwrap()), ["x - 1/2147483647*y", "y^2 - 4611686014132420609"]);
+        // Modulo the first prime, 2147483648 is 1 and an S-polynomial vanishes
+        // that gives y^3 over the rationals. A trace of F4 from that prime
+        // leaves the row out, and its replays agree with each other; the full
+        // run on the prime that checks the candidate shows it.
+        let gens = [parse(&q, "xy", "x^2 - y^2"), parse(&q, "xy", "x*y - 2147483648*y^2")];
+        for o in [Order::GRevLex, Order::Lex] {
+            let g = groebner(&q, 2, &o, &gens).unwrap();
+            assert_eq!(shows("xy", &g), shows("xy", &groebner_with(&q, 2, &o, &gens, rational).unwrap()));
+        }
+        assert_eq!(shows("xy", &groebner(&q, 2, &Order::GRevLex, &gens).unwrap()), ["y^3", "x^2 - y^2", "x*y - 2147483648*y^2"]);
         // Katsura-5 in lex, whose coefficients take a few hundred primes.
         let k = katsura(&q, 5);
         let g = groebner(&q, 6, &Order::Lex, &k).unwrap();

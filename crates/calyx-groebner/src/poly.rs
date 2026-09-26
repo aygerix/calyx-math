@@ -23,7 +23,7 @@ impl Ring {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Poly<E> {
     pub c: Vec<E>,
     pub e: Vec<u32>,
