@@ -20,8 +20,9 @@ use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
-use calyx_flint::gr::{Ctx, CtxKind, Elem, GrError, MonomialOrder, Truth};
+use calyx_flint::gr::{Ctx, CtxKind, Elem, GrError, Truth};
 use calyx_flint::Integer;
+use calyx_groebner::Order;
 use rustc_hash::{FxHashMap, FxHasher};
 
 use crate::error::{RResult, RuntimeError};
@@ -56,8 +57,10 @@ pub enum RingKind {
     Finite(FiniteField),
     /// Univariate polynomials over `base`.
     UPoly { base: Value, global: bool },
-    /// Multivariate polynomials over `base`.
-    MPoly { base: Value, rank: usize, order: MonomialOrder },
+    /// Multivariate polynomials over `base` in the monomial order `order`
+    /// (FLINT keeps the terms in `order.storage()`), with the variable
+    /// weights `grading` of a graded ring (all 1 otherwise).
+    MPoly { base: Value, rank: usize, order: Order, grading: Option<Rc<[u64]>> },
     /// The quotient `P/(f)` of the univariate polynomial ring `preimage`
     /// over `base` by a non-constant `modulus` (monic, or normalized over a
     /// field). The elements are the remainders modulo `f`, in the context
@@ -419,14 +422,14 @@ impl Interp {
 
     /// The multivariate polynomial ring of the given rank over `base` (with
     /// `global`, the one lexicographical ring shared by all such requests).
-    pub fn mpoly_ring(&mut self, base: &Value, rank: usize, order: MonomialOrder, global: bool) -> RResult<Value> {
+    pub fn mpoly_ring(&mut self, base: &Value, rank: usize, order: Order, grading: Option<Rc<[u64]>>, global: bool) -> RResult<Value> {
         let key = structure_key(base).filter(|_| global).map(|k| (k, rank));
         if let Some(r) = key.as_ref().and_then(|k| self.rings.mpoly.get(k)) {
             return Ok(r.clone());
         }
         let bctx = self.ctx_of(base).ok_or_else(|| RuntimeError::runtime("Polynomial rings over this ring are not supported"))?;
-        let ctx = Ctx::mpoly(&bctx, rank, order);
-        let r = self.new_ring(RingKind::MPoly { base: base.clone(), rank, order }, ctx);
+        let ctx = Ctx::mpoly(&bctx, rank, order.storage());
+        let r = self.new_ring(RingKind::MPoly { base: base.clone(), rank, order, grading }, ctx);
         if let Some(k) = key {
             self.rings.mpoly.insert(k, r.clone());
         }

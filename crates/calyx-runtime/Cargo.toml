@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 calyx-flint = { workspace = true }
+calyx-groebner = { workspace = true }
 calyx-syntax = { workspace = true }
 indexmap = { workspace = true }
 regex = { workspace = true }

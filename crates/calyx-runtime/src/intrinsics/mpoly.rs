@@ -10,10 +10,11 @@
 use std::collections::{BTreeMap, HashMap, hash_map::Entry};
 use std::rc::Rc;
 
-use calyx_flint::Integer;
-use calyx_flint::gr::{Elem, GrError, MonomialOrder, Truth};
+use calyx_flint::gr::{Elem, GrError, Truth};
 use calyx_flint::mpoly as fm;
-use calyx_syntax::ast::BinOp;
+use calyx_flint::{Integer, Rational};
+use calyx_groebner::{Order, OrderArg};
+use calyx_syntax::ast::{AggKind, BinOp};
 
 use super::{arg_ge, boolv, intv, one};
 use crate::error::{RResult, RuntimeError};
@@ -100,9 +101,49 @@ fn czero(f: &Elt) -> Elem {
     Elem::zero(f.x.ctx().base().expect("a polynomial ring"))
 }
 
-/// The terms of a polynomial, largest first.
+/// The terms of a polynomial in FLINT's order (the ring's own for lex,
+/// glex and grevlex, lex for the other orders).
 fn terms(f: &Elem) -> Vec<(Elem, Vec<u64>)> {
     (0..f.mpoly_len()).map(|i| f.mpoly_term(i)).collect()
+}
+
+/// The monomial order of a multivariate polynomial ring.
+fn order_of(r: &Ring) -> &Order {
+    match &r.kind {
+        RingKind::MPoly { order, .. } => order,
+        _ => unreachable!("a multivariate polynomial ring"),
+    }
+}
+
+/// The terms of `x`, an element of the multivariate ring `r`, from the
+/// greatest in the ring's monomial order.
+pub fn ordered_terms(r: &Ring, x: &Elem) -> Vec<(Elem, Vec<u64>)> {
+    let mut ts = terms(x);
+    let order = order_of(r);
+    if !order.is_native() {
+        ts.sort_by(|a, b| order.cmp(&b.1, &a.1));
+    }
+    ts
+}
+
+/// The greatest term of `x` in the monomial order of its ring `r`.
+pub fn leading(r: &Ring, x: &Elem) -> Option<(Elem, Vec<u64>)> {
+    let order = order_of(r);
+    match x.mpoly_len() {
+        0 => None,
+        _ if order.is_native() => Some(x.mpoly_term(0)),
+        _ => terms(x).into_iter().max_by(|a, b| order.cmp(&a.1, &b.1)),
+    }
+}
+
+/// The least term of `x` in the monomial order of its ring `r`.
+fn trailing(r: &Ring, x: &Elem) -> Option<(Elem, Vec<u64>)> {
+    let order = order_of(r);
+    match x.mpoly_len() {
+        0 => None,
+        n if order.is_native() => Some(x.mpoly_term(n - 1)),
+        _ => terms(x).into_iter().min_by(|a, b| order.cmp(&a.1, &b.1)),
+    }
 }
 
 /// The polynomial of the ring of `f` with the given terms.
@@ -137,27 +178,94 @@ fn pseq(f: &Elt, xs: Vec<Value>) -> Value {
 
 // ----- creation --------------------------------------------------------------
 
-/// The monomial order named `s`.
-fn parse_order(s: &str) -> RResult<MonomialOrder> {
-    Ok(match s {
-        "lex" => MonomialOrder::Lex,
-        "glex" => MonomialOrder::DegLex,
-        "grevlex" => MonomialOrder::DegRevLex,
-        _ => return Err(RuntimeError::runtime(format!("Bad order \"{s}\""))),
-    })
+/// An argument of a monomial order: an integer, a sequence of integers or
+/// rationals, or anything else.
+fn order_arg(v: &Value) -> OrderArg {
+    let num = |x: &Value| match x {
+        Value::Int(k) => Some(Rational::from_integer(k)),
+        Value::Rat(q) => Some((**q).clone()),
+        _ => None,
+    };
+    match v {
+        Value::Int(k) => OrderArg::Int(k.clone()),
+        Value::Seq(s) => s.elems.iter().map(num).collect::<Option<Vec<_>>>().map_or(OrderArg::Other, OrderArg::Seq),
+        _ => OrderArg::Other,
+    }
 }
 
-/// `PolynomialRing(R, n)` (global with the parameter Global) and
-/// `PolynomialRing(R, n, order)`.
+/// The order named `name` with the arguments `args` on `n` variables; Magma
+/// numbers the arguments from `first` in its errors.
+fn parse_order(n: usize, name: &str, args: &[Value], first: usize) -> RResult<Order> {
+    let args: Vec<OrderArg> = args.iter().map(order_arg).collect();
+    Order::parse(n, name, &args).map_err(|e| RuntimeError::runtime(e.message(first)))
+}
+
+/// `PolynomialRing(R, n)` (global with the parameter Global), and with a
+/// monomial order: `PolynomialRing(R, n, name, ...)` or `PolynomialRing(R,
+/// n, <name, ...>)` with the name of the order and its arguments.
 fn polynomial_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let base = a.args[0].clone();
     let n = a.int(1)?;
-    let Some(n) = n.to_i64().filter(|n| (0..1 << 29).contains(n)) else {
+    let Some(n) = n.to_i64().filter(|n| (0..1 << 29).contains(n)).map(|n| n as usize) else {
         return Err(RuntimeError::runtime(format!("Argument 2 ({n}) should be in the range [0 .. 536870911]")));
     };
-    let order = if a.args.len() > 2 { parse_order(a.str(2)?)? } else { MonomialOrder::Lex };
+    let order = match a.args.get(2) {
+        None => Order::Lex,
+        Some(Value::Str(s)) => parse_order(n, s.as_str(), &a.args[3..], 4)?,
+        Some(Value::Tuple(t)) => match t.elems.split_first() {
+            Some((Value::Str(s), rest)) => parse_order(n, s.as_str(), rest, 2)?,
+            _ => return Err(RuntimeError::runtime("First component of tuple must be a string")),
+        },
+        Some(_) => unreachable!("an order"),
+    };
     let global = a.args.len() == 2 && a.param_bool("Global")?;
-    one(it.mpoly_ring(&base, n as usize, order, global)?)
+    one(it.mpoly_ring(&base, n, order, None, global)?)
+}
+
+/// `PolynomialRing(R, Q)`: the graded ring whose variables have the weights
+/// Q, ordered by grevlex with the weights max(w, 1).
+fn graded_polynomial_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let base = a.args[0].clone();
+    let q = a.seq(1)?;
+    if q.elems.is_empty() {
+        return Err(super::arg_not(2, "non-empty"));
+    }
+    let mut ws = Vec::with_capacity(q.elems.len());
+    for (i, w) in q.elems.iter().enumerate() {
+        let w = match w {
+            Value::Int(k) => k.to_u64().filter(|&k| k < 1 << 30),
+            _ => None,
+        };
+        ws.push(w.ok_or_else(|| RuntimeError::runtime(format!("Weight number {} is not a small non-negative integer", i + 1)))?);
+    }
+    if ws.iter().any(|&w| w > Order::max_grevlexw_weight(ws.len())) {
+        return Err(RuntimeError::runtime("Weight is too large"));
+    }
+    let order = Order::GRevLexW(ws.iter().map(|&w| w.max(1)).collect());
+    one(it.mpoly_ring(&base, ws.len(), order, Some(ws.into()), false)?)
+}
+
+/// `MonomialOrder(P)`: the name of the order of P and its arguments.
+fn monomial_order(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let (name, args) = order_of(&ring_arg(a, 0).1).tuple();
+    let mut t = vec![Value::str(name)];
+    for arg in args {
+        t.push(match arg {
+            OrderArg::Int(k) => Value::Int(k),
+            OrderArg::Seq(q) => Value::int_seq(q.iter().map(|x| x.numerator())),
+            OrderArg::Other => unreachable!("an order argument"),
+        });
+    }
+    one(Value::tuple(t))
+}
+
+/// The weight vectors of the order of P, whose dot products with exponent
+/// vectors the order compares in turn.
+fn monomial_order_weight_vectors(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let r = ring_arg(a, 0).1;
+    let rat = |x: &Integer| Value::rat(Rational::from_integer(x));
+    let rows = order_of(&r).weight_vectors(rank(&r)).iter().map(|row| Value::seq(Some(Value::rationals()), row.iter().map(rat).collect())).collect();
+    one(it.build_aggregate(AggKind::Seq, None, rows, false)?)
 }
 
 fn identity(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
@@ -212,7 +320,7 @@ fn is_regular(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 fn coefficients(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = mpol(a, 0);
     if a.args.len() == 1 {
-        let cs = terms(&f.x).into_iter().map(|(c, _)| cval(it, &f, c)).collect();
+        let cs = ordered_terms(f.ring(), &f.x).into_iter().map(|(c, _)| cval(it, &f, c)).collect();
         return one(Value::seq(Some(base_of(&f)), cs));
     }
     let i = var_arg(a, 1, &f, "variable number")?;
@@ -242,7 +350,7 @@ fn coefficient(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 fn leading_coefficient(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = mpol(a, 0);
     if a.args.len() == 1 {
-        let c = if f.x.mpoly_len() == 0 { czero(&f) } else { f.x.mpoly_term(0).0 };
+        let c = leading(f.ring(), &f.x).map_or_else(|| czero(&f), |t| t.0);
         return one(cval(it, &f, c));
     }
     let i = var_arg(a, 1, &f, "variable number")?;
@@ -254,9 +362,8 @@ fn leading_coefficient(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 /// variable.
 fn trailing_coefficient(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = mpol(a, 0);
-    let n = f.x.mpoly_len();
     if a.args.len() == 1 {
-        let c = if n == 0 { czero(&f) } else { f.x.mpoly_term(n - 1).0 };
+        let c = trailing(f.ring(), &f.x).map_or_else(|| czero(&f), |t| t.0);
         return one(cval(it, &f, c));
     }
     let i = var_arg(a, 1, &f, "variable number")?;
@@ -272,7 +379,7 @@ fn length(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 fn terms_of(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = mpol(a, 0);
     let ts: Vec<Vec<(Elem, Vec<u64>)>> = if a.args.len() == 1 {
-        terms(&f.x).into_iter().map(|t| vec![t]).collect()
+        ordered_terms(f.ring(), &f.x).into_iter().map(|t| vec![t]).collect()
     } else {
         let i = var_arg(a, 1, &f, "variable number")?;
         by_power(&f.x, i).into_values().collect()
@@ -297,7 +404,7 @@ fn term(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 fn leading_term(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = mpol(a, 0);
     let ts = if a.args.len() == 1 {
-        terms(&f.x).into_iter().take(1).collect()
+        leading(f.ring(), &f.x).into_iter().collect()
     } else {
         let i = var_arg(a, 1, &f, "variable number")?;
         by_power(&f.x, i).pop_last().map(|(_, ts)| ts).unwrap_or_default()
@@ -309,8 +416,7 @@ fn leading_term(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 fn trailing_term(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = mpol(a, 0);
     let ts = if a.args.len() == 1 {
-        let n = f.x.mpoly_len();
-        if n == 0 { Vec::new() } else { vec![f.x.mpoly_term(n - 1)] }
+        trailing(f.ring(), &f.x).into_iter().collect()
     } else {
         let i = var_arg(a, 1, &f, "variable number")?;
         by_power(&f.x, i).pop_first().map(|(_, ts)| ts).unwrap_or_default()
@@ -320,14 +426,14 @@ fn trailing_term(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 
 fn monomials(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = mpol(a, 0);
-    let ms = terms(&f.x).into_iter().map(|(_, e)| monomial(&f, e)).collect::<RResult<Vec<_>>>()?;
+    let ms = ordered_terms(f.ring(), &f.x).into_iter().map(|(_, e)| monomial(&f, e)).collect::<RResult<Vec<_>>>()?;
     one(pseq(&f, ms))
 }
 
 fn coefficients_and_monomials(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = mpol(a, 0);
     let (mut cs, mut ms) = (Vec::new(), Vec::new());
-    for (c, e) in terms(&f.x) {
+    for (c, e) in ordered_terms(f.ring(), &f.x) {
         cs.push(cval(it, &f, c));
         ms.push(monomial(&f, e)?);
     }
@@ -337,7 +443,7 @@ fn coefficients_and_monomials(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals
 fn leading_monomial(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = mpol(a, 0);
     nonzero(&f)?;
-    one(monomial(&f, f.x.mpoly_term(0).1)?)
+    one(monomial(&f, leading(f.ring(), &f.x).expect("a non-zero polynomial").1)?)
 }
 
 /// The coefficient in `f` of the monomial `m`.
@@ -454,8 +560,147 @@ fn total_degree(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 
 fn leading_total_degree(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = mpol(a, 0);
-    let d = if f.x.mpoly_len() == 0 { -1 } else { f.x.mpoly_term(0).1.iter().sum::<u64>() as i64 };
+    let d = leading(f.ring(), &f.x).map_or(-1, |(_, e)| e.iter().sum::<u64>() as i64);
     intv(Integer::from_i64(d))
+}
+
+// ----- gradings -------------------------------------------------------------------
+//
+// The weighted degree of a monomial is the sum of its exponents times the
+// weights of the variables: those of a graded ring, and 1 otherwise. The
+// weights may be 0, so the monomial order of a graded ring (grevlex with the
+// weights max(w, 1)) need not refine the weighted degree.
+
+/// The weights of the variables of a multivariate polynomial ring.
+fn weights(r: &Ring) -> Vec<u64> {
+    match &r.kind {
+        RingKind::MPoly { grading: Some(w), .. } => w.to_vec(),
+        RingKind::MPoly { rank, .. } => vec![1; *rank],
+        _ => unreachable!("a multivariate polynomial ring"),
+    }
+}
+
+/// The weighted degree of the monomial with exponents `e`.
+fn wdeg(w: &[u64], e: &[u64]) -> i128 {
+    w.iter().zip(e).map(|(&w, &k)| w as i128 * k as i128).sum()
+}
+
+/// `Grading(P)`: the weights of the variables.
+fn grading(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    one(Value::int_seq(weights(&ring_arg(a, 0).1).into_iter().map(Integer::from_u64)))
+}
+
+/// `Degree(f)`, `WeightedDegree(f)`: the largest weighted degree of a term of
+/// `f` (0 for zero).
+fn weighted_degree(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let f = mpol(a, 0);
+    let w = weights(f.ring());
+    intv(Integer::from_i128(terms(&f.x).iter().map(|(_, e)| wdeg(&w, e)).max().unwrap_or(0)))
+}
+
+/// The weighted degree of the leading term of `f` (-1 for zero).
+fn leading_weighted_degree(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let f = mpol(a, 0);
+    let w = weights(f.ring());
+    intv(Integer::from_i128(leading(f.ring(), &f.x).map_or(-1, |(_, e)| wdeg(&w, &e))))
+}
+
+/// Whether the terms of `f` have one weighted degree.
+fn is_homogeneous(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let f = mpol(a, 0);
+    let w = weights(f.ring());
+    let mut ds = terms(&f.x).into_iter().map(|(_, e)| wdeg(&w, &e));
+    let d = ds.next();
+    boolv(ds.all(|x| Some(x) == d))
+}
+
+/// The terms of `f` of weighted degree `d`.
+fn homogeneous_component(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let f = mpol(a, 0);
+    let d = a.int(1)?;
+    if d.sign() < 0 {
+        return Err(arg_ge(2, d, 0));
+    }
+    let w = weights(f.ring());
+    let ts: Vec<_> = terms(&f.x).into_iter().filter(|(_, e)| Integer::from_i128(wdeg(&w, e)) == *d).collect();
+    one(build(&f, &ts)?)
+}
+
+/// The homogeneous components of `f` of weighted degrees 0 to that of `f`.
+fn homogeneous_components(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let f = mpol(a, 0);
+    let w = weights(f.ring());
+    let mut parts: Vec<Vec<(Elem, Vec<u64>)>> = vec![Vec::new()];
+    for (c, e) in terms(&f.x) {
+        let d = wdeg(&w, &e) as usize;
+        if parts.len() <= d {
+            parts.resize(d + 1, Vec::new());
+        }
+        parts[d].push((c, e));
+    }
+    let cs = parts.iter().map(|ts| build(&f, ts)).collect::<RResult<Vec<_>>>()?;
+    one(pseq(&f, cs))
+}
+
+/// The exponent vectors of the monomials of weighted degree `d` for the
+/// weights `w`, in which the variables of weight 0 do not occur, in
+/// descending lexicographical order.
+fn exponents_of_degree(w: &[u64], d: u64) -> Vec<Vec<u64>> {
+    fn fill(w: &[u64], d: u64, e: &mut Vec<u64>, out: &mut Vec<Vec<u64>>) {
+        let i = e.len();
+        match w.len() - i {
+            0 if d == 0 => out.push(e.clone()),
+            0 => {}
+            // The last variable takes what is left, if it can.
+            1 => {
+                let k = if w[i] == 0 { (d == 0).then_some(0) } else { (d % w[i] == 0).then_some(d / w[i]) };
+                if let Some(k) = k {
+                    out.push([&e[..], &[k]].concat());
+                }
+            }
+            _ => {
+                let top = if w[i] == 0 { 0 } else { d / w[i] };
+                for k in (0..=top).rev() {
+                    e.push(k);
+                    fill(w, d - k * w[i], e, out);
+                    e.pop();
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    fill(w, d, &mut Vec::with_capacity(w.len()), &mut out);
+    out
+}
+
+/// The monomials of weighted degree `d` (argument 2) for the weights `w`,
+/// as an indexed set in descending lexicographical order.
+fn monomials_of(a: &CallArgs, w: &[u64]) -> RResult<Vals> {
+    let (st, r) = ring_arg(a, 0);
+    let d = a.int(1)?;
+    if d.sign() < 0 {
+        return Err(arg_ge(2, d, 0));
+    }
+    let d = d.to_u64().ok_or_else(|| RuntimeError::runtime(format!("Argument 2 ({d}) is too large")))?;
+    let c = Elem::one(r.ctx.base().expect("a polynomial ring"))?;
+    let mut elems = VSet::default();
+    for e in exponents_of_degree(w, d) {
+        elems.insert(make_elt(&st, Elem::mpoly_from_terms(&r.ctx, &[(c.clone(), e)])?));
+    }
+    one(Value::ISet(Rc::new(SetIndx { universe: Some(Value::Struct(st)), elems, name: Default::default() })))
+}
+
+/// `MonomialsOfDegree(P, d)`: the monomials of total degree `d`.
+fn monomials_of_degree(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let n = rank(&ring_arg(a, 0).1);
+    monomials_of(a, &vec![1; n])
+}
+
+/// `MonomialsOfWeightedDegree(P, d)`: the monomials of weighted degree `d`
+/// in the variables of positive weight.
+fn monomials_of_weighted_degree(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let w = weights(&ring_arg(a, 0).1);
+    monomials_of(a, &w)
 }
 
 // ----- univariate polynomials ------------------------------------------------------
@@ -814,7 +1059,7 @@ fn is_divisible_by(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 fn reductum(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = mpol(a, 0);
     let ts = if a.args.len() == 1 {
-        terms(&f.x).into_iter().skip(1).collect()
+        ordered_terms(f.ring(), &f.x).into_iter().skip(1).collect()
     } else {
         let i = var_arg(a, 1, &f, "variable number")?;
         let mut m = by_power(&f.x, i);
@@ -848,10 +1093,8 @@ fn same_ring(a: &CallArgs) -> RResult<(Rc<Elt>, Rc<Elt>)> {
 /// The associate of `f` whose leading coefficient is normalized (monic over
 /// a field, positive over the integers).
 fn normalized(it: &mut Interp, f: &Elt) -> RResult<Elem> {
-    if f.x.mpoly_len() == 0 {
-        return Ok(f.x.clone());
-    }
-    let u = super::upoly::norm_unit(it, &base_of(f), &f.x.mpoly_term(0).0)?;
+    let Some((lc, _)) = leading(f.ring(), &f.x) else { return Ok(f.x.clone()) };
+    let u = super::upoly::norm_unit(it, &base_of(f), &lc)?;
     Ok(f.x.mpoly_mul_scalar(&u)?)
 }
 
@@ -1089,15 +1332,19 @@ fn int_coeffs(f: &Elt) -> RResult<Vec<Integer>> {
     terms(&f.x).into_iter().map(|(c, _)| Ok(c.to_integer()?)).collect()
 }
 
+/// The sign of the leading coefficient of `f` over Z.
+fn lead_sign(f: &Elt) -> RResult<i32> {
+    int_coeffs(f)?;
+    Ok(leading(f.ring(), &f.x).map_or(0, |(c, _)| c.to_integer().map_or(0, |c| c.sign())))
+}
+
 fn sign(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let cs = int_coeffs(&mpol(a, 0))?;
-    intv(Integer::from_i64(cs.first().map_or(0, |c| c.sign() as i64)))
+    intv(Integer::from_i64(lead_sign(&mpol(a, 0))? as i64))
 }
 
 fn abs(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = mpol(a, 0);
-    let cs = int_coeffs(&f)?;
-    one(like(&f, if cs.first().is_some_and(|c| c.sign() < 0) { f.x.neg()? } else { f.x.clone() }))
+    one(like(&f, if lead_sign(&f)? < 0 { f.x.neg()? } else { f.x.clone() }))
 }
 
 fn max_norm(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
@@ -1216,8 +1463,8 @@ pub fn polynomial_hom(it: &mut Interp, domain: &Value, codomain: &Value, images:
 /// names of P (unlike the univariate one, without a map).
 fn change_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (_, r) = ring_arg(a, 0);
-    let RingKind::MPoly { rank, order, .. } = r.kind else { unreachable!("a multivariate polynomial ring") };
-    let q = it.mpoly_ring(&a.args[1], rank, order, false)?;
+    let RingKind::MPoly { rank, order, grading, .. } = &r.kind else { unreachable!("a multivariate polynomial ring") };
+    let q = it.mpoly_ring(&a.args[1], *rank, order.clone(), grading.clone(), false)?;
     if let Some((_, qr)) = ring_of(&q) {
         *qr.names.borrow_mut() = r.names.borrow().clone();
     }
@@ -1227,7 +1474,14 @@ fn change_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 pub fn register(it: &mut Interp) {
     for name in ["PolynomialRing", "PolynomialAlgebra"] {
         it.def_params(name, "R::Rng, n::RngIntElt -> RngMPol", &[("Global", Value::Bool(false))], "The polynomial ring in n variables over R (the global one with Global).", polynomial_ring);
-        it.def(name, "R::Rng, n::RngIntElt, order::MonStgElt -> RngMPol", "The polynomial ring in n variables over R with the given monomial order.", polynomial_ring);
+        it.def(name, "R::Rng, n::RngIntElt, order::MonStgElt, ... -> RngMPol", "The polynomial ring in n variables over R with the named monomial order (and its arguments).", polynomial_ring);
+        it.def(name, "R::Rng, n::RngIntElt, T::Tup -> RngMPol", "The polynomial ring in n variables over R with the monomial order <name, arguments> of T.", polynomial_ring);
+        it.def(name, "R::Rng, Q::[RngIntElt] -> RngMPol", "The graded polynomial ring over R whose variables have the weights Q.", graded_polynomial_ring);
+    }
+    it.def("MonomialOrder", "P::RngMPol -> Tup", "The name of the monomial order of P and its arguments.", monomial_order);
+    it.def("MonomialOrderWeightVectors", "P::RngMPol -> [[FldRatElt]]", "The weight vectors of the monomial order of P.", monomial_order_weight_vectors);
+    for name in ["Grading", "VariableWeights"] {
+        it.def(name, "P::RngMPol -> [RngIntElt]", "The weights of the variables of P.", grading);
     }
     it.def("Identity", "P::RngMPol -> RngMPolElt", "The identity of P.", identity);
     it.def("ChangeRing", "P::RngMPol, S::Rng -> RngMPol", "The polynomial ring over S with the rank, order and names of P.", change_ring);
@@ -1270,6 +1524,15 @@ pub fn register(it: &mut Interp) {
     it.def("Polynomial", "C::[RngElt], M::[RngMPolElt] -> RngMPolElt", "The sum of the products of the coefficients C and the monomials M.", polynomial);
     it.def("TotalDegree", "f::RngMPolElt -> RngIntElt", "The largest total degree of a monomial of f (-1 for zero).", total_degree);
     it.def("LeadingTotalDegree", "f::RngMPolElt -> RngIntElt", "The total degree of the leading monomial of f (-1 for zero).", leading_total_degree);
+    for name in ["Degree", "WeightedDegree"] {
+        it.def(name, "f::RngMPolElt -> RngIntElt", "The largest weighted degree of a term of f (0 for zero).", weighted_degree);
+    }
+    it.def("LeadingWeightedDegree", "f::RngMPolElt -> RngIntElt", "The weighted degree of the leading term of f (-1 for zero).", leading_weighted_degree);
+    it.def("IsHomogeneous", "f::RngMPolElt -> BoolElt", "Whether the terms of f have one weighted degree.", is_homogeneous);
+    it.def("HomogeneousComponent", "f::RngMPolElt, d::RngIntElt -> RngMPolElt", "The terms of f of weighted degree d.", homogeneous_component);
+    it.def("HomogeneousComponents", "f::RngMPolElt -> [RngMPolElt]", "The homogeneous components of f, of weighted degrees 0 up to that of f.", homogeneous_components);
+    it.def("MonomialsOfDegree", "P::RngMPol, d::RngIntElt -> SetIndx", "The monomials of P of total degree d.", monomials_of_degree);
+    it.def("MonomialsOfWeightedDegree", "P::RngMPol, d::RngIntElt -> SetIndx", "The monomials of P of weighted degree d in its variables of positive weight.", monomials_of_weighted_degree);
     it.def("IsUnivariate", "f::RngMPolElt -> BoolElt, RngUPolElt, RngIntElt", "Whether f is a polynomial in one variable, with its univariate version and the variable's number.", is_univariate);
     it.def("UnivariatePolynomial", "f::RngMPolElt -> RngUPolElt, RngIntElt", "f, a polynomial in one variable, as a univariate polynomial, and the number of that variable.", univariate_polynomial);
     it.def("Evaluate", "f::RngMPolElt, s::[RngElt] -> RngElt", "The value of f at the sequence s.", evaluate);
