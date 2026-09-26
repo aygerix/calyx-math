@@ -497,19 +497,24 @@ impl Lift {
         let bound = (m - 1).fdiv_2exp(1).root(2).expect("a square root").0;
         let residues = |r: &[u32]| r.iter().map(|&x| x as u64).collect::<Vec<u64>>();
         // From where it failed last, round to there: a failure is likeliest
-        // among the coefficients there. A coefficient often has the
-        // denominator of the one before it, which then needs no search.
+        // among the coefficients there. The denominator of a coefficient
+        // often divides the lcm of those before it (the denominators of a
+        // lex basis in shape position share most of their factors), and it
+        // then needs no search.
         let at = || self.polys.iter().enumerate().flat_map(|(i, x)| (0..x.len()).map(move |j| (i, j)));
         let mut value: Vec<Vec<Option<Rational>>> = self.polys.iter().map(|x| vec![None; x.len()]).collect();
-        let mut den: Vec<Integer> = vec![Integer::one(); self.polys.len()];
+        let mut den = Integer::one();
         for (i, j) in at().skip_while(|&h| h != self.hard).chain(at().take_while(|&h| h != self.hard)) {
             let r = crt.combine(&residues(&self.polys[i][j].1));
-            let c = with_denominator(&r, &den[i], m, &bound).or_else(|| Rational::reconstruct(&r, m, &bound));
+            let c = with_denominator(&r, &den, m, &bound).or_else(|| {
+                let c = Rational::reconstruct(&r, m, &bound)?;
+                // Kept below m/2, where products with it still fit.
+                let l = den.lcm(&c.denominator());
+                den = if l.mul_2exp(1) < *m { l } else { c.denominator() };
+                Some(c)
+            });
             match c {
-                Some(c) => {
-                    den[i] = c.denominator();
-                    value[i][j] = Some(c);
-                }
+                Some(c) => value[i][j] = Some(c),
                 None => {
                     self.hard = (i, j);
                     return None;
@@ -523,13 +528,18 @@ impl Lift {
     }
 }
 
-/// The fraction a/d congruent to `r` modulo `m` with |a| at most `bound`,
-/// if there is one; it is then the fraction that rational reconstruction
-/// finds, for `d` is at most `bound` and such fractions are unique.
+/// The fraction congruent to `r` modulo `m` whose denominator divides `d`,
+/// if its numerator and denominator are at most `bound`; it is then the
+/// fraction that rational reconstruction finds, for such fractions are
+/// unique. Its product with `d` is found as the residue of r d nearest 0,
+/// which it is if it is below m/2 in absolute value.
 fn with_denominator(r: &Integer, d: &Integer, m: &Integer, bound: &Integer) -> Option<Rational> {
-    let (_, mut a) = (r * d).div_rem_euclid(m)?;
-    if &a > bound {
-        a -= m;
+    let (_, a) = (r * d).div_rem_euclid(m)?;
+    let b = m - &a;
+    let a = if b < a { -b } else { a };
+    if a.bits() > bound.bits() + d.bits() {
+        return None;
     }
-    (a.abs() <= *bound).then(|| Rational::new(&a, d)).flatten()
+    let c = Rational::new(&a, d)?;
+    (c.numerator().abs() <= *bound && c.denominator() <= *bound).then_some(c)
 }
