@@ -63,7 +63,7 @@ Valuation(12/5, 2); Valuation(12/5, 5); Valuation(12/5, 3); Valuation(12/5, 7); 
 v, u := Valuation(12/5, 2); v, u, Parent(u);
 v, u := Valuation(12/5, 5); v, u;
 v, u := Valuation(-3/4, 7); v, u;
-Valuation(0/1, 2);
+Valuation(0/1, 2); v, u := Valuation(0/1, 2); v, u, Parent(u);
 Valuation(1/8, 2); Valuation(4/1, 2); Valuation(12/5, 2^61 - 1);
 Valuation(12/5, 4);
 Valuation(12/5, 1);
@@ -72,6 +72,7 @@ Valuation(12/5, -2);
 Valuation(12/5, 5/1);
 Valuation(12/5, ideal<Integers() | 2>);
 v, u := Valuation(12/5, ideal<Integers() | 5>); v, u;
+Valuation(0/1, ideal<Integers() | 5>); v, u := Valuation(0/1, ideal<Integers() | 5>); Parent(u);
 
 // sequence conversions
 ElementToSequence(1/2); Eltseq(-3/7); Eltseq(3/1); Parent(Eltseq(1/2));

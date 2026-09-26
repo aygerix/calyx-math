@@ -8,6 +8,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use calyx_flint::{Integer, Rational};
+use calyx_syntax::ast::AggKind;
 
 use super::residue::Res;
 use super::{arg_ge, arg_not, arg_prime, boolv, intv, one};
@@ -106,14 +107,14 @@ fn generator(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 }
 
 /// The primes of Q over p (or -p): `[ <|p|, 1> ]`.
-fn decomposition(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+fn decomposition(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let p = match &a.args[1] {
         Value::Int(p) if p.abs().is_prime() => Value::Int(p.abs()),
         Value::Int(_) => return Err(super::bare(RuntimeError::runtime("Argument 2 must be a prime element."))),
         // The infinite prime (either infinity) is real, unramified.
         _ => Value::Infinity(true),
     };
-    one(Value::seq(None, vec![Value::tuple(vec![p, Value::int(1)])]))
+    one(it.build_aggregate(AggKind::Seq, None, vec![Value::tuple(vec![p, Value::int(1)])], false)?)
 }
 
 /// The units {1, -1} of Z as Z/2, with the map that Magma defines by its
@@ -427,13 +428,14 @@ fn valuation_at(a: &CallArgs, p: &Integer, both: bool) -> RResult<Vals> {
         return Err(arg_prime(2, p));
     }
     let x = rat(a, 0);
+    let two = a.nresults >= 2 || both;
     if x.is_zero() {
-        return Ok(vals![Value::Infinity(true)]);
+        return Ok(if two { vals![Value::Infinity(true), Value::rat(Rational::zero())] } else { vals![Value::Infinity(true)] });
     }
     let (vn, n) = x.numerator().remove(p);
     let (vd, d) = x.denominator().remove(p);
     let v = Integer::from_i64(vn as i64 - vd as i64);
-    if a.nresults < 2 && !both {
+    if !two {
         return intv(v);
     }
     Ok(vals![Value::Int(v), Value::rat(Rational::new(&n, &d).unwrap())])

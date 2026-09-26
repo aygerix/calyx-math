@@ -343,9 +343,9 @@ impl NativeMap for SignMap {
         Ok(Value::int(if domain_coords(m, x)?[0].is_zero() { 1 } else { -1 }))
     }
 
-    fn preimage(&self, it: &mut Interp, m: &MapObj, y: &Value) -> RResult<Value> {
-        match it.try_coerce(&Value::integers(), y)? {
-            Ok(Value::Int(k)) if k.abs().is_one() => Ok(domain_elt(m, vec![Integer::from_u64((k.sign() < 0) as u64)])),
+    fn preimage(&self, _it: &mut Interp, m: &MapObj, y: &Value) -> RResult<Value> {
+        match y {
+            Value::Int(k) if k.abs().is_one() => Ok(domain_elt(m, vec![Integer::from_u64((k.sign() < 0) as u64)])),
             _ => Err(no_preimage()),
         }
     }
@@ -457,6 +457,8 @@ pub fn register(it: &mut Interp) {
     }
     it.def("AdditiveGroup", "R::RngIntRes -> GrpAb, Map", "The additive group of R = Z/mZ, with the map onto R.", additive_group_res);
     it.def("AdditiveGroup", "Z::RngInt -> GrpAb, Map", "The additive group of Z, free of rank 1, with the map onto Z.", additive_group_z);
-    it.def("MultiplicativeGroup", "Z::RngInt -> GrpAb, Map", "The unit group {1, -1} of Z as Z/2, with the map onto the units.", multiplicative_group_z);
+    for name in ["UnitGroup", "MultiplicativeGroup"] {
+        it.def(name, "Z::RngInt -> GrpAb, Map", "The unit group {1, -1} of Z as Z/2, with the map onto the units.", multiplicative_group_z);
+    }
     it.def("ClassGroup", "Z::RngInt -> GrpAb, Map", "The (trivial) class group of Z, with the map onto its ideals.", class_group_z);
 }
