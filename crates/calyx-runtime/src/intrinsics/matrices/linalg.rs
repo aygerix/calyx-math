@@ -1173,7 +1173,8 @@ fn is_consistent(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let x = mat_arg(a, 0)?.clone();
     let w = a.args[1].clone();
     let (rows, seq) = rhs(it, &x, &w)?;
-    let Some(v) = solve(&x, &rows, seq)? else { return boolv(false) };
+    // Without a solution, `b, V := IsConsistent(A, W)` leaves V unassigned.
+    let Some(v) = solve(&x, &rows, seq)? else { return Ok(vals![Value::Bool(false), Value::Undef, Value::Undef]) };
     let v = solution_value(it, &x, &w, v, seq)?;
     if a.nresults < 3 && x.info().shape != Shape::Algebra && !seq {
         return Ok(vals![Value::Bool(true), v]);

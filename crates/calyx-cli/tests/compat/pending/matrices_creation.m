@@ -141,6 +141,55 @@ Matrix([[GF(3)|]]);
 Matrix(Integers(), [[]]);
 Matrix([Vector([1,2]), Vector([1,2,3])]);
 
+// Sequences of rows: sequences, vectors, or matrices whose entries make
+// the rows; empty rows over a given ring
+Matrix([Matrix(1, 2, [1,2]), Matrix(1, 2, [3,4])]);
+Parent($1);
+Matrix([Matrix(2, 2, [1,2,3,4])]);
+Parent($1);
+Matrix([Matrix(2, 2, [1,2,3,4]), Matrix(2, 2, [5,6,7,8])]);
+Matrix([Matrix(GF(5), 1, 2, [1,2])]);
+Parent($1);
+Matrix([Vector(GF(5), [1,2])]);
+Parent($1);
+Matrix([Vector([1,2])] cat [Vector([3,4])]);
+Matrix(Rationals(), []);
+Parent($1);
+Matrix(Rationals(), [[]]);
+Parent($1);
+Matrix(Rationals(), [[], []]);
+Matrix([[GF(5)|]]);
+Matrix([[Integers()|]]);
+Matrix(GF(5), [[1/2, 1]]);
+Matrix([ [1, 2], [1/2, 3] ]);
+Matrix([ [GF(5)!1, 2] ]);
+Parent($1);
+Matrix(Rationals(), 2, [1/2, 3, 1, 1]);
+
+// Errors of the sequence forms
+Matrix(Rationals(), [Vector([1,2]), Vector([3,4])]);
+Matrix(Rationals(), 2, [Vector([1,2]), Vector([3,4])]);
+Matrix(Rationals(), [Matrix(1, 2, [1,2])]);
+Matrix(2, [[1,2],[3,4]]);
+Matrix(Rationals(), 2, [[1,2],[3,4]]);
+Matrix(2, [Vector([1,2])]);
+Matrix(Rationals(), [[1], []]);
+Matrix([[1], []]);
+Matrix([[], [1]]);
+Matrix([[]]);
+Matrix([Integers()|]);
+Matrix(Rationals(), [Integers()|]);
+Matrix(Rationals(), [1,2,3,4]);
+Matrix([1,2,3,4]);
+Matrix(Rationals(), 3, [1, 2]);
+Matrix(0, []);
+Matrix(Rationals(), 2, [Matrix(GF(5), 1, 2, [1,2])]);
+Matrix(Rationals(), 2, [Vector(GF(5), [1,2])]);
+Matrix(Rationals(), 2, [Matrix(Rationals(), 1, 2, [1,2])]);
+Matrix(Rationals(), 2, {Matrix(Integers(), 1, 2, [1,2])});
+Matrix(Rationals(), 2, [[Matrix(Integers(), 1, 2, [1,2])]]);
+Matrix([Matrix(1, 2, [1,2])] : Foo := 1);
+
 // Parameters: the forms that Magma writes in its own language (those of
 // Matrix taking sequences of sequences, the zero, identity, diagonal and
 // random matrices) report them without the argument types

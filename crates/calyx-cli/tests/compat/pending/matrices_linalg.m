@@ -234,3 +234,27 @@ Pfaffian(M : Foo := 1);
 Pfaffians(M, 2 : Foo := 1);
 Adjoint(M : Foo := 1);
 Trace(M : Foo := 1);
+
+// Without a solution, IsConsistent leaves the other values unassigned
+A := Matrix(Rationals(), 2, 2, [1, 2, 2, 4]);
+w := Vector(Rationals(), [1, 1]);
+IsConsistent(A, w);
+V := 5;
+b, V := IsConsistent(A, w);
+b;
+V;
+b, V2, N2 := IsConsistent(A, w);
+N2;
+b, V3 := IsConsistent(A, [w]);
+V3;
+b, V4 := IsConsistent(A, Matrix(Rationals(), 1, 2, [1, 1]));
+V4;
+procedure p(A, w)
+  b, U := IsConsistent(A, w);
+  b;
+  assigned U;
+end procedure;
+p(A, w);
+x, y := IsConsistent(A, Vector(Rationals(), [1, 2]));
+x, y;
+IsConsistent(A, Vector(Rationals(), [1, 2]));
