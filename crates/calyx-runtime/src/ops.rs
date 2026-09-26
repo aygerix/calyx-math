@@ -564,6 +564,8 @@ impl Interp {
                     }
                     match (kind(x), kind(y)) {
                         ((1, Some(p)), (1, Some(q))) if p != q => return incompatible(&format!("Arguments are not compatible\n{types}")),
+                        // Univariate polynomial rings over the same ring are equal.
+                        ((1, Some(_)), (1, Some(_))) => return Ok(Some(true)),
                         ((2, _), (2, _)) => return incompatible(&format!("Arguments are not compatible\n{types}")),
                         _ => {}
                     }

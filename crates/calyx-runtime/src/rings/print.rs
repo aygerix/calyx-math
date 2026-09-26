@@ -1,7 +1,7 @@
 //! Printing of rings and their elements in Magma's format.
 
 use calyx_flint::Integer;
-use calyx_flint::gr::{Elem, MonomialOrder, Truth};
+use calyx_flint::gr::{CtxKind, Elem, MonomialOrder, Truth};
 
 use super::{Elt, Ring, RingKind};
 use crate::error::RResult;
@@ -78,6 +78,21 @@ fn gen_name(e: &Elt, i: usize) -> String {
     ring.gen_name(i)
 }
 
+/// A coefficient of a polynomial as text; real and complex coefficients
+/// equal to 1 or -1 print as `1` and `-1` so that `term` leaves them out.
+fn coeff_text(it: &mut Interp, base: &Value, c: Elem, level: Level) -> RResult<String> {
+    if matches!(c.ctx().kind(), CtxKind::RealFloat(_) | CtxKind::ComplexFloat(_)) {
+        if c.is_one() == Truth::True {
+            return Ok("1".to_string());
+        }
+        if c.is_neg_one() == Truth::True {
+            return Ok("-1".to_string());
+        }
+    }
+    let cv = it.elem_to_value(base, c);
+    it.format_flat(&cv, level)
+}
+
 /// Format an element of a ring.
 pub fn format_ring_elt(it: &mut Interp, e: &Elt, level: Level) -> RResult<String> {
     let ring = e.ring();
@@ -112,9 +127,7 @@ pub fn format_ring_elt(it: &mut Interp, e: &Elt, level: Level) -> RResult<String
                 if c.is_zero() == Truth::True {
                     continue;
                 }
-                let cv = it.elem_to_value(&base, c);
-                let cs = it.format_flat(&cv, level)?;
-                terms.push(term(&cs, &power(&name, k as u64)));
+                terms.push(term(&coeff_text(it, &base, c, level)?, &power(&name, k as u64)));
             }
             join_terms(&terms)
         }
@@ -125,9 +138,7 @@ pub fn format_ring_elt(it: &mut Interp, e: &Elt, level: Level) -> RResult<String
             for i in 0..e.x.mpoly_len() {
                 let (c, exps) = e.x.mpoly_term(i);
                 let mono: Vec<String> = exps.iter().enumerate().filter(|(_, k)| **k > 0).map(|(j, k)| power(&names[j], *k)).collect();
-                let cv = it.elem_to_value(&base, c);
-                let cs = it.format_flat(&cv, level)?;
-                terms.push(term(&cs, &mono.join("*")));
+                terms.push(term(&coeff_text(it, &base, c, level)?, &mono.join("*")));
             }
             join_terms(&terms)
         }

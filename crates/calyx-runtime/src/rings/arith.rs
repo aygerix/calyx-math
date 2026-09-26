@@ -136,8 +136,12 @@ impl Interp {
             Sub => x.sub(&y).map_err(|e| arith_err(e, name))?,
             Mul => x.mul(&y).map_err(|e| arith_err(e, name))?,
             Div => {
+                // Magma reports a polynomial divided by zero or another
+                // non-unit constant in one way.
+                let upoly = matches!(ring.kind, RingKind::UPoly { .. });
                 if y.is_zero() == Truth::True {
-                    return Err(div_by_zero().in_context("/"));
+                    let e = if upoly { RuntimeError::runtime("Argument 2 is not a unit") } else { div_by_zero() };
+                    return Err(e.in_context("/"));
                 }
                 // Division of a polynomial by a unit of the coefficient ring.
                 let by_constant = match &ring.kind {
@@ -146,7 +150,8 @@ impl Interp {
                     _ => None,
                 };
                 if let Some(c) = by_constant {
-                    let inv = c.inv().map_err(|_| RuntimeError::runtime("Argument 2 is not invertible").in_context("/"))?;
+                    let msg = if upoly { "Argument 2 is not a unit" } else { "Argument 2 is not invertible" };
+                    let inv = c.inv().map_err(|_| RuntimeError::runtime(msg).in_context("/"))?;
                     let v = match &ring.kind {
                         RingKind::UPoly { .. } => x.poly_mul_scalar(&inv),
                         _ => x.mpoly_mul_scalar(&inv),
@@ -179,7 +184,7 @@ impl Interp {
                     return Err(div_by_zero().in_context(name));
                 }
                 let (q, rem) = match &ring.kind {
-                    RingKind::UPoly { .. } => x.poly_divrem(&y).map_err(|_| RuntimeError::runtime("The leading coefficient of the divisor is not a unit").in_context(name))?,
+                    RingKind::UPoly { .. } => crate::intrinsics::upoly::quotrem(self, ring, &x, &y).map_err(|e| e.in_context(name))?,
                     _ => x.euclidean_divrem(&y).map_err(|e| arith_err(e, name))?,
                 };
                 if op == IntDiv { q } else { rem }
@@ -268,6 +273,9 @@ impl Interp {
     /// `a ^ k` for a ring element `a` and an integer `k`.
     fn ring_pow(&mut self, a: &Value, b: &Value) -> RResult<Option<Value>> {
         let (Value::Elt(x), Value::Int(k)) = (a, b) else { return Ok(None) };
+        if k.sign() < 0 && matches!(x.ring().kind, RingKind::UPoly { .. }) {
+            return Err(crate::intrinsics::arg_ge(2, k, 0).in_context("^"));
+        }
         if k.sign() < 0 && x.x.is_zero() == Truth::True {
             return Err(div_by_zero().in_context("^"));
         }

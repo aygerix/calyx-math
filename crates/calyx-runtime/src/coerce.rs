@@ -70,7 +70,14 @@ impl Interp {
         match attempt {
             Ok(v) => Ok(v),
             Err(msg) => {
+                let msg_given = msg.is_some();
                 let reason = msg.unwrap_or_else(|| "Illegal coercion".to_string());
+                // Polynomial rings report just the reason (a plain failure
+                // without the blank line).
+                if crate::rings::ring_of(s).is_some_and(|(_, r)| matches!(r.kind, crate::rings::RingKind::UPoly { .. })) {
+                    let style = if msg_given { crate::error::ErrStyle::Normal } else { crate::error::ErrStyle::Plain };
+                    return Err(crate::error::ErrorInfo { style, ..crate::error::ErrorInfo::runtime(reason) }.into());
+                }
                 let rhs = self.coercion_type_name(x);
                 let text = format!("{reason}\nLHS: {}\nRHS: {rhs}", self.type_name(s));
                 Err(crate::error::ErrorInfo { style: crate::error::ErrStyle::Plain, ..crate::error::ErrorInfo::runtime(text) }.into())
@@ -702,6 +709,24 @@ impl Interp {
                 }
             }
             Value::Assoc(_) => Err(RuntimeError::runtime("Use IsDefined to test membership in an associative array").in_context("in")),
+            // A univariate polynomial ring contains the polynomials over its
+            // coefficient ring and the elements that coerce into it.
+            Value::Struct(st) if matches!(&st.kind, StructKind::Ring(r) if matches!(r.kind, crate::rings::RingKind::UPoly { .. })) => {
+                use crate::rings::RingKind;
+                let StructKind::Ring(r) = &st.kind else { unreachable!() };
+                if let Some(e) = crate::rings::small::elt_of(x) {
+                    match &e.ring().kind {
+                        RingKind::UPoly { base, .. } if r.base() == Some(base) => return Ok(true),
+                        RingKind::UPoly { .. } | RingKind::MPoly { .. } => return Err(RuntimeError::runtime("Arguments are not compatible").in_context("in")),
+                        _ => {}
+                    }
+                }
+                let px = self.parent_of(x)?;
+                if !self.auto_coerces(&px, s) {
+                    return Err(RuntimeError::runtime("Bad argument types").in_context("in"));
+                }
+                Ok(true)
+            }
             Value::Struct(st) if matches!((&st.kind, x), (StructKind::Ring(_), Value::Elt(_) | Value::Small(..))) => {
                 let e = crate::rings::small::elt_of(x).unwrap();
                 let StructKind::Ring(r) = &st.kind else { unreachable!() };

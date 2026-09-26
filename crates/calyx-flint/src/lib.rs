@@ -6,6 +6,7 @@
 //! interpreter.
 
 pub mod gr;
+pub mod upoly;
 mod integer;
 mod nmod;
 mod rational;
