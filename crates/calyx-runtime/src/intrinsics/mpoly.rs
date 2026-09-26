@@ -336,9 +336,7 @@ fn coefficients_and_monomials(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals
 
 fn leading_monomial(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = mpol(a, 0);
-    if f.x.mpoly_len() == 0 {
-        return one(like(&f, Elem::zero(f.x.ctx())));
-    }
+    nonzero(&f)?;
     one(monomial(&f, f.x.mpoly_term(0).1)?)
 }
 
@@ -351,9 +349,9 @@ fn monomial_coefficient(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let e = match m.x.mpoly_len() {
         1 => match m.x.mpoly_term(0) {
             (c, e) if c.is_one() == Truth::True => e,
-            _ => return Err(RuntimeError::runtime("Argument 2 must be a monomial")),
+            _ => return Err(RuntimeError::runtime("Argument 2 is not a monomial")),
         },
-        _ => return Err(RuntimeError::runtime("Argument 2 must be a monomial")),
+        _ => return Err(RuntimeError::runtime("Argument 2 is not a monomial")),
     };
     let c = terms(&f.x).into_iter().find(|(_, x)| *x == e).map_or_else(|| czero(&f), |(c, _)| c);
     one(cval(it, &f, c))
@@ -363,7 +361,7 @@ fn monomial_coefficient(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 fn exponents(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = mpol(a, 0);
     if f.x.mpoly_len() != 1 {
-        return Err(RuntimeError::runtime("Argument 1 must be a term"));
+        return Err(RuntimeError::runtime("Argument must be a term (polynomial with one term)"));
     }
     one(Value::int_seq(f.x.mpoly_term(0).1.into_iter().map(Integer::from_u64)))
 }
@@ -374,7 +372,7 @@ fn monomial_from(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = rank(&r);
     let es = a.seq(1)?.elems.clone();
     if es.len() != n {
-        return Err(RuntimeError::runtime(format!("Argument 2 should have length {n}")));
+        return Err(RuntimeError::runtime(format!("Sequence should have length {n}")));
     }
     let mut e = Vec::with_capacity(n);
     for v in &es {
@@ -509,13 +507,16 @@ fn is_univariate(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     }
 }
 
+/// `f` as a univariate polynomial, and the number of its variable (1 for a
+/// constant).
 fn univariate_polynomial(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = mpol(a, 0);
-    match occurring(&f.x).as_slice() {
-        [] => one(univariate(it, &f, 0)?),
-        [i] => one(univariate(it, &f, *i)?),
-        _ => Err(RuntimeError::runtime("Argument 1 is not univariate")),
-    }
+    let i = match occurring(&f.x).as_slice() {
+        [] => 0,
+        [i] => *i,
+        _ => return Err(RuntimeError::runtime("Argument 1 is not univariate")),
+    };
+    Ok(vals![univariate(it, &f, i)?, Value::int(i as i64 + 1)])
 }
 
 // ----- derivative, integral ----------------------------------------------------------
@@ -545,22 +546,23 @@ fn derivative(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(build(&f, &out)?)
 }
 
-/// The integral with respect to a variable, over a field of characteristic 0.
+/// The integral with respect to a variable. Magma integrates over any
+/// coefficient ring, dividing each coefficient by its new exponent, and where
+/// that division is impossible (x over Z, x^(p-1) over GF(p)) returns a
+/// malformed polynomial; calyx gives an error instead.
 fn integral(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = mpol(a, 0);
     let i = var_arg(a, 1, &f, "variable number")?;
-    let p = ring_props(&base_of(&f));
-    if !p.as_ref().is_some_and(|p| p.field) {
-        return Err(RuntimeError::runtime("Coefficient ring of argument 1 is not a field"));
-    }
-    if !p.is_some_and(|p| p.characteristic.is_zero()) {
-        return Err(RuntimeError::runtime("Coefficient ring must have characteristic 0"));
-    }
+    let field = ring_props(&base_of(&f)).is_some_and(|p| p.field);
     let base = f.x.ctx().base().expect("a polynomial ring").clone();
     let mut out = Vec::new();
     for (c, mut e) in terms(&f.x) {
         e[i] += 1;
-        out.push((c.div(&Elem::from_integer(&base, &Integer::from_u64(e[i]))?)?, e));
+        match c.div(&Elem::from_integer(&base, &Integer::from_u64(e[i]))?) {
+            Ok(q) => out.push((q, e)),
+            Err(_) if field => return Err(div_by_zero()),
+            Err(_) => return Err(RuntimeError::runtime("Coefficient ring of argument 1 is not a field")),
+        }
     }
     one(build(&f, &out)?)
 }
@@ -602,7 +604,7 @@ fn evaluate(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
         _ => unreachable!("a sequence or tuple"),
     };
     if xs.len() != n {
-        return Err(RuntimeError::runtime(format!("Argument 2 should have length {n}")));
+        return Err(RuntimeError::runtime(format!("Argument 2 must have length {n}")));
     }
     let base = base_of(&f);
     let mut lifted = Vec::with_capacity(n);
@@ -633,59 +635,68 @@ fn evaluate(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(it.elem_to_value(&base, acc))
 }
 
-/// `Evaluate(f, i, r)`: `f` with a variable replaced by `r`, in the ring of
-/// `f` if r lifts to its coefficient ring or is in it, otherwise in the
-/// structure of r (into which the other variables must coerce).
+/// `g` with variable `i` replaced by `r` of the same ring, by Horner's rule on
+/// the powers of the variable present.
+fn substitute(g: &Elem, i: usize, r: &Elem) -> RResult<Elem> {
+    let ctx = g.ctx().clone();
+    let mut acc = Elem::zero(&ctx);
+    let mut last: Option<u64> = None;
+    for (k, ts) in by_power(g, i).into_iter().rev() {
+        if let Some(l) = last {
+            acc = acc.mul(&r.pow(&Integer::from_u64(l - k))?)?;
+        }
+        acc = acc.add(&Elem::mpoly_from_terms(&ctx, &without(&ts, i))?)?;
+        last = Some(k);
+    }
+    if let Some(l) = last.filter(|&l| l > 0) {
+        acc = acc.mul(&r.pow(&Integer::from_u64(l))?)?;
+    }
+    Ok(acc)
+}
+
+/// `Evaluate(f, i, r)`: `f` with a variable replaced by `r`. For r in a
+/// multivariate ring of the same rank (that of f, or another into which f is
+/// coerced as by `!`) the result lies in that ring; otherwise r must coerce
+/// into the coefficient ring and the result lies in the ring of f.
 fn evaluate_at(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = mpol(a, 0);
     let i = var_arg(a, 1, &f, "variable number")?;
     let r = a.args[2].clone();
+    let not_coercible = || RuntimeError::runtime("Argument 3 not coercible into coefficient ring");
+    if let Value::Elt(re) = &r {
+        if let RingKind::MPoly { rank: m, .. } = re.ring().kind {
+            if m != rank(f.ring()) {
+                return Err(not_coercible());
+            }
+            let g = if re.ring().id == f.ring().id {
+                f.x.clone()
+            } else {
+                let s = it.parent_of(&r)?;
+                it.to_structure_elem(&s, &Value::Elt(f.clone()), true)?.ok_or_else(|| RuntimeError::runtime("Illegal coercion"))?
+            };
+            return one(like(re, substitute(&g, i, &re.x)?));
+        }
+    }
     let base = base_of(&f);
     let pr = it.parent_of(&r)?;
-    if it.auto_coerces(&pr, &base) {
-        if let Some(x) = it.to_structure_elem(&base, &r, false)? {
-            let mut pows: HashMap<u64, Elem> = HashMap::new();
-            let mut out = Vec::new();
-            for (c, mut e) in terms(&f.x) {
-                let k = std::mem::replace(&mut e[i], 0);
-                if let Entry::Vacant(v) = pows.entry(k) {
-                    v.insert(x.pow(&Integer::from_u64(k))?);
-                }
-                out.push((c.mul(&pows[&k])?, e));
-            }
-            return one(build(&f, &out)?);
+    let x = if it.auto_coerces(&pr, &base) { it.to_structure_elem(&base, &r, false)? } else { None };
+    let x = x.ok_or_else(not_coercible)?;
+    let mut pows: HashMap<u64, Elem> = HashMap::new();
+    let mut out = Vec::new();
+    for (c, mut e) in terms(&f.x) {
+        let k = std::mem::replace(&mut e[i], 0);
+        if let Entry::Vacant(v) = pows.entry(k) {
+            v.insert(x.pow(&Integer::from_u64(k))?);
         }
+        out.push((c.mul(&pows[&k])?, e));
     }
-    // A polynomial of the same ring: Horner's rule on the powers present.
-    if let Value::Elt(re) = &r {
-        if re.ring().id == f.ring().id {
-            let ctx = f.x.ctx().clone();
-            let mut acc = Elem::zero(&ctx);
-            let mut last: Option<u64> = None;
-            for (k, ts) in by_power(&f.x, i).into_iter().rev() {
-                if let Some(l) = last {
-                    acc = acc.mul(&re.x.pow(&Integer::from_u64(l - k))?)?;
-                }
-                acc = acc.add(&Elem::mpoly_from_terms(&ctx, &without(&ts, i))?)?;
-                last = Some(k);
-            }
-            if let Some(l) = last.filter(|&l| l > 0) {
-                acc = acc.mul(&re.x.pow(&Integer::from_u64(l))?)?;
-            }
-            return one(like(&f, acc));
-        }
-    }
-    let n = rank(f.ring());
-    let mut xs = Vec::with_capacity(n);
-    for j in 0..n {
-        xs.push(if j == i { r.clone() } else { it.coerce(&pr, &like(&f, f.x.ctx().mpoly_gen(j)?))? });
-    }
-    one(evaluate_generic(it, &f, &xs)?)
+    one(build(&f, &out)?)
 }
 
 /// `Interpolation(I, V, i)`: the polynomial of degree less than #I in the
 /// i-th variable taking the values V (free of that variable) at the points
-/// I of the coefficient field.
+/// I, a sequence over the coefficient field; 0 if the points are not
+/// distinct, as in Magma.
 fn interpolation(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (xs, vs) = (a.seq(0)?.clone(), a.seq(1)?.clone());
     let Some(Value::Elt(f)) = vs.elems.first().cloned() else {
@@ -697,33 +708,34 @@ fn interpolation(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
         return Err(RuntimeError::runtime("Arguments have different lengths"));
     }
     let base = base_of(&f);
-    if !ring_props(&base).is_some_and(|p| p.field) {
+    let u = xs.universe.clone().unwrap_or_else(|| base.clone());
+    if !ring_props(&u).is_some_and(|p| p.field) {
         return Err(RuntimeError::runtime("Ring is not a field"));
     }
-    let mut pts = Vec::with_capacity(n);
-    for x in &xs.elems {
-        match it.to_structure_elem(&base, x, false)? {
-            Some(y) => pts.push(y),
-            None => return Err(RuntimeError::runtime("Arguments have different rings")),
-        }
+    if !it.auto_coerces(&u, &base) || !it.auto_coerces(&base, &u) {
+        return Err(RuntimeError::runtime("Arguments have different rings"));
     }
     let mut cs = Vec::with_capacity(n);
-    for v in &vs.elems {
+    for (j, v) in vs.elems.iter().enumerate() {
         let Value::Elt(v) = v else { unreachable!("a polynomial") };
         if v.ring().id != f.ring().id {
             return Err(RuntimeError::runtime("Arguments have different rings"));
         }
         if occurring(&v.x).contains(&i) {
-            return Err(RuntimeError::runtime("Interpolation variable occurs in the values"));
+            return Err(RuntimeError::runtime(format!("Value {} contains variable {}", j + 1, i + 1)));
         }
         cs.push(v.x.clone());
+    }
+    let mut pts = Vec::with_capacity(n);
+    for x in &xs.elems {
+        pts.push(it.to_structure_elem(&base, x, false)?.ok_or_else(|| RuntimeError::runtime("Arguments have different rings"))?);
     }
     // Newton's divided differences, then Horner's rule.
     for k in 1..n {
         for j in (k..n).rev() {
             let d = pts[j].sub(&pts[j - k])?;
             if d.is_zero() == Truth::True {
-                return Err(RuntimeError::runtime("Elements of argument 1 are not distinct"));
+                return one(like(&f, Elem::zero(f.x.ctx())));
             }
             cs[j] = cs[j].sub(&cs[j - 1])?.mpoly_mul_scalar(&d.inv()?)?;
         }
@@ -1100,40 +1112,6 @@ fn sum_norm(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 
 // ----- structure operations -------------------------------------------------
 
-/// The map of `ChangeRing` between multivariate polynomial rings: coercion
-/// of the coefficients, or a map applied to them.
-struct CoefficientMap(Option<Rc<MapObj>>);
-
-impl NativeMap for CoefficientMap {
-    fn apply(&self, it: &mut Interp, m: &MapObj, x: &Value) -> RResult<Value> {
-        let x = it.coerce(&m.domain, x).map_err(|_| RuntimeError::runtime("Element is not in the domain of the map").in_context("map application"))?;
-        let Value::Elt(f) = &x else { unreachable!("a polynomial") };
-        let Some((cst, cod)) = ring_of(&m.codomain) else { unreachable!("a polynomial ring") };
-        let (cst, target, ctx) = (cst.clone(), cod.base().expect("a polynomial ring").clone(), cod.ctx.clone());
-        let source = f.ring().base().expect("a polynomial ring").clone();
-        let mut terms = Vec::with_capacity(f.x.mpoly_len());
-        for i in 0..f.x.mpoly_len() {
-            let (c, exps) = f.x.mpoly_term(i);
-            let mut c = it.elem_to_value(&source, c);
-            if let Some(g) = &self.0 {
-                c = it.apply_map(g, &c)?;
-            }
-            match it.to_structure_elem(&target, &c, true)? {
-                Some(c) => terms.push((c, exps)),
-                None => {
-                    let msg = "Cannot coerce element from source coefficent ring into the destination coefficient ring";
-                    return Err(RuntimeError::runtime(msg).in_context("map application"));
-                }
-            }
-        }
-        Ok(make_elt(&cst, Elem::mpoly_from_terms(&ctx, &terms)?))
-    }
-
-    fn preimage(&self, _it: &mut Interp, _m: &MapObj, _y: &Value) -> RResult<Value> {
-        Err(RuntimeError::runtime("No inverse is known for the map").in_context("@@"))
-    }
-}
-
 /// A homomorphism from a polynomial ring given by the images of its
 /// variables, applying a map to the coefficients or coercing them.
 struct PolyHom {
@@ -1148,10 +1126,11 @@ impl NativeMap for PolyHom {
         let base = base_of(f);
         let image = |it: &mut Interp, c: Elem| -> RResult<Value> {
             let c = it.elem_to_value(&base, c);
-            match &self.coeff {
-                Some(g) => it.apply_map(g, &c),
-                None => it.coerce(&m.codomain, &c),
-            }
+            let c = match &self.coeff {
+                Some(g) => it.apply_map(g, &c)?,
+                None => c,
+            };
+            it.coerce(&m.codomain, &c)
         };
         // Horner's rule for a univariate polynomial, a sum of terms otherwise.
         let mut acc = it.coerce(&m.codomain, &Value::int(0))?;
@@ -1183,28 +1162,58 @@ impl NativeMap for PolyHom {
 
 /// `hom< P -> S | y1, ..., yn >` and `hom< P -> S | f, y1, ..., yn >` for a
 /// polynomial ring P: the images of the variables in S, after a map f of the
-/// coefficients. `None` if P is not a polynomial ring.
+/// coefficients (from the coefficient ring into a ring that coerces into S).
+/// Sequences among the images are flattened. `None` if P is not a polynomial
+/// ring.
 pub fn polynomial_hom(it: &mut Interp, domain: &Value, codomain: &Value, images: &[Value]) -> RResult<Option<Value>> {
     let Some((_, r)) = ring_of(domain).filter(|(_, r)| matches!(r.kind, RingKind::UPoly { .. } | RingKind::MPoly { .. })) else { return Ok(None) };
-    let n = r.ngens();
-    let (coeff, ys) = match images {
+    let (n, univariate) = (r.ngens(), matches!(r.kind, RingKind::UPoly { .. }));
+    let err = |s: String| RuntimeError::runtime(s).in_context("hom< ... >");
+    let mut items = Vec::with_capacity(images.len());
+    for v in images {
+        match v {
+            Value::Seq(s) => items.extend(s.elems.iter().cloned()),
+            v => items.push(v.clone()),
+        }
+    }
+    if univariate && !(1..=2).contains(&items.len()) {
+        return Err(err("Wrong number of arguments to polynomial homomorphism element constructor (should be 1 or 2)".into()));
+    }
+    if items.is_empty() {
+        return Err(err("No images given".into()));
+    }
+    let (coeff, ys) = match &items[..] {
         [Value::Map(g), ys @ ..] => (Some(g.clone()), ys),
+        [_, _] if univariate => return Err(err("Illegal coefficient map".into())),
         ys => (None, ys),
     };
+    if let Some(g) = &coeff {
+        let base = r.base().expect("a polynomial ring").clone();
+        if !it.auto_coerces(&base, &g.domain) || !it.auto_coerces(&g.codomain, codomain) {
+            return Err(err("Illegal coefficient map".into()));
+        }
+    }
+    // The univariate constructor and the multivariate one word their errors
+    // differently; a multivariate image that does not coerce counts as a
+    // wrong arity.
+    let arity = || err(format!("RHS has arity {} but should have length {n}", ys.len()));
     if ys.len() != n {
-        return Err(RuntimeError::runtime(format!("Number of images ({}) does not equal the number of variables ({n})", ys.len())).in_context("hom< ... >"));
+        return Err(arity());
     }
     let mut out = Vec::with_capacity(n);
     for y in ys {
-        out.push(it.coerce(codomain, y).map_err(|e| e.in_context("hom< ... >"))?);
+        match it.coerce(codomain, y) {
+            Ok(y) => out.push(y),
+            Err(_) if univariate => return Err(err("Element is not in the codomain of the map".into())),
+            Err(_) => return Err(arity()),
+        }
     }
     let h = PolyHom { coeff, images: out };
     Ok(Some(Value::Map(Rc::new(MapObj { kind: MapKind::Map, domain: domain.clone(), codomain: codomain.clone(), imp: MapImpl::Native(Rc::new(h)) }))))
 }
 
 /// `ChangeRing(P, S)`: the polynomial ring over S with the rank, order and
-/// names of P, and the map from P (applying f to the coefficients if
-/// given).
+/// names of P (unlike the univariate one, without a map).
 fn change_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (_, r) = ring_arg(a, 0);
     let RingKind::MPoly { rank, order, .. } = r.kind else { unreachable!("a multivariate polynomial ring") };
@@ -1212,12 +1221,7 @@ fn change_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     if let Some((_, qr)) = ring_of(&q) {
         *qr.names.borrow_mut() = r.names.borrow().clone();
     }
-    let f = match a.args.get(2) {
-        Some(Value::Map(m)) => Some(m.clone()),
-        _ => None,
-    };
-    let h = MapObj { kind: MapKind::Map, domain: a.args[0].clone(), codomain: q.clone(), imp: MapImpl::Native(Rc::new(CoefficientMap(f))) };
-    Ok(vals![q, Value::Map(Rc::new(h))])
+    one(q)
 }
 
 pub fn register(it: &mut Interp) {
@@ -1226,8 +1230,7 @@ pub fn register(it: &mut Interp) {
         it.def(name, "R::Rng, n::RngIntElt, order::MonStgElt -> RngMPol", "The polynomial ring in n variables over R with the given monomial order.", polynomial_ring);
     }
     it.def("Identity", "P::RngMPol -> RngMPolElt", "The identity of P.", identity);
-    it.def("ChangeRing", "P::RngMPol, S::Rng -> RngMPol, Map", "The polynomial ring over S with the rank, order and names of P, with the map from P coercing coefficients.", change_ring);
-    it.def("ChangeRing", "P::RngMPol, S::Rng, f::Map -> RngMPol, Map", "The polynomial ring over S with the rank, order and names of P, with the map from P applying f to the coefficients.", change_ring);
+    it.def("ChangeRing", "P::RngMPol, S::Rng -> RngMPol", "The polynomial ring over S with the rank, order and names of P.", change_ring);
     it.def("MultivariatePolynomial", "P::RngMPol, f::RngUPolElt, i::RngIntElt -> RngMPolElt", "The univariate polynomial f in the i-th variable of P.", multivariate_polynomial);
     it.def("IsRegular", "f::RngMPolElt -> BoolElt", "Whether f is not a zero divisor.", is_regular);
     // A variable is given by its number or as itself.
@@ -1268,7 +1271,7 @@ pub fn register(it: &mut Interp) {
     it.def("TotalDegree", "f::RngMPolElt -> RngIntElt", "The largest total degree of a monomial of f (-1 for zero).", total_degree);
     it.def("LeadingTotalDegree", "f::RngMPolElt -> RngIntElt", "The total degree of the leading monomial of f (-1 for zero).", leading_total_degree);
     it.def("IsUnivariate", "f::RngMPolElt -> BoolElt, RngUPolElt, RngIntElt", "Whether f is a polynomial in one variable, with its univariate version and the variable's number.", is_univariate);
-    it.def("UnivariatePolynomial", "f::RngMPolElt -> RngUPolElt", "f, a polynomial in one variable, as a univariate polynomial.", univariate_polynomial);
+    it.def("UnivariatePolynomial", "f::RngMPolElt -> RngUPolElt, RngIntElt", "f, a polynomial in one variable, as a univariate polynomial, and the number of that variable.", univariate_polynomial);
     it.def("Evaluate", "f::RngMPolElt, s::[RngElt] -> RngElt", "The value of f at the sequence s.", evaluate);
     it.def("Evaluate", "f::RngMPolElt, s::Tup -> RngElt", "The value of f at the tuple s.", evaluate);
     it.def("ExactQuotient", "f::RngMPolElt, g::RngMPolElt -> RngMPolElt", "f / g for g dividing f.", exact_quotient);

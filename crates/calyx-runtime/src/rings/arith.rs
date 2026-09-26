@@ -235,18 +235,24 @@ impl Interp {
                     let q = crate::intrinsics::residue::residue_div(&x, &y, m).ok_or_else(|| div_by_zero().in_context(name))?;
                     return Ok(Some(crate::intrinsics::residue::residue_value(st, ring, &q)?));
                 }
-                if y.is_zero() == Truth::True {
-                    return Err(div_by_zero().in_context(name));
-                }
-                // Multivariate polynomials divide only exactly.
-                if let RingKind::MPoly { .. } = &ring.kind {
+                // Multivariate polynomials divide only exactly, by zero only over
+                // a field, and have no remainder.
+                if let RingKind::MPoly { base, .. } = &ring.kind {
                     if op == Mod {
                         return Ok(None);
                     }
+                    if y.is_zero() == Truth::True {
+                        let field = super::props::ring_props(base).is_some_and(|p| p.field);
+                        let e = if field { div_by_zero() } else { RuntimeError::runtime("Operation not available for this base ring") };
+                        return Err(e.in_context(name));
+                    }
                     return match crate::intrinsics::mpoly::exact_div(&x, &y).map_err(|e| e.in_context(name))? {
                         Some(q) => Ok(Some(make_elt(st, q))),
-                        None => Err(RuntimeError::runtime("Argument 1 is not exactly divisible by argument 2").in_context(name)),
+                        None => Err(RuntimeError::runtime("Argument 2 does not divide argument 1").in_context(name)),
                     };
+                }
+                if y.is_zero() == Truth::True {
+                    return Err(div_by_zero().in_context(name));
                 }
                 let (q, rem) = match &ring.kind {
                     RingKind::UPoly { .. } => crate::intrinsics::upoly::quotrem(self, ring, &x, &y).map_err(|e| e.in_context(name))?,

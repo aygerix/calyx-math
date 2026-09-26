@@ -797,14 +797,18 @@ impl Interp {
             }
             Value::Assoc(_) => Err(RuntimeError::runtime("Use IsDefined to test membership in an associative array").in_context("in")),
             // A univariate polynomial ring contains the polynomials over its
-            // coefficient ring and the elements that coerce into it.
-            Value::Struct(st) if matches!(&st.kind, StructKind::Ring(r) if matches!(r.kind, crate::rings::RingKind::UPoly { .. })) => {
+            // coefficient ring, a multivariate one its own elements (those of
+            // other multivariate rings are not in it), and both the elements
+            // that coerce into them.
+            Value::Struct(st) if matches!(&st.kind, StructKind::Ring(r) if matches!(r.kind, crate::rings::RingKind::UPoly { .. } | crate::rings::RingKind::MPoly { .. })) => {
                 use crate::rings::RingKind;
                 let StructKind::Ring(r) = &st.kind else { unreachable!() };
                 if let Some(e) = crate::rings::small::elt_of(x) {
-                    match &e.ring().kind {
-                        RingKind::UPoly { base, .. } if r.base() == Some(base) => return Ok(true),
-                        RingKind::UPoly { .. } | RingKind::MPoly { .. } => return Err(RuntimeError::runtime("Arguments are not compatible").in_context("in")),
+                    match (&r.kind, &e.ring().kind) {
+                        (RingKind::UPoly { base, .. }, RingKind::UPoly { base: b, .. }) if base == b => return Ok(true),
+                        (RingKind::UPoly { .. }, RingKind::UPoly { .. }) => return Err(RuntimeError::runtime("Arguments are not compatible").in_context("in")),
+                        (RingKind::MPoly { .. }, RingKind::MPoly { .. }) => return Ok(r.id == e.ring().id),
+                        (_, RingKind::UPoly { .. } | RingKind::MPoly { .. }) => return Err(RuntimeError::runtime("Bad argument types").in_context("in")),
                         _ => {}
                     }
                 }
