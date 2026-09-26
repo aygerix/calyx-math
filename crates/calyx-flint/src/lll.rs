@@ -15,6 +15,22 @@ pub fn lll(rows: &mut [Vec<Integer>]) {
 /// further.
 pub fn lll_with(rows: &mut [Vec<Integer>], delta: f64) {
     assert!(0.2601 < delta && delta < 1.0, "δ in (η², 1)");
+    reduce(rows, delta, 0.51, false);
+}
+
+/// The L² algorithm of Nguyen and Stehlé (FLINT's `fmpz_lll_wrapper`, the
+/// algorithm of Magma's LLL) with the Lovász constant δ and size-reduction
+/// bound η as it applies them, for 1/4 < δ < 1 and 1/2 < η < √δ. Unlike
+/// `lll` (FLINT's `fmpz_lll`, which first reduces the leading bits of
+/// large entries), it returns the basis Magma's reduction finds. FLINT
+/// relaxes the δ and η it is given to (δ + 1)/2 and (η + 1/2)/2, so they
+/// go in as 2δ - 1 and 2η - 1/2.
+pub fn lll_l2(rows: &mut [Vec<Integer>], delta: f64, eta: f64) {
+    assert!(0.25 < delta && delta < 1.0 && 0.5 < eta && eta * eta < delta, "δ in (1/4, 1), η in (1/2, √δ)");
+    reduce(rows, 2.0 * delta - 1.0, 2.0 * eta - 0.5, true);
+}
+
+fn reduce(rows: &mut [Vec<Integer>], delta: f64, eta: f64, l2: bool) {
     let (r, c) = (rows.len(), rows.first().map_or(0, |v| v.len()));
     if r == 0 || c == 0 {
         return;
@@ -29,8 +45,12 @@ pub fn lll_with(rows: &mut [Vec<Integer>], delta: f64) {
                 sys::fmpz_set(sys::fmpz_mat_entry(&m, i as sys::slong, j as sys::slong), x.raw_ptr());
             }
         }
-        sys::fmpz_lll_context_init(&mut fl, delta, 0.51, sys::rep_type_Z_BASIS, sys::gram_type_APPROX);
-        sys::fmpz_lll(&mut m, std::ptr::null_mut(), &fl);
+        sys::fmpz_lll_context_init(&mut fl, delta, eta, sys::rep_type_Z_BASIS, sys::gram_type_APPROX);
+        if l2 {
+            sys::fmpz_lll_wrapper(&mut m, std::ptr::null_mut(), &fl);
+        } else {
+            sys::fmpz_lll(&mut m, std::ptr::null_mut(), &fl);
+        }
         // The reduced entries move out; the old ones are cleared with m.
         for (i, v) in rows.iter_mut().enumerate() {
             for (j, x) in v.iter_mut().enumerate() {
@@ -68,5 +88,18 @@ mod tests {
         let (a, b) = (first[0], first[1]);
         assert_eq!((a - 123456789 * b).rem_euclid(1_000_000_007), 0);
         assert!(a * a + b * b < 2 * 1_000_000_007);
+    }
+
+    #[test]
+    fn l2_reduces_as_textbook_lll() {
+        // Relations among 10^10 (sqrt(2), 1) and 10^10 (pi, 1, sqrt(2)): the
+        // bases textbook LLL (exact, δ = 0.76, η = 0.5005) returns.
+        let rows_of = |v: &[&[i64]]| v.iter().map(|r| r.iter().map(|&x| int(x)).collect::<Vec<_>>()).collect::<Vec<_>>();
+        let mut rows = rows_of(&[&[1, 0, 14142135624], &[0, 1, 10000000000]]);
+        lll_l2(&mut rows, 0.76, 0.5005);
+        assert_eq!(rows, rows_of(&[&[-33461, 47321, -114664], &[-80782, 114243, 22032]]));
+        let mut rows = rows_of(&[&[1, 0, 0, 31415926536], &[0, 1, 0, 10000000000], &[0, 0, 1, 14142135624]]);
+        lll_l2(&mut rows, 0.76, 0.5005);
+        assert_eq!(rows, rows_of(&[&[-951, -142, 2213, 176], &[755, -2700, 232, -552], &[523, -1001, -454, 5032]]));
     }
 }

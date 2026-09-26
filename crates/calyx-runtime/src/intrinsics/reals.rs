@@ -22,6 +22,8 @@ use crate::ops::div_by_zero;
 use crate::print::Level;
 use crate::value::*;
 
+mod relations;
+
 /// The precision of the default real field at startup.
 pub const DEFAULT_DIGITS: u32 = 30;
 
@@ -1584,6 +1586,7 @@ fn infinity_itself(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 }
 
 pub fn register(it: &mut Interp) {
+    relations::register(it);
     it.def("Infinity", "-> Infty", "Positive infinity.", infinity);
     it.def("ExtendedReals", "-> ExtRe", "The real numbers together with plus and minus infinity.", extended_reals);
     it.def("MinusInfinity", "-> Infty", "Negative infinity.", minus_infinity);

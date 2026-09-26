@@ -326,6 +326,22 @@ impl Real {
         r
     }
 
+    /// `x·n` for an integer `n`, rounded once at the precision of `x`.
+    pub fn mul_integer(&self, n: &Integer) -> Real {
+        let y = Real::from_integer(n, n.bits().max(2));
+        let mut r = Real::alloc(self.prec());
+        unsafe { m::mpfr_mul(&mut r.raw, &self.raw, &y.raw, m::RNDN) };
+        r
+    }
+
+    /// `x + n` for an integer `n`, rounded once at the precision of `x`.
+    pub fn add_integer(&self, n: &Integer) -> Real {
+        let y = Real::from_integer(n, n.bits().max(2));
+        let mut r = Real::alloc(self.prec());
+        unsafe { m::mpfr_add(&mut r.raw, &self.raw, &y.raw, m::RNDN) };
+        r
+    }
+
     /// `x·2^e`.
     pub fn mul_2exp(&self, e: i64) -> Real {
         let mut r = Real::alloc(self.prec());

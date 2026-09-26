@@ -197,6 +197,7 @@ Polylog(<RngIntElt> m, <FldRatElt> x) -> FldComElt
 PolylogD(<RngIntElt> m, <FldRatElt> x) -> FldReElt
 PolylogDold(<RngIntElt> m, <FldRatElt> x) -> FldReElt
 PolylogP(<RngIntElt> m, <FldRatElt> x) -> FldReElt
+PowerRelation(<FldRatElt> r, <RngIntElt> k) -> RngUPolElt
 Psi(<FldRatElt> x) -> FldReElt
 Qround(<FldRatElt> q, <RngIntElt> M) -> FldRatElt
 Re(<FldRatElt> x) -> FldReElt
