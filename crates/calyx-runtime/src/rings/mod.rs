@@ -8,6 +8,8 @@
 
 mod arith;
 mod coerce;
+pub mod finite;
+pub mod fp;
 pub mod ideals;
 mod print;
 pub mod props;
@@ -70,15 +72,43 @@ pub struct FiniteField {
     /// The degree over the prime field.
     pub degree: u64,
     /// The defining polynomial over the prime field (constant term first);
-    /// empty for a prime field.
+    /// empty for a prime field and for an extension of a non-prime field.
     pub modulus: Vec<Integer>,
     pub conway: bool,
     /// Created by `GF(q)` and friends rather than from a user polynomial.
     pub default: bool,
     pub power_printing: Cell<bool>,
+    /// `F.1` in the FLINT context, when it is not the generator of the
+    /// context.
+    pub generator: Option<Elem>,
+    /// For an extension of a non-prime field: that field and the defining
+    /// polynomial over it.
+    pub ground: Option<finite::Ground>,
+    /// The default field whose FLINT context represents this field, if it
+    /// is not its own.
+    pub rep: Option<Rc<Struct>>,
+    /// The known subfields and overfields.
+    pub links: RefCell<finite::Links>,
+    pub cache: finite::Cache,
 }
 
 impl FiniteField {
+    pub fn new(p: Integer, degree: u64, modulus: Vec<Integer>, conway: bool, default: bool, power_printing: bool) -> FiniteField {
+        FiniteField {
+            p,
+            degree,
+            modulus,
+            conway,
+            default,
+            power_printing: Cell::new(power_printing),
+            generator: None,
+            ground: None,
+            rep: None,
+            links: RefCell::default(),
+            cache: finite::Cache::default(),
+        }
+    }
+
     pub fn order(&self) -> Integer {
         self.p.pow(self.degree)
     }
@@ -330,7 +360,7 @@ impl Interp {
         }
         let f = if n == 1 {
             let ctx = Ctx::residue_ring(p);
-            let ff = FiniteField { p: p.clone(), degree: 1, modulus: Vec::new(), conway: false, default: true, power_printing: Cell::new(false) };
+            let ff = FiniteField::new(p.clone(), 1, Vec::new(), false, true, false);
             self.new_ring(RingKind::Finite(ff), ctx)
         } else {
             let conway = p.to_u64().and_then(|pw| calyx_flint::gr::conway_polynomial(pw, n));
@@ -354,7 +384,7 @@ impl Interp {
             Some(Ok(c)) => (c, true),
             _ => (Ctx::finite_field(p, &modulus, false).map_err(|e| gr_error(e, "Cannot create the finite field"))?, false),
         };
-        let ff = FiniteField { p: p.clone(), degree, modulus, conway, default, power_printing: Cell::new(zech) };
+        let ff = FiniteField::new(p.clone(), degree, modulus, conway, default, zech);
         Ok(self.new_ring(RingKind::Finite(ff), ctx))
     }
 

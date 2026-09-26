@@ -808,6 +808,10 @@ impl Interp {
             }
             Value::Struct(st) if matches!((&st.kind, x), (StructKind::Ring(_), Value::Elt(_) | Value::Small(..))) => {
                 let e = crate::rings::small::elt_of(x).unwrap();
+                if crate::rings::finite::field_of(st).is_some() && e.ring().finite_field().is_some() {
+                    let st = st.clone();
+                    return self.ff_contains(&st, &e).map_err(|e| e.in_context("in"));
+                }
                 let StructKind::Ring(r) = &st.kind else { unreachable!() };
                 if let Some(err) = ring_membership_error(r, e.ring()) {
                     return Err(RuntimeError::runtime(err).in_context("in"));
@@ -828,6 +832,10 @@ impl Interp {
             Value::Struct(st) if matches!(st.kind, StructKind::AbGroup(_)) => {
                 let st = st.clone();
                 self.ab_contains(&st, x)
+            }
+            // Finite fields contain elements of rings and integers only.
+            Value::Struct(st) if crate::rings::finite::field_of(st).is_some() && !matches!(x, Value::Int(_)) => {
+                Err(RuntimeError::runtime("Bad argument types").in_context("in"))
             }
             Value::Struct(st) if matches!((&st.kind, x), (StructKind::SymGroup(_), Value::Perm(_))) => {
                 let Value::Perm(p) = x else { unreachable!() };

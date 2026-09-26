@@ -1,5 +1,6 @@
 //! Generic ring functions and the constructors of residue class rings,
-//! finite fields, polynomial rings and complex fields.
+//! polynomial rings and complex fields (finite fields are in
+//! `finite_fields`).
 
 use std::rc::Rc;
 
@@ -60,42 +61,6 @@ fn modulus(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 
 // ----- finite fields ---------------------------------------------------------
 
-fn finite_field_q(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let q = a.int(0)?.clone();
-    let err = || RuntimeError::runtime("Argument must be a prime power");
-    if q.sign() <= 0 {
-        return Err(err());
-    }
-    let f = q.factor().ok_or_else(err)?;
-    if f.factors.len() != 1 {
-        return Err(err());
-    }
-    let (p, n) = f.factors[0].clone();
-    one(it.finite_field(&p, n)?)
-}
-
-fn finite_field_pn(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let p = a.int(0)?.clone();
-    let n = a.int(1)?.clone();
-    let check = a.param_bool("Check")?;
-    if n.sign() <= 0 {
-        return Err(RuntimeError::runtime("Argument 2 must be positive"));
-    }
-    if p.sign() <= 0 || (check && !p.is_probable_prime()) {
-        return Err(RuntimeError::runtime("Argument 1 must be prime"));
-    }
-    let n = n.to_u64().ok_or_else(|| RuntimeError::runtime("Degree is too large"))?;
-    one(it.finite_field(&p, n)?)
-}
-
-fn degree_ff(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let (_, r) = ring_arg(a, 0)?;
-    match &r.kind {
-        RingKind::Finite(f) => intv(Integer::from_u64(f.degree)),
-        _ => Err(RuntimeError::runtime("Bad argument types")),
-    }
-}
-
 fn prime_field(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     match &a.args[0] {
         Value::Struct(s) => match &s.kind {
@@ -125,78 +90,11 @@ fn is_prime_field(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     })])
 }
 
-fn is_conway(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let (_, r) = ring_arg(a, 0)?;
-    boolv(r.finite_field().is_some_and(|f| f.conway))
-}
-
-fn is_default(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let (_, r) = ring_arg(a, 0)?;
-    boolv(r.finite_field().is_some_and(|f| f.default))
-}
-
-fn defining_polynomial_ff(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let (_, r) = ring_arg(a, 0)?;
-    let f = r.finite_field().ok_or_else(|| RuntimeError::runtime("Bad argument types"))?;
-    let p = f.p.clone();
-    let modulus = if f.degree == 1 { vec![Integer::zero(), Integer::one()] } else { f.modulus.clone() };
-    let fp = it.finite_field(&p, 1)?;
-    let px = it.poly_ring(&fp, true)?;
-    let coeffs: Vec<Value> = modulus.into_iter().map(Value::Int).collect();
-    one(it.coerce(&px, &Value::seq(Some(Value::integers()), coeffs))?)
-}
-
-fn conway_polynomial(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let p = a.int(0)?.clone();
-    let n = a.int(1)?.clone();
-    let c = p.to_u64().zip(n.to_u64()).and_then(|(p, n)| calyx_flint::gr::conway_polynomial(p, n));
-    let Some(c) = c else {
-        return Err(RuntimeError::runtime("Conway polynomial not known for these parameters"));
-    };
-    let fp = it.finite_field(&p, 1)?;
-    let px = it.poly_ring(&fp, true)?;
-    one(it.coerce(&px, &Value::seq(Some(Value::integers()), c.into_iter().map(Value::Int).collect()))?)
-}
-
-fn set_power_printing(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let (_, r) = ring_arg(a, 0)?;
-    let on = a.bool(1)?;
-    let f = r.finite_field().ok_or_else(|| RuntimeError::runtime("Bad argument types"))?;
-    if on && !matches!(r.ctx.kind(), calyx_flint::gr::CtxKind::FqZech { .. }) {
-        return Err(RuntimeError::runtime("Power printing is only possible for small fields defined by a primitive polynomial"));
-    }
-    f.power_printing.set(on);
-    none()
-}
-
-fn primitive_element(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+fn primitive_element(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (st, r) = ring_arg(a, 0)?;
     match &r.kind {
-        RingKind::Finite(f) => {
-            if f.degree > 1 && matches!(r.ctx.kind(), calyx_flint::gr::CtxKind::FqZech { .. }) {
-                return one(make_elt(&st, r.ctx.generator()?));
-            }
-            // Search for a primitive element among small polynomials in
-            // the generator (the generator itself first).
-            let q1 = &f.order() - &Integer::one();
-            let primes: Vec<Integer> = q1.factor().map(|fac| fac.factors.into_iter().map(|(p, _)| p).collect()).unwrap_or_default();
-            let g0 = if f.degree == 1 { Elem::from_i64(&r.ctx, 1)? } else { r.ctx.generator()? };
-            let mut k: i64 = if f.degree == 1 { 2 } else { 0 };
-            loop {
-                let cand = if f.degree == 1 { Elem::from_i64(&r.ctx, k)? } else { g0.add(&Elem::from_i64(&r.ctx, k)?)? };
-                if cand.is_zero() != Truth::True && primes.iter().all(|p| cand.pow(&(&q1).div_rem_euclid(p).unwrap().0).map(|x| x.is_one() != Truth::True).unwrap_or(false)) {
-                    return one(make_elt(&st, cand));
-                }
-                k += 1;
-                if k > 1_000_000 {
-                    return Err(RuntimeError::runtime("No primitive element found"));
-                }
-                let _ = it;
-            }
-        }
         RingKind::Residue(m) => {
-            let m = m.clone();
-            let root = crate::intrinsics::ints::primitive_root(&m).unwrap_or_default();
+            let root = crate::intrinsics::ints::primitive_root(m).unwrap_or_default();
             one(make_elt(&st, Elem::from_integer(&r.ctx, &root)?))
         }
         _ => Err(RuntimeError::runtime("Bad argument types")),
@@ -255,12 +153,15 @@ fn generator(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (st, r) = ring_arg(a, 0)?;
     let i = a.usize(1)?;
     if i == 0 || i > r.ngens() {
+        if matches!(r.kind, RingKind::Finite(_)) {
+            return Err(super::arg_range(2, a.int(1)?, 1, r.ngens()));
+        }
         return Err(RuntimeError::runtime(format!("Generator index must be in the range [1..{}]", r.ngens())));
     }
     let g = match &r.kind {
         RingKind::MPoly { .. } => r.ctx.mpoly_gen(i - 1)?,
         RingKind::Residue(_) => Elem::one(&r.ctx)?,
-        RingKind::Finite(f) if f.degree == 1 => Elem::one(&r.ctx)?,
+        RingKind::Finite(f) => crate::rings::finite::gen1(&r, f),
         _ => r.ctx.generator()?,
     };
     one(make_elt(&st, g))
@@ -437,15 +338,11 @@ fn elt_is_unit(it: &mut Interp, ring: &Ring, x: &Elem) -> bool {
 fn multiplicative_order(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let e = elt_arg(a, 0)?;
     match &e.ring().kind {
-        RingKind::Finite(f) => {
+        RingKind::Finite(_) => {
             if e.x.is_zero() == Truth::True {
                 return Err(RuntimeError::runtime("Can not take order of zero element"));
             }
-            if f.degree == 1 {
-                let x = e.residue().unwrap();
-                return intv(crate::intrinsics::ints::modorder(&x, &f.p));
-            }
-            intv(e.x.fq_multiplicative_order()?)
+            intv(crate::rings::finite::mult_order(&e.parent, &e.x))
         }
         RingKind::Residue(m) => {
             let x = e.residue().unwrap();
@@ -458,37 +355,12 @@ fn multiplicative_order(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     }
 }
 
-fn eltseq_ff(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let e = elt_arg(a, 0)?;
-    let f = e.ring().finite_field().ok_or_else(|| RuntimeError::runtime("Bad argument types"))?;
-    let p = f.p.clone();
-    let fp = it.finite_field(&p, 1)?;
-    let Value::Struct(fps) = &fp else { unreachable!() };
-    let StructKind::Ring(fr) = &fps.kind else { unreachable!() };
-    let coords = if f.degree == 1 { vec![e.residue().unwrap()] } else { e.x.fq_coords() };
-    let mut out = Vec::with_capacity(coords.len());
-    for c in coords {
-        out.push(make_elt(fps, Elem::from_integer(&fr.ctx, &c)?));
-    }
-    one(Value::seq(Some(fp.clone()), out))
-}
-
 pub fn register(it: &mut Interp) {
     for name in ["Integers", "IntegerRing", "RingOfIntegers", "ResidueClassRing"] {
         it.def(name, "m::RngIntElt -> RngIntRes, Map", "The ring of integers modulo m.", residue_ring);
     }
     it.def("Modulus", "R::RngIntRes -> RngIntElt", "The modulus of the residue class ring R.", modulus);
 
-    for name in ["FiniteField", "GaloisField", "GF"] {
-        it.def_params(name, "q::RngIntElt -> FldFin", &[("Optimize", Value::Bool(true)), ("Sparse", Value::Bool(false))], "The finite field with q elements.", finite_field_q);
-        it.def_params(
-            name,
-            "p::RngIntElt, n::RngIntElt -> FldFin",
-            &[("Check", Value::Bool(true)), ("Optimize", Value::Bool(true)), ("Sparse", Value::Bool(false))],
-            "The finite field with p^n elements.",
-            finite_field_pn,
-        );
-    }
     it.def("ResidueClassField", "p::RngIntElt -> FldFin, Map", "The finite field of prime order p.", |it, a| {
         let p = a.int(0)?.clone();
         if !p.is_prime() {
@@ -503,20 +375,10 @@ pub fn register(it: &mut Interp) {
         }
         residue_class_field(it, p)
     });
-    it.def("Degree", "F::FldFin -> RngIntElt", "The degree of F over its prime field.", degree_ff);
     it.def("PrimeField", "F::Fld -> Fld", "The prime field of F.", prime_field);
     it.def("IsPrimeField", "F::Fld -> BoolElt", "Whether F is a prime field.", is_prime_field);
-    it.def("IsConway", "F::FldFin -> BoolElt", "Whether F is defined by a Conway polynomial.", is_conway);
-    it.def("IsDefault", "F::FldFin -> BoolElt", "Whether F is a default field.", is_default);
-    it.def("DefiningPolynomial", "F::FldFin -> RngUPolElt", "The polynomial defining F over its prime field.", defining_polynomial_ff);
-    it.def("ConwayPolynomial", "p::RngIntElt, n::RngIntElt -> RngUPolElt", "The Conway polynomial of degree n over GF(p).", conway_polynomial);
-    it.def("SetPowerPrinting", "F::FldFin, l::BoolElt", "Print elements of F as powers of the primitive element (or not).", set_power_printing);
-    it.def("PrimitiveElement", "F::FldFin -> FldFinElt", "A primitive element of F.", primitive_element);
     it.def("PrimitiveElement", "R::RngIntRes -> RngIntResElt", "A generator of the unit group of R, or 0.", primitive_element);
     it.def("PrimitiveRoot", "R::RngIntRes -> RngIntResElt", "A generator of the unit group of R, or 0.", primitive_element);
-    for name in ["ElementToSequence", "Eltseq"] {
-        it.def(name, "a::FldFinElt -> [FldFinElt]", "The coefficients of a in terms of the generator of its field.", eltseq_ff);
-    }
 
     for name in ["PolynomialRing", "PolynomialAlgebra"] {
         it.def_params(name, "R::Rng -> RngUPol", &[("Global", Value::Bool(true))], "The univariate polynomial ring over R.", polynomial_ring);

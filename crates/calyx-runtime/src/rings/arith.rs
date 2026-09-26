@@ -7,6 +7,7 @@ use std::rc::Rc;
 use calyx_flint::gr::{CtxKind, Elem, GrError, MonomialOrder, Truth};
 use calyx_syntax::ast::BinOp;
 
+use super::finite;
 use super::small::{self, SmallRing};
 use super::{Elt, Ring, RingKind, make_elt};
 use crate::error::{RResult, RuntimeError};
@@ -81,6 +82,18 @@ fn small_pow(r: SmallRing, x: u64, k: &calyx_flint::Integer) -> Option<Value> {
     Some(Value::Small(r, m.pow_integer(m.inv(x)?, &-k)))
 }
 
+/// A finite field, or a polynomial ring over one.
+fn over_finite_field(v: &Value) -> bool {
+    match v.as_struct() {
+        Some(StructKind::Ring(r)) => match &r.kind {
+            RingKind::Finite(_) => true,
+            RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. } => over_finite_field(base),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
 fn arith_err(e: GrError, op: &str) -> RuntimeError {
     match e {
         GrError::Domain => RuntimeError::runtime("Arguments are not compatible").in_context(op),
@@ -119,7 +132,14 @@ impl Interp {
         }
         let pa = self.parent_of(a)?;
         let pb = self.parent_of(b)?;
-        let Some(r) = self.common_ring(&pa, &pb)? else {
+        // Rationals coerce into finite fields (and polynomial rings over them)
+        // in arithmetic, though not when choosing a universe.
+        let r = match self.common_ring(&pa, &pb)? {
+            None if matches!(pb.as_struct(), Some(StructKind::Rationals)) && over_finite_field(&pa) => Some(pa.clone()),
+            None if matches!(pa.as_struct(), Some(StructKind::Rationals)) && over_finite_field(&pb) => Some(pb.clone()),
+            r => r,
+        };
+        let Some(r) = r else {
             if matches!(op, Cmpeq | Cmpne) {
                 return Ok(Some(Value::Bool(op == Cmpne)));
             }
@@ -128,6 +148,10 @@ impl Interp {
             if matches!(op, Eq | Ne) && (res(a) || res(b)) {
                 let types = format!("Argument types given: {}, {}", self.type_name_ext(a), self.type_name_ext(b));
                 return Err(RuntimeError::runtime(format!("Bad argument types\n{types}")).in_context(op.intrinsic_name()));
+            }
+            if finite::field_struct(&pa).is_some() && finite::field_struct(&pb).is_some() {
+                let msg = "Arguments are not compatible\nArgument types given: FldFinElt, FldFinElt";
+                return Err(RuntimeError::runtime(msg).in_context(op.intrinsic_name()));
             }
             return Ok(None);
         };
@@ -299,6 +323,9 @@ impl Interp {
             return Err(crate::intrinsics::arg_ge(2, k, 0).in_context("^"));
         }
         if k.sign() < 0 && x.x.is_zero() == Truth::True {
+            if finite::field_of(&x.parent).is_some() {
+                return Err(RuntimeError::runtime("Illegal negative power of zero element").in_context("^"));
+            }
             return Err(div_by_zero().in_context("^"));
         }
         // Guard against runaway polynomial powers.
