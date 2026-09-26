@@ -25,7 +25,7 @@ use std::sync::OnceLock;
 use calyx_flint::Integer;
 use calyx_flint::modn::{ModCtx, ModPoly, hilbert_class_poly};
 
-use super::{each_prime, modp};
+use super::{SW_BOUND, det_prime, each_prime, modp, sw_bound};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
 use crate::intrinsics::factoring::arith::{Ring, with_ring};
@@ -59,26 +59,6 @@ impl Step {
             Step::Det { .. } => None,
         }
     }
-}
-
-/// Below this bound a number is prime if it is a strong probable prime to
-/// the prime bases up to 37 (Sorenson and Webster).
-const SW_BOUND: i128 = 3317044064679887385961981;
-const SW_BASES: [u64; 12] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37];
-
-fn sw_bound() -> Integer {
-    Integer::from_i128(SW_BOUND)
-}
-
-/// Primality of n below the Sorenson-Webster bound.
-fn det_prime(n: &Integer) -> bool {
-    if n.sign() <= 0 || n.is_one() {
-        return false;
-    }
-    if let Some(&b) = SW_BASES.iter().find(|&&b| n.mod_u64(b) == 0) {
-        return *n == Integer::from_u64(b);
-    }
-    SW_BASES.iter().all(|&b| n.is_strong_probable_prime(&Integer::from_u64(b)))
 }
 
 /// Whether p > (n^(1/4) + 1)^2. With s = sqrt(p) that is (s - 1)^4 > n, or
