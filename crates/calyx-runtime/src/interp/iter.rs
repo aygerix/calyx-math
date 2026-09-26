@@ -22,6 +22,8 @@ pub enum ValueIter {
     MSet { set: Rc<SetMulti>, pos: usize, rep: u64, dual: bool },
     Assoc(Rc<Assoc>, usize),
     Values(Vec<Value>, usize),
+    /// Elements made one at a time, as a finite ring's are.
+    Gen(Box<dyn Iterator<Item = Value>>, usize),
 }
 
 impl ValueIter {
@@ -109,6 +111,11 @@ impl ValueIter {
                 *i += 1;
                 Some((Value::int(*i as i64), x))
             }
+            ValueIter::Gen(g, i) => {
+                let x = g.next()?;
+                *i += 1;
+                Some((Value::int(*i as i64), x))
+            }
         }
     }
 }
@@ -131,6 +138,10 @@ impl Interp {
                     ValueIter::Values(a.map.values().cloned().collect(), 0)
                 }
             }
+            Value::Struct(st) if matches!(st.kind, StructKind::Ring(_)) => match self.ring_elements(st) {
+                Some(g) => ValueIter::Gen(g, 0),
+                None => ValueIter::Values(self.enumerate_structure(dom)?, 0),
+            },
             _ => ValueIter::Values(self.enumerate_structure(dom)?, 0),
         })
     }
