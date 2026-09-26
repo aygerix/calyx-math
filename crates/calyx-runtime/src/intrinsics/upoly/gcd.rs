@@ -1,11 +1,13 @@
 //! Greatest common divisors, least common multiples, normalization, and
-//! content and primitive part of univariate polynomials.
+//! content and primitive part of univariate polynomials. Over polynomial
+//! rings the polynomials are flattened (`tower`).
 
 use calyx_flint::Integer;
 use calyx_flint::gr::{CtxKind, Elem, GrError, Truth};
 use calyx_flint::upoly as fu;
 
-use super::{base_of, bctx, cval, is_field, is_integers, len, like, pair, pol};
+use super::tower::{Tower, over_ground, poly_divides, poly_gcd};
+use super::{base_of, bctx, cval, is_field, is_integers, len, like, not_available, pair, pol};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
 use crate::intrinsics::one;
@@ -18,11 +20,15 @@ fn gcd_ring(f: &Elt) -> RResult<()> {
     if matches!(b.kind(), CtxKind::Integers) || fu::over_field(f.x.ctx()) {
         return Ok(());
     }
-    Err(RuntimeError::runtime("Algorithm is not available for this kind of coefficient ring"))
+    Err(not_available())
 }
 
 pub(super) fn gcd(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (f, g) = pair(it, a)?;
+    if let Some(t) = Tower::of(f.x.ctx()) {
+        let d = Elt { parent: f.parent.clone(), x: t.gcd(&f.x, &g)? };
+        return one(like(&f, normalized(it, &d)?));
+    }
     gcd_ring(&f)?;
     one(like(&f, fu::gcd(&f.x, &g)?))
 }
@@ -38,12 +44,18 @@ pub(super) fn xgcd(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 
 pub(super) fn lcm(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (f, g) = pair(it, a)?;
-    gcd_ring(&f)?;
+    let tower = Tower::of(f.x.ctx());
+    if tower.is_none() {
+        gcd_ring(&f)?;
+    }
     if len(&f) == 0 || g.poly_len() == 0 {
         return one(like(&f, Elem::zero(f.x.ctx())));
     }
-    let d = fu::gcd(&f.x, &g)?;
-    let l = Elt { parent: f.parent.clone(), x: fu::divides(&f.x, &d)?.expect("the gcd divides").mul(&g)? };
+    let q = match &tower {
+        Some(t) => t.divides(&f.x, &t.gcd(&f.x, &g)?)?,
+        None => fu::divides(&f.x, &fu::gcd(&f.x, &g)?)?,
+    };
+    let l = Elt { parent: f.parent.clone(), x: q.expect("the gcd divides").mul(&g)? };
     one(like(&f, normalized(it, &l)?))
 }
 
@@ -92,7 +104,7 @@ pub(crate) fn norm_unit(it: &mut Interp, base: &Value, c: &Elem) -> RResult<Elem
 
 /// The normalized associate: positive leading coefficient over the
 /// integers, monic over a field, and so on (see `norm_unit`).
-fn normalized(it: &mut Interp, f: &Elt) -> RResult<Elem> {
+pub(super) fn normalized(it: &mut Interp, f: &Elt) -> RResult<Elem> {
     if len(f) == 0 {
         return Ok(f.x.clone());
     }
@@ -108,8 +120,9 @@ pub(super) fn normalize(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 /// The content and the primitive part: over the integers the gcd of the
 /// coefficients (the primitive part keeps the sign), over a field 1, over
 /// `Z/nZ` the gcd of the coefficients and n, and over a polynomial ring
-/// the gcd of the coefficients there.
-fn contpp(it: &Interp, f: &Elt) -> RResult<(Value, Value)> {
+/// the gcd of the coefficients there, normalized (the primitive part is
+/// the quotient by it).
+fn contpp(it: &mut Interp, f: &Elt) -> RResult<(Value, Value)> {
     let b = bctx(f);
     if is_integers(f) {
         let c = fu::content_z(&f.x);
@@ -128,18 +141,22 @@ fn contpp(it: &Interp, f: &Elt) -> RResult<(Value, Value)> {
                 let pp: Vec<Elem> = cs.iter().map(|x| Elem::from_integer(&b, &x.divexact(&c))).collect::<Result<_, _>>()?;
                 return Ok((cval(it, f, Elem::from_integer(&b, &c)?), like(f, Elem::poly_from_coeffs(f.x.ctx(), &pp)?)));
             }
-            RingKind::UPoly { .. } if len(f) > 0 && (matches!(b.base().map(|c| c.kind()), Some(CtxKind::Integers)) || fu::over_field(&b)) => {
+            RingKind::UPoly { .. } | RingKind::MPoly { .. } if len(f) > 0 && over_ground(&b) => {
                 let mut c = Elem::zero(&b);
                 for i in 0..len(f) {
-                    c = fu::gcd(&c, &f.x.poly_coeff(i))?;
+                    c = poly_gcd(&c, &f.x.poly_coeff(i))?;
                 }
-                let pp: Vec<Elem> = (0..len(f)).map(|i| Ok(fu::divides(&f.x.poly_coeff(i), &c)?.expect("the content divides"))).collect::<RResult<_>>()?;
+                let c = c.mul(&norm_unit(it, &base_of(f), &c)?)?;
+                let pp: Vec<Elem> = (0..len(f)).map(|i| Ok(poly_divides(&f.x.poly_coeff(i), &c)?.expect("the content divides"))).collect::<RResult<_>>()?;
                 return Ok((cval(it, f, c), like(f, Elem::poly_from_coeffs(f.x.ctx(), &pp)?)));
             }
             _ => {}
         }
     }
-    Err(RuntimeError::runtime("Algorithm is not available for this kind of coefficient ring"))
+    if matches!(b.kind(), CtxKind::RealFloat(_) | CtxKind::ComplexFloat(_)) {
+        return Err(RuntimeError::runtime("Coefficient ring has no GCD algorithm"));
+    }
+    Err(not_available())
 }
 
 pub(super) fn content(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {

@@ -5,7 +5,8 @@
 //!
 //! Polynomials are `gr_poly`s. The algorithms beyond generic arithmetic run
 //! on FLINT's specialised types through `calyx_flint::upoly`, over the
-//! integers, the rationals, prime residue rings and finite fields.
+//! integers, the rationals, prime residue rings and finite fields, and over
+//! polynomial rings over these flattened (`tower`).
 //!
 //! The submodules follow the sections of the handbook chapter; this module
 //! has the helpers they share and the registration.
@@ -20,6 +21,7 @@ mod ideals;
 mod integers;
 mod roots;
 mod special;
+mod tower;
 
 use std::cmp::Ordering;
 use std::rc::Rc;
@@ -46,6 +48,7 @@ use special::*;
 
 pub use division::quotrem;
 pub(crate) use gcd::norm_unit;
+pub(crate) use tower::{Tower, over_ground, poly_divides, poly_gcd};
 pub use ideals::{enumerate_res, format_ideal, ideal_binop, ideal_constructor, ideal_member, quo_constructor};
 pub use ideals::{res_div, res_is_domain, res_modulus, res_pow, res_reduce};
 

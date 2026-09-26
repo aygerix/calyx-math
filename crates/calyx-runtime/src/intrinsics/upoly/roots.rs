@@ -6,8 +6,10 @@ use std::rc::Rc;
 
 use calyx_flint::Integer;
 use calyx_flint::gr::{Elem, GrError, GrResult, Truth};
+use calyx_flint::mpoly as fm;
 use calyx_flint::upoly as fu;
 
+use super::tower::{Tower, poly_divides};
 use super::{base_of, bctx, len, nonzero, pol, sort_by_ring_order};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
@@ -15,14 +17,33 @@ use crate::intrinsics::one;
 use crate::rings::{Elt, RingKind, ring_of};
 use crate::value::*;
 
+/// The roots of `f` over a polynomial ring R (see `tower`): -b/a for its
+/// linear factors a x + b with a dividing b in R.
+fn tower_roots(f: &Elt, t: &Tower) -> RResult<Vec<(Elem, u64)>> {
+    let (_, fs) = fm::factor(&t.flatten(&f.x)?, false)?;
+    let mut out = Vec::new();
+    for (q, e) in fs {
+        let q = t.unflatten(&q)?;
+        if q.poly_len() == 2 {
+            if let Some(r) = poly_divides(&q.poly_coeff(0).neg()?, &q.poly_coeff(1))? {
+                out.push((r, e));
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// The roots of `f` in its coefficient ring with multiplicities, in the
 /// ring's order.
 fn root_values(it: &mut Interp, f: &Elt) -> RResult<Vec<(Value, u64)>> {
     nonzero(f)?;
-    let rs = fu::roots(&f.x).map_err(|e| match e {
-        GrError::Unable => RuntimeError::runtime("Coefficient ring must be a real or complex field or a field with factorization"),
-        e => e.into(),
-    })?;
+    let rs = match Tower::of(f.x.ctx()) {
+        Some(t) => tower_roots(f, &t)?,
+        None => fu::roots(&f.x).map_err(|e| match e {
+            GrError::Unable => RuntimeError::runtime("Coefficient ring must be a real or complex field or a field with factorization"),
+            e => e.into(),
+        })?,
+    };
     let base = base_of(f);
     let mut out: Vec<(Value, u64)> = rs.into_iter().map(|(r, m)| (it.elem_to_value(&base, r), m)).collect();
     sort_by_ring_order(it, &mut out);
