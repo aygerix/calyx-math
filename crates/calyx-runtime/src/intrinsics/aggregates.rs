@@ -8,7 +8,7 @@ use calyx_flint::Integer;
 use calyx_syntax::ast::AggKind;
 
 use super::{boolv, none, one};
-use crate::error::{RResult, RuntimeError};
+use crate::error::{ErrStyle, ErrorInfo, RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp, seq_index};
 use crate::sym::Sym;
 use crate::value::*;
@@ -362,12 +362,21 @@ fn eltseq_seq(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 
 // ----- modification ---------------------------------------------------------------
 
+/// Magma's errors for an element outside the universe: Append's, and Include's (a failed coercion).
+fn append_error(_: RuntimeError) -> RuntimeError {
+    RuntimeError::runtime("Cannot coerce element into the universe")
+}
+
+fn include_error(_: RuntimeError) -> RuntimeError {
+    ErrorInfo { style: ErrStyle::Plain, ..ErrorInfo::runtime("Illegal coercion") }.into()
+}
+
 fn append_imp(it: &mut Interp, a: &mut CallArgs) -> RResult<()> {
     let x = std::mem::take(&mut a.args[1]);
     match &mut a.args[0] {
         Value::Seq(s) => {
             let s = Rc::make_mut(s);
-            let x = fit(it, &mut s.universe, x)?;
+            let x = fit(it, &mut s.universe, x).map_err(append_error)?;
             s.elems.push(x);
         }
         Value::List(l) => Rc::make_mut(l).push(x),
@@ -378,7 +387,7 @@ fn append_imp(it: &mut Interp, a: &mut CallArgs) -> RResult<()> {
         }
         Value::ISet(s) => {
             let s = Rc::make_mut(s);
-            let x = fit(it, &mut s.universe, x)?;
+            let x = fit(it, &mut s.universe, x).map_err(append_error)?;
             s.elems.insert(x);
         }
         _ => unreachable!(),
@@ -392,19 +401,19 @@ fn include_imp(it: &mut Interp, a: &mut CallArgs) -> RResult<()> {
     match &mut a.args[0] {
         Value::Set(s) => {
             let s = Rc::make_mut(s);
-            let x = fit(it, &mut s.universe, x)?;
+            let x = fit(it, &mut s.universe, x).map_err(include_error)?;
             if !s.contains(&x) {
                 s.elems_mut().insert(x);
             }
         }
         Value::ISet(s) => {
             let s = Rc::make_mut(s);
-            let x = fit(it, &mut s.universe, x)?;
+            let x = fit(it, &mut s.universe, x).map_err(include_error)?;
             s.elems.insert(x);
         }
         Value::MSet(s) => {
             let s = Rc::make_mut(s);
-            let x = fit(it, &mut s.universe, x)?;
+            let x = fit(it, &mut s.universe, x).map_err(include_error)?;
             s.insert(x, 1);
         }
         Value::Seq(s) => {
@@ -414,7 +423,7 @@ fn include_imp(it: &mut Interp, a: &mut CallArgs) -> RResult<()> {
             };
             if !present {
                 let s = Rc::make_mut(s);
-                let x = fit(it, &mut s.universe, x)?;
+                let x = fit(it, &mut s.universe, x).map_err(include_error)?;
                 s.elems.push(x);
             }
         }

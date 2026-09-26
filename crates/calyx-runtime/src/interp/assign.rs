@@ -459,7 +459,7 @@ impl Interp {
         }
         let p = self.parent_of(i)?;
         // Without a common universe the array accepts keys of any kind.
-        let w = self.common_universe(&u, &p).unwrap_or_else(|| Value::structure(StructKind::PowerStructure(crate::types::t::ANY)));
+        let w = self.covering_universe(&u, &p)?.unwrap_or_else(|| Value::structure(StructKind::PowerStructure(crate::types::t::ANY)));
         let old: Vec<(Value, Value)> = a.map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         let mut map = VMap::default();
         for (k, v) in old {
