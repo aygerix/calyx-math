@@ -60,6 +60,12 @@ pc("H2", h^2);
 k := &+[C![R!((-1)^j*(2*j+1))/(3*j+7), R!((-1)^(j div 2)*(j+2))/(5*j+3)]*z^j : j in [0..7]];
 pc("K2", k^2);
 
+// Multivariate polynomials.
+M<u, v> := PolynomialRing(RealField(20), 2);
+(u - 2*v)^3, (u - v/2)^2*(u + v);
+M<s, t> := PolynomialRing(C, 2);
+(s - (1 + i)*t)^3, (2*s - t)*(3*t^2 - 1);
+
 // The handbook's polynomial from H26E6, printed in full.
 P<z> := PolynomialRing(ComplexField());
 (z - 1.1)^6;

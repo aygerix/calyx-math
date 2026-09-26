@@ -24,10 +24,13 @@ use crate::{Complex, Integer};
 /// The longest polynomial that Magma squares term by term.
 const SQUARE_TERMS: usize = 8;
 
-/// `f^e` as Magma computes it, for a nonzero polynomial `f` over a real or
-/// complex floating-point field and `e >= 2`, or `None` for any other
-/// polynomial or exponent.
+/// `f^e` as Magma computes it, for a nonzero univariate polynomial `f` over
+/// a real or complex floating-point field and `e >= 2`, or `None` for any
+/// other polynomial or exponent.
 pub(crate) fn pow(f: &Elem, e: &Integer) -> Option<GrResult<Elem>> {
+    if !matches!(f.ctx().kind(), CtxKind::Poly) {
+        return None;
+    }
     let base = f.ctx().base()?;
     if !matches!(base.kind(), CtxKind::RealFloat(_) | CtxKind::ComplexFloat(_)) || f.poly_len() == 0 {
         return None;
@@ -127,7 +130,7 @@ fn monomial_pow(f: &Elem, b: &Elem, e: u64) -> GrResult<Elem> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gr::Ctx;
+    use crate::gr::{Ctx, MonomialOrder};
     use crate::{Rational, Real};
 
     const P: u64 = 67;
@@ -180,6 +183,14 @@ mod tests {
         let b3 = b.mul(&b).mul(&b);
         assert_eq!(c, vec![b3.mul(&b3).mul(&b)]);
         assert_ne!(c[0], b.pow_i64(7));
+    }
+
+    #[test]
+    fn multivariate_polynomials_are_left_alone() {
+        let ctx = Ctx::mpoly(&Ctx::real_float(P), 2, MonomialOrder::Lex);
+        let three = Elem::from_i64(&ctx, 3).unwrap();
+        let nine = Elem::from_i64(&ctx, 9).unwrap();
+        assert_eq!(three.pow(&Integer::from_i64(2)).unwrap().equal(&nine), Truth::True);
     }
 
     #[test]
