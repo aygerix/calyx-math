@@ -1,17 +1,20 @@
-//! Powers of polynomials over real and complex floating-point fields,
-//! rounded as Magma rounds them (#73).
+//! Products and powers of polynomials over real and complex floating-point
+//! fields, rounded as Magma rounds them (#73).
 //!
-//! Magma raises a polynomial to a power by left-to-right binary powering
-//! with its own squaring and product, and every operation on coefficients
-//! rounds to the precision of the field (each part of a complex number is
-//! rounded correctly). Black-box runs of Magma 2.22 give these rules:
-//! - A square of at most eight terms (from the lowest nonzero one) has the
-//!   coefficients `2 (f_0 f_k + f_1 f_(k-1) + ...) + f_(k/2)^2`: each
-//!   product rounded, the cross products added in this order, their sum
-//!   doubled, and the square added last.
-//! - A product by a polynomial with at most two nonzero terms rounds each
-//!   product and then their sum.
-//! - `(b x)^e` is `b^e x^e`, with `b^e` the power of the number `b`.
+//! Every operation of Magma's on the coefficients rounds to the precision
+//! of the field (each part of a complex number is rounded correctly), so
+//! the result depends on the order of the operations. Black-box runs of
+//! Magma 2.22 give these rules:
+//! - `g*g` for one element `g` is a square. A square of at most eight terms
+//!   (from the lowest nonzero one) has the coefficients
+//!   `2 (f_0 f_k + f_1 f_(k-1) + ...) + f_(k/2)^2`: each product rounded,
+//!   the cross products added in this order, their sum doubled, and the
+//!   square added last.
+//! - A product by `x^v (a + b x)` or `x^v (a + b x^2)`, in either order,
+//!   rounds each product of coefficients and then their sum.
+//! - Powers are left-to-right binary powering with these squares and
+//!   products, except that `(b x)^e` is `b^e x^e`, with `b^e` the power of
+//!   the number `b`.
 //!
 //! Magma's longer squares and its other products follow rules not yet
 //! identified; there FLINT rounds each coefficient once.
@@ -24,15 +27,41 @@ use crate::{Complex, Integer};
 /// The longest polynomial that Magma squares term by term.
 const SQUARE_TERMS: usize = 8;
 
+/// Whether `f` is a nonzero univariate polynomial over a real or complex
+/// floating-point field.
+#[inline]
+fn float_poly(f: &Elem) -> bool {
+    matches!(f.ctx().kind(), CtxKind::Poly)
+        && f.ctx().base().is_some_and(|b| matches!(b.kind(), CtxKind::RealFloat(_) | CtxKind::ComplexFloat(_)))
+        && f.poly_len() > 0
+}
+
+/// `f g` as Magma computes it, for nonzero univariate polynomials over a
+/// real or complex floating-point field that are one element (as in `g*g`)
+/// or of which one is a binomial as above; `None` for any other product.
+#[inline]
+pub(crate) fn mul(f: &Elem, g: &Elem) -> Option<GrResult<Elem>> {
+    if !float_poly(f) || !float_poly(g) {
+        return None;
+    }
+    if std::ptr::eq(f, g) {
+        return Some(square_poly(f));
+    }
+    let (a, b) = if binomial(g) {
+        (f, g)
+    } else if binomial(f) {
+        (g, f)
+    } else {
+        return None;
+    };
+    Some(mul_sparse(&coeffs(a), &coeffs(b)).and_then(|c| Elem::poly_from_coeffs(f.ctx(), &c)))
+}
+
 /// `f^e` as Magma computes it, for a nonzero univariate polynomial `f` over
 /// a real or complex floating-point field and `e >= 2`, or `None` for any
 /// other polynomial or exponent.
 pub(crate) fn pow(f: &Elem, e: &Integer) -> Option<GrResult<Elem>> {
-    if !matches!(f.ctx().kind(), CtxKind::Poly) {
-        return None;
-    }
-    let base = f.ctx().base()?;
-    if !matches!(base.kind(), CtxKind::RealFloat(_) | CtxKind::ComplexFloat(_)) || f.poly_len() == 0 {
+    if !float_poly(f) {
         return None;
     }
     let e = e.to_u64().filter(|&e| e >= 2)?;
@@ -47,28 +76,39 @@ fn nonzero(c: &Elem) -> bool {
     c.is_zero() != Truth::True
 }
 
+/// Whether `f` is `x^v (a + b x)` or `x^v (a + b x^2)`, where `a` or `b`
+/// may be zero. (Magma multiplies by `x^v (a + b x^3)` and by denser
+/// polynomials some other way, which is not known.)
+fn binomial(f: &Elem) -> bool {
+    let n = f.poly_len();
+    let low = (0..n).find(|&i| nonzero(&f.poly_coeff(i))).expect("a nonzero polynomial");
+    n - low <= 2 || n - low == 3 && !nonzero(&f.poly_coeff(low + 1))
+}
+
 fn binary_pow(f: &Elem, e: u64) -> GrResult<Elem> {
-    let fc = coeffs(f);
-    let terms = fc.iter().filter(|c| nonzero(c)).count();
-    if fc.len() == 2 && terms == 1 {
-        return monomial_pow(f, &fc[1], e);
+    if f.poly_len() == 2 && !nonzero(&f.poly_coeff(0)) {
+        return monomial_pow(f, &f.poly_coeff(1), e);
     }
     let mut r = f.clone();
     for bit in (0..63 - e.leading_zeros()).rev() {
-        let rc = coeffs(&r);
-        let low = rc.iter().position(nonzero).expect("a nonzero polynomial");
-        r = if rc.len() - low <= SQUARE_TERMS {
-            let mut sq: Vec<Elem> = (0..2 * low).map(|_| Elem::zero(f.ctx().base().expect("a polynomial"))).collect();
-            sq.extend(square(&rc[low..])?);
-            Elem::poly_from_coeffs(f.ctx(), &sq)?
-        } else {
-            r.sqr()?
-        };
+        r = r.mul(&r)?;
         if e >> bit & 1 == 1 {
-            r = if terms <= 2 { Elem::poly_from_coeffs(f.ctx(), &mul_sparse(&coeffs(&r), &fc)?)? } else { r.mul(f)? };
+            r = r.mul(f)?;
         }
     }
     Ok(r)
+}
+
+/// The square of `f`, by the rule above if it has at most eight terms.
+fn square_poly(f: &Elem) -> GrResult<Elem> {
+    let fc = coeffs(f);
+    let low = fc.iter().position(nonzero).expect("a nonzero polynomial");
+    if fc.len() - low > SQUARE_TERMS {
+        return f.sqr();
+    }
+    let mut sq = vec![Elem::zero(fc[0].ctx()); 2 * low];
+    sq.extend(square(&fc[low..])?);
+    Elem::poly_from_coeffs(f.ctx(), &sq)
 }
 
 /// The square of `f` by the rule above.
@@ -96,7 +136,7 @@ fn square(f: &[Elem]) -> GrResult<Vec<Elem>> {
 }
 
 /// `r f` for `f` with at most two nonzero terms: each coefficient is a
-/// sum of at most two products, and their order does not matter.
+/// sum of at most two rounded products, whose order does not matter.
 fn mul_sparse(r: &[Elem], f: &[Elem]) -> GrResult<Vec<Elem>> {
     let mut out: Vec<Option<Elem>> = (0..r.len() + f.len() - 1).map(|_| None).collect();
     for (j, c) in f.iter().enumerate().filter(|(_, c)| nonzero(c)) {
@@ -186,11 +226,29 @@ mod tests {
     }
 
     #[test]
+    fn squares_and_products_by_binomials() {
+        // One element times itself is its square; a copy of it is
+        // multiplied by FLINT.
+        let f = poly(&[real(1, 3), real(2, 7), real(-5, 11), real(3, 13)]);
+        let two = Integer::from_i64(2);
+        assert_eq!(parts(&f.mul(&f).unwrap()), parts(&f.pow(&two).unwrap()));
+        assert_ne!(parts(&f.mul(&f.clone()).unwrap()), parts(&f.pow(&two).unwrap()));
+        // A product by a binomial, in either order, is the one in powers.
+        let l = poly(&[real(-11, 10), Real::from_i64(1, P)]);
+        let l8 = l.pow(&Integer::from_i64(8)).unwrap();
+        let l16 = l8.mul(&l8).unwrap();
+        let l17 = parts(&l.pow(&Integer::from_i64(17)).unwrap());
+        assert_eq!(parts(&l16.mul(&l).unwrap()), l17);
+        assert_eq!(parts(&l.mul(&l16).unwrap()), l17);
+    }
+
+    #[test]
     fn multivariate_polynomials_are_left_alone() {
         let ctx = Ctx::mpoly(&Ctx::real_float(P), 2, MonomialOrder::Lex);
         let three = Elem::from_i64(&ctx, 3).unwrap();
         let nine = Elem::from_i64(&ctx, 9).unwrap();
         assert_eq!(three.pow(&Integer::from_i64(2)).unwrap().equal(&nine), Truth::True);
+        assert_eq!(three.mul(&three).unwrap().equal(&nine), Truth::True);
     }
 
     #[test]
