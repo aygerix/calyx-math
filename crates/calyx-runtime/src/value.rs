@@ -78,6 +78,8 @@ pub enum Value {
     Drch(Rc<crate::intrinsics::residue::dirichlet::DrchElt>),
     /// `Infinity()` (`true`) or `-Infinity()` (`false`).
     Infinity(bool),
+    /// A matrix or a vector (`intrinsics/matrices`).
+    Mat(Rc<crate::intrinsics::matrices::Mtrx>),
 }
 
 // Values are copied everywhere; keep them two words.
@@ -518,6 +520,8 @@ pub enum StructKind {
     Automorphisms(Value),
     /// A group of Dirichlet characters (`intrinsics/residue/dirichlet.rs`).
     DrchGroup(Rc<crate::intrinsics::residue::dirichlet::DrchGroup>),
+    /// A matrix algebra, matrix space or R-space (`intrinsics/matrices`).
+    Matrices(Rc<crate::intrinsics::matrices::MatParent>),
 }
 
 #[derive(Clone)]
@@ -769,6 +773,7 @@ impl Value {
                 StructKind::Nearfield(n) => n.type_id(),
                 StructKind::Automorphisms(_) => t::POW_MAP_AUT,
                 StructKind::DrchGroup(_) => t::GRP_DRCH,
+                StructKind::Matrices(m) => m.type_id(),
             },
             Value::Cat(_) => t::CAT,
             Value::ECat(_) => t::ECAT,
@@ -783,6 +788,7 @@ impl Value {
             Value::Nfd(_) => t::NFD_ELT,
             Value::Drch(_) => t::GRP_DRCH_ELT,
             Value::Infinity(_) => t::INFTY,
+            Value::Mat(m) => m.type_id(),
         }
     }
 
@@ -899,6 +905,10 @@ impl Hash for Value {
                 x.exps.hash(state);
             }
             Value::Infinity(pos) => state.write_u8(if *pos { 19 } else { 20 }),
+            Value::Mat(m) => {
+                state.write_u8(28);
+                state.write_u64(m.hash_u64());
+            }
         }
     }
 }
@@ -976,6 +986,10 @@ fn struct_hash<H: Hasher>(s: &Struct, state: &mut H) {
             state.write_u8(27);
             g.modulus.hash(state);
         }
+        StructKind::Matrices(m) => {
+            state.write_u8(29);
+            m.hash_key().hash(state);
+        }
     }
 }
 
@@ -1018,6 +1032,7 @@ impl PartialEq for Value {
             (Nfd(a), Nfd(b)) => crate::intrinsics::nearfields::nfd_equal(a, b).unwrap_or(false),
             (Drch(a), Drch(b)) => crate::intrinsics::residue::dirichlet::equal(a, b),
             (Infinity(a), Infinity(b)) => a == b,
+            (Mat(a), Mat(b)) => a.same_as(b),
             _ => false,
         }
     }
@@ -1050,6 +1065,7 @@ pub fn struct_eq(a: &Rc<Struct>, b: &Rc<Struct>) -> bool {
         (Nearfield(x), Nearfield(y)) => x.same_as(y),
         (Automorphisms(x), Automorphisms(y)) => x == y,
         (DrchGroup(x), DrchGroup(y)) => crate::intrinsics::residue::dirichlet::same_group(x, y),
+        (Matrices(x), Matrices(y)) => x.same_as(y),
         _ => false,
     }
 }

@@ -215,7 +215,12 @@ fn is_simple(v: &Value) -> bool {
 /// Values that aggregates set off by a blank line, and that make a tuple
 /// print one element per line: abelian groups.
 fn is_block(v: &Value) -> bool {
-    matches!(v, Value::Struct(s) if matches!(s.kind, StructKind::AbGroup(_)))
+    matches!(v, Value::Struct(s) if matches!(s.kind, StructKind::AbGroup(_))) || is_matrix(v)
+}
+
+/// A matrix (not a vector), which a print list starts on a line of its own.
+fn is_matrix(v: &Value) -> bool {
+    matches!(v, Value::Mat(m) if !m.is_vector())
 }
 
 /// Ring elements that print as sums of terms (polynomials, and elements of
@@ -280,7 +285,7 @@ fn needs_newline(v: &Value) -> bool {
     match v {
         Value::Seq(_) | Value::Set(_) | Value::ISet(_) | Value::MSet(_) | Value::Struct(_) | Value::Rec(_) => true,
         Value::Elt(e) => elt_is_compound(e),
-        Value::Perm(_) | Value::AbElt(_) | Value::Map(_) | Value::Nfd(_) | Value::Drch(_) => true,
+        Value::Perm(_) | Value::AbElt(_) | Value::Map(_) | Value::Nfd(_) | Value::Drch(_) | Value::Mat(_) => true,
         Value::Tuple(t) => t.elems.iter().any(needs_newline),
         _ => false,
     }
@@ -353,6 +358,9 @@ impl Interp {
                     p.newline(0);
                 } else {
                     p.write(" ");
+                }
+                if is_matrix(v) {
+                    p.write("\n");
                 }
             }
             self.fmt(p, v, 0)?;
@@ -677,6 +685,10 @@ impl Interp {
                 p.write(&s);
                 p.cont = saved;
             }
+            Value::Mat(m) => {
+                let m = m.clone();
+                crate::intrinsics::matrices::fmt_matrix(self, p, &m, indent)?;
+            }
             Value::Infinity(pos) => p.write(match (p.level == Level::Magma, *pos) {
                 (false, true) => "Infinity",
                 (false, false) => "-Infinity",
@@ -895,6 +907,7 @@ impl Interp {
                 p.level = saved;
                 p.col = 0;
             }
+            StructKind::Matrices(_) => crate::intrinsics::matrices::fmt_parent(self, p, s, indent)?,
             // Magma's package code prints nearfields (without the order at
             // the minimal level), and what it prints does not count toward
             // the width of the line: the line counts as empty after it.

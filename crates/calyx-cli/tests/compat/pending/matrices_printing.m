@@ -1,0 +1,116 @@
+// Printing matrices and vectors: common widths, finite fields, rows too
+// long for a line, print lists, aggregates and the Magma level.
+
+// Print lists and aggregates
+Y := Matrix(IntegerRing(), 2, 2, [1,2,3,4]);
+v := Vector([1,-2,3]);
+3, Y;
+v, 3;
+3, v;
+v, v;
+Y, Y;
+"a", Y;
+Y, "a";
+v, Y, 3;
+Y, v, Y;
+x := 1; print x, Y;
+printf "%o and %o\n", Y, v;
+Sprint(Y);
+#Sprint(Y);
+Sprint(v);
+[* Y, v, 3 *];
+<v, 3>;
+<3, v>;
+[ <v, 3> ];
+[v, v];
+[Y, Y];
+<Y, v>;
+[ Matrix(IntegerRing(), 0, 0, []) ];
+Matrix(2, 0, [Integers()|]), 1;
+
+// Magma level and minimal printing
+K := GF(23);
+X := Matrix(K, 2, 3, [1,-2,3, 4,100,-6]);
+printf "%m\n", Parent(X);
+printf "%m\n", X;
+printf "%O\n", X, "Minimal";
+printf "%O\n", Parent(X), "Minimal";
+printf "%O\n", Parent(X), "Maximal";
+printf "%m\n", Y;
+printf "%m\n", Parent(Y);
+printf "%m\n", v;
+printf "%m\n", Parent(v);
+printf "%m\n", Parent(Vector(GF(5), [1, 2]));
+printf "%m\n", RMatrixSpace(Integers(), 2, 3);
+
+// Rings and widths
+F<w> := GF(4);
+M := Matrix(F, 2, 3, [0, 1, w, w^2, w+1, 0]);
+M;
+Parent(M);
+Vector(F, [w, 0, 1]);
+P<x> := PolynomialRing(IntegerRing());
+A := Matrix(P, 2, 2, [x^2+1, -x, 3, x^3-2*x+7]);
+A;
+Parent(A);
+Parent(Matrix(P, 2, 3, [x,1,1,1,1,1]));
+Matrix(RationalField(), 2, 2, [1/2, -3, 22/7, 0]);
+R := Integers(10);
+Matrix(R, 2, 2, [3, -1, 12, 5]);
+Parent($1);
+Parent(Matrix(R, 2, 3, [3, -1, 12, 5, 1, 1]));
+Matrix(RealField(10), 2, 2, [1.5, -2, 3.25, 1/3]);
+Parent($1);
+Parent(Matrix(RealField(10), 2, 3, [1.5, -2, 3.25, 1/3, 1, 1]));
+Matrix(RealField(10), 2, 2, [1.5, 1/3, -2, 3.25]);
+Matrix(RealField(10), 2, 2, [1.5, 1/3, -2, 1000000]);
+Vector(RealField(10), [1.5, 2, 100]);
+G := GF(2^30);
+Matrix(G, 2, 2, [G.1, G.1^2, 1, 0]);
+Matrix(GF(7^2), 2, 2, [1, 2, 3, 4]);
+Matrix(GF(7,2), 1, 2, [GF(7,2).1, 1]);
+F<a> := GF(7^2);
+Matrix(F, 1, 2, [1, a]);
+F<alpha> := GF(3^3);
+Matrix(F, 1, 2, [1, alpha]);
+Vector(F, [1, alpha]);
+Matrix(GF(101), 1, 2, [1, 2]);
+Matrix(GF(10007), 1, 2, [1, 2]);
+Matrix(GF(1000003), 1, 2, [1, 2]);
+Matrix(GF(1073741789), 1, 2, [1, 2]);
+Matrix(GF(1073741827), 1, 2, [1, 2]);
+Matrix(GF(2^61-1), 1, 2, [1, 2]);
+Matrix(GF(2^89-1), 1, 2, [1, 2]);
+Matrix(GF(2), 1, 2, [1, 0]);
+Matrix(Integers(1000), 1, 2, [1, 2]);
+Matrix(Integers(10^20), 1, 2, [1, 2]);
+Matrix(GF(3^10), 1, 2, [1, 2]);
+Matrix(GF(2^20), 1, 2, [1, 0]);
+Matrix(GF(2^21), 1, 2, [1, 0]);
+Matrix(GF(5^9), 1, 2, [1, 0]);
+Matrix(GF(5^9), 1, 2, [1, GF(5^9).1^1000]);
+Matrix(RationalField(), 2, 2, [1, 2, 100, 3]);
+Vector(GF(101), [1, 2]);
+
+// Rows too long for a line
+Matrix(1, 30, [100..129]);
+Matrix(2, 20, [1..40]);
+Matrix(2, 20, [i^2 : i in [1..40]]);
+Matrix(2, 19, [1] cat [-1 : i in [1..37]]);
+Matrix(2, 26, [1] cat [-1 : i in [1..51]]);
+Matrix(2, 27, [1] cat [-1 : i in [1..53]]);
+Vector([i^2 : i in [1..40]]);
+[ Matrix(2, 20, [1..40]) ];
+[ Matrix(2, 26, [1] cat [-1 : i in [1..51]]) ];
+[ Matrix(2, 20, [i^2 : i in [1..40]]) ];
+Matrix(1, 1, [10^77]);
+Matrix(1, 1, [10^78]);
+Matrix(2, 1, [10^77, 1]);
+Matrix(2, 1, [10^78, 1]);
+Matrix(2, 2, [10^37, 1, 1, 1]);
+Matrix(2, 2, [10^38, 1, 1, 1]);
+Matrix(2, 2, [10^39, 1, 1, 1]);
+Vector([10^37, 1]);
+Vector([10^38, 1]);
+Vector([10^39, 1]);
+<Matrix(2, 26, [1] cat [-1 : i in [1..51]]), 1>;

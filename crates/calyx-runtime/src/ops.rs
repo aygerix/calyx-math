@@ -152,6 +152,8 @@ impl Interp {
         // Nearfield elements first: they meet no ring elements.
         let ring_result = if matches!(a, Value::Nfd(_)) || matches!(b, Value::Nfd(_)) {
             self.nfd_binop(op, &a, &b)?
+        } else if matches!(a, Value::Mat(_)) || matches!(b, Value::Mat(_)) {
+            crate::intrinsics::matrices::binop(self, op, &a, &b).map_err(|e| e.in_context(op.intrinsic_name()))?
         } else if matches!(a, Value::Elt(_) | Value::Small(..)) || matches!(b, Value::Elt(_) | Value::Small(..)) {
             self.ring_binop(op, &a, &b)?
         } else if matches!(a, Value::Perm(_)) || matches!(b, Value::Perm(_)) {
@@ -441,6 +443,7 @@ impl Interp {
             Value::Small(r, x) => Ok(Value::Small(r, r.neg(x))),
             Value::AbElt(x) => Ok(x.neg()),
             Value::Nfd(x) => crate::intrinsics::nearfields::negate(&x),
+            Value::Mat(m) => crate::intrinsics::matrices::negate(&m),
             other => self.unary_intrinsic("-", other),
         }
     }
@@ -527,6 +530,13 @@ impl Interp {
                 Ok(Some(false))
             }
         };
+        if matches!(a, Value::Mat(_)) || matches!(b, Value::Mat(_)) {
+            return match crate::intrinsics::matrices::equal(self, a, b) {
+                Ok(e) => Ok(Some(e)),
+                Err(e) if strict => Err(e.in_context("eq")),
+                Err(_) => Ok(Some(false)),
+            };
+        }
         if matches!(a, Value::Elt(_) | Value::Small(..)) || matches!(b, Value::Elt(_) | Value::Small(..)) {
             let op = if strict { BinOp::Eq } else { BinOp::Cmpeq };
             return match self.ring_binop(op, a, b)? {

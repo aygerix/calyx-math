@@ -114,6 +114,17 @@ builtin_types! {
     NFD_DCK = "NfdDck": [NFD],
     NFD_ZSS = "NfdZss": [NFD],
     NFD_ELT = "NfdElt": [ELT],
+    // Matrices and vector spaces (#76, #78).
+    ALG_MAT = "AlgMat": [ALG],
+    ALG_MAT_ELT = "AlgMatElt": [ALG_ELT, MTRX],
+    MOD_MAT_RNG = "ModMatRng": [MOD],
+    MOD_MAT_FLD = "ModMatFld": [MOD_MAT_RNG],
+    MOD_MAT_RNG_ELT = "ModMatRngElt": [MOD_ELT, MTRX],
+    MOD_MAT_FLD_ELT = "ModMatFldElt": [MOD_MAT_RNG_ELT],
+    MOD_TUP_RNG = "ModTupRng": [MOD],
+    MOD_TUP_FLD = "ModTupFld": [MOD_TUP_RNG],
+    MOD_TUP_RNG_ELT = "ModTupRngElt": [MOD_ELT, MTRX],
+    MOD_TUP_FLD_ELT = "ModTupFldElt": [MOD_TUP_RNG_ELT],
 
     // Polynomial rings (#40, #41).
     RNG_UPOL_RES = "RngUPolRes": [RNG],
@@ -187,6 +198,12 @@ impl TypeRegistry {
             (t::NFD, t::NFD_ELT),
             (t::NFD_DCK, t::NFD_ELT),
             (t::NFD_ZSS, t::NFD_ELT),
+            // Matrices and vector spaces (#76, #78).
+            (t::ALG_MAT, t::ALG_MAT_ELT),
+            (t::MOD_MAT_RNG, t::MOD_MAT_RNG_ELT),
+            (t::MOD_MAT_FLD, t::MOD_MAT_FLD_ELT),
+            (t::MOD_TUP_RNG, t::MOD_TUP_RNG_ELT),
+            (t::MOD_TUP_FLD, t::MOD_TUP_FLD_ELT),
 
             // Polynomial rings (#40, #41).
             (t::RNG_UPOL_RES, t::RNG_UPOL_RES_ELT),
