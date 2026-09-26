@@ -1,8 +1,8 @@
 //! Univariate polynomial rings (the handbook chapter of that name):
 //! creating polynomials, changing coefficient rings, the functions of
 //! polynomials, greatest common divisors and content, the functions for
-//! integer polynomials, factorization, resultants and Hensel lifting, and
-//! small roots modulo an integer (`small_roots`).
+//! integer polynomials, factorization, resultants and Hensel lifting, small
+//! roots modulo an integer (`small_roots`) and functional decomposition.
 //!
 //! Polynomials are `gr_poly`s. The algorithms beyond generic arithmetic run
 //! on FLINT's specialised types through `calyx_flint::upoly`, over the
@@ -13,6 +13,7 @@
 //! has the helpers they share and the registration.
 
 mod creation;
+mod decomposition;
 mod division;
 mod elements;
 mod factor;
@@ -38,6 +39,7 @@ use crate::rings::{Elt, Ring, make_elt};
 use crate::value::*;
 
 use creation::*;
+use decomposition::*;
 use division::*;
 use elements::*;
 use factor::*;
@@ -221,6 +223,10 @@ pub fn register(it: &mut Interp) {
     it.def("Integral", "f::RngUPolElt -> RngUPolElt", "The integral of f with constant term 0.", integral);
     it.def("Evaluate", "f::RngUPolElt, r::RngElt -> RngElt", "The value of f at r.", evaluate);
     it.def("Interpolation", "I::[RngElt], V::[RngElt] -> RngUPolElt", "The polynomial of least degree taking the values V at the points I.", interpolation);
+
+    // Decomposition.
+    let doc = "The complete decompositions [f1, ..., fr] of f over a field, f = fr(...(f1)).";
+    it.def_params("Decomposition", "f::RngUPolElt -> [[RngUPolElt]]", &[("All", Value::Bool(true))], doc, decomposition_fn);
 
     // Quotient and remainder.
     it.def("Quotrem", "f::RngUPolElt, g::RngUPolElt -> RngUPolElt, RngUPolElt", "The quotient and remainder of f by g.", quotrem_fn);
