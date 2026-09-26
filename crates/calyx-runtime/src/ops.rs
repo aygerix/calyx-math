@@ -925,7 +925,8 @@ impl Interp {
             Value::Set(q) => (q.universe.clone(), q.universe.is_none()),
             Value::ISet(q) => (q.universe.clone(), q.universe.is_none()),
             Value::MSet(q) => (q.universe.clone(), q.universe.is_none()),
-            Value::List(_) | Value::Tuple(_) => (None, false),
+            // Of the reductions, Magma allows only products on tuples.
+            Value::Tuple(_) if op == BinOp::Mul => (None, false),
             other => {
                 return Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}", self.type_name(other))).in_context(format!("&{}", op.intrinsic_name())));
             }
@@ -965,6 +966,24 @@ impl Interp {
                 _ => Err(RuntimeError::runtime("Cannot reduce an empty sequence or set").in_context(ctx)),
             };
         };
+        // Sums and products group their terms as Magma does, which decides
+        // how inexact elements round (#70): a sum adds the sum of the first
+        // half (rounded down) to that of the rest, and a product multiplies
+        // neighbours level by level, so that its first part is the largest
+        // power of two below the count.
+        if matches!(op, BinOp::Add | BinOp::Mul) {
+            let n = match s {
+                Value::Seq(q) => q.elems.iter().filter(|v| !v.is_undef()).count(),
+                Value::Set(q) => q.len(),
+                Value::ISet(q) => q.elems.len(),
+                Value::MSet(q) => q.elems.values().sum::<u64>() as usize,
+                Value::Tuple(t) => t.elems.len(),
+                _ => unreachable!(),
+            };
+            let mut first = Some(acc);
+            let mut next = || first.take().or_else(|| it.next_item().map(|(_, x)| x));
+            return Ok(self.reduce_tree(op, &mut next, n.max(1))?.expect("a first term"));
+        }
         while let Some((_, x)) = it.next_item() {
             self.check_interrupt()?;
             let cur = std::mem::take(&mut acc);
@@ -981,6 +1000,25 @@ impl Interp {
             };
         }
         Ok(acc)
+    }
+
+    /// The sum or product of the next `n` terms from `next`, grouped as in
+    /// `reduce`.
+    fn reduce_tree(&mut self, op: BinOp, next: &mut dyn FnMut() -> Option<Value>, n: usize) -> RResult<Option<Value>> {
+        if n <= 1 {
+            return Ok(if n == 1 { next() } else { None });
+        }
+        let k = if op == BinOp::Add { n / 2 } else { 1 << (usize::BITS - 1 - (n - 1).leading_zeros()) };
+        let a = self.reduce_tree(op, next, k)?;
+        let b = self.reduce_tree(op, next, n - k)?;
+        Ok(match (a, b) {
+            (Some(mut a), Some(b)) => {
+                self.check_interrupt()?;
+                self.binop_assign(op, &mut a, b)?;
+                Some(a)
+            }
+            (a, b) => a.or(b),
+        })
     }
 
     // ----- maps -----------------------------------------------------------

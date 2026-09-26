@@ -1252,6 +1252,10 @@ impl<'a> Parser<'a> {
             }
             first = self.expr()?;
         }
+        // Indexed sets and multisets take no ranges, as in Magma.
+        if self.at(&Tok::DotDot) && matches!(kind, AggKind::ISet | AggKind::MSet) {
+            return self.error_here("bad syntax: a range in an indexed set or multiset");
+        }
         let body = if self.eat(&Tok::Colon) {
             AggBody::Compr(self.comprehension_rest(first, &close)?)
         } else if self.eat(&Tok::DotDot) {

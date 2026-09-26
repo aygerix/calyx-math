@@ -535,7 +535,11 @@ impl Interp {
                 let (lo, hi, step) = self.range_bounds(lo, hi, by.as_ref(), f)?;
                 if let Some(u) = &universe {
                     if !u.is_integers() {
-                        return Err(RuntimeError::runtime("Invalid set universe").in_context(format!("{} .. {}", ctx_open(a.kind), ctx_close(a.kind))));
+                        return Err(if a.kind == AggKind::Seq {
+                            RuntimeError::runtime("Invalid sequence universe").in_context("[ ... ]")
+                        } else {
+                            RuntimeError::runtime("Invalid set universe (no hashing algorithm)").in_context("{ ... }")
+                        });
                     }
                 }
                 if a.kind == AggKind::Set {
@@ -852,24 +856,6 @@ fn agg_context(k: AggKind) -> &'static str {
         AggKind::Set => "{ ... }",
         AggKind::ISet => "{@ @}",
         AggKind::MSet => "{* *}",
-    }
-}
-
-fn ctx_open(k: AggKind) -> &'static str {
-    match k {
-        AggKind::Seq => "[",
-        AggKind::Set => "{",
-        AggKind::ISet => "{@",
-        AggKind::MSet => "{*",
-    }
-}
-
-fn ctx_close(k: AggKind) -> &'static str {
-    match k {
-        AggKind::Seq => "]",
-        AggKind::Set => "}",
-        AggKind::ISet => "@}",
-        AggKind::MSet => "*}",
     }
 }
 
