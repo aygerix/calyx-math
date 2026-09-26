@@ -33,6 +33,10 @@ CRT([1, 2], [0, 5]);
 Solution([3, 2], [4, 1], [7, 5]); Solution([2], [1], [4]); Solution([1, 1], [1, 2], [4, 6]); Solution([1, 1], [1, 3], [4, 6]);
 Solution([1], [1], [1]);
 Solution([1, 2], [1], [3, 5]);
+// Negative moduli count by their absolute values; a zero one fails once it
+// is reached.
+Solution([1, 2], [1, 1], [3, -5]); Solution([1], [1], [-1]); Solution([3], [2], [-7]); Solution([2, 1], [1, 1], [4, 0]);
+Solution([1], [1], [0]);
 NormEquation(1, 25); NormEquation(1, 3); NormEquation(2, 9); NormEquation(3, 7); NormEquation(5, 0); NormEquation(1, 1); NormEquation(957440000095744000002277749760, 5102197760510219776012138128480644);
 NormEquation(1, 25: Factorization := [<5, 2>]);
 NormEquation(0, 4);

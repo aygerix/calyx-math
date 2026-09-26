@@ -43,6 +43,13 @@ MPQS(1000003*1000033*1000037*1000039*1000081);
 MPQS(10^30 + 57);
 ECMOrder(1000003, 7); ECMFactoredOrder(1000003, 7); ECMOrder(1000033, 7); ECMOrder(10007, 123456);
 ECMOrder(15, 7);
+// Where the curve degenerates, the error comes from Magma's package code.
+ECMOrder(101, 5);
+ECMOrder(101, 0);
+ECMFactoredOrder(101, 45);
+f := func<s | ECMOrder(101, s)>;
+f(1);
+try x := ECMOrder(101, 5); catch e print "caught"; end try;
 PrimeBasis(360); Divisors(28); Divisors(Factorization(496)); Divisors(1); Divisors(-12);
 Divisors(0);
 Divisors([<2, 3>]);
