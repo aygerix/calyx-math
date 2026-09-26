@@ -213,22 +213,28 @@ struct Matrix {
 
 /// Reduction modulo p < 2^32 by Barrett's method.
 #[derive(Clone, Copy)]
-struct Modulus {
-    p: u64,
+pub(crate) struct Modulus {
+    pub(crate) p: u64,
     /// 2^64 / p, rounded down.
     r: u64,
 }
 
 impl Modulus {
-    fn new(p: u64) -> Modulus {
+    pub(crate) fn new(p: u64) -> Modulus {
         Modulus { p, r: u64::MAX / p }
     }
 
     #[inline(always)]
-    fn reduce(self, a: u64) -> u64 {
+    pub(crate) fn reduce(self, a: u64) -> u64 {
         // The quotient is off by at most one.
         let t = a - ((a as u128 * self.r as u128) >> 64) as u64 * self.p;
         if t >= self.p { t - self.p } else { t }
+    }
+
+    /// How many products of residues can be added to a residue in a u64.
+    pub(crate) fn batch(self) -> usize {
+        let p = self.p;
+        ((u64::MAX - 2 * p) / ((p - 1) * (p - 1)).max(1)).clamp(1, 1 << 32) as usize
     }
 }
 
@@ -809,10 +815,8 @@ impl<E: Entry> F4<'_, E> {
         spent
     }
 
-    /// How many products of residues can be added to a residue in a u64.
     fn batch(&self) -> usize {
-        let p = self.p;
-        ((u64::MAX - 2 * p) / ((p - 1) * (p - 1))).clamp(1, 1 << 32) as usize
+        self.md.batch()
     }
 
     /// The reduced echelon form of the dense rows `rows` of width `nf`: for
