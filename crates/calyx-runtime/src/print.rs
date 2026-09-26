@@ -181,8 +181,8 @@ impl Printer {
         self.line_start = self.buf.len();
     }
 
-    /// Write a string's contents: they break at spaces, each word placed as
-    /// an atom.
+    /// Write text that breaks at spaces, each word placed as an atom (a
+    /// string's contents, error messages, `printf` output).
     pub fn text(&mut self, s: &str) {
         for (k, line) in s.split('\n').enumerate() {
             if k > 0 {
@@ -194,21 +194,6 @@ impl Printer {
                 }
                 self.atom(w, true);
             }
-        }
-    }
-
-    /// Write text that fills each line and breaks at spaces (error messages,
-    /// `printf` output). A word too long for any line is broken where it
-    /// stands.
-    pub fn words(&mut self, s: &str) {
-        for (i, w) in s.split(' ').enumerate() {
-            if i > 0 {
-                self.put(' ');
-            }
-            if w.chars().count() + self.cont > self.width {
-                self.line_start = self.buf.len();
-            }
-            self.write(w);
         }
     }
 }
@@ -1170,7 +1155,7 @@ impl Interp {
 /// Wrap text at `width` columns with the same rules as the printer.
 pub fn wrap_text_output(text: &str, start_col: usize, width: usize) -> String {
     let mut p = Printer::new(start_col, width, Level::Default);
-    p.words(text);
+    p.text(text);
     p.buf
 }
 

@@ -140,3 +140,15 @@ s := &cat["a" : i in [1..30]] cat " " cat &cat["b" : i in [1..60]]; s;
 s := &cat["a" : i in [1..50]] cat " " cat &cat["b" : i in [1..60]]; s;
 s := &cat["a" : i in [1..30]] cat " " cat &cat["b" : i in [1..49]]; s;
 s := &cat["a" : i in [1..30]] cat " " cat &cat["b" : i in [1..50]]; s;
+
+// printf output breaks long words as printed strings do.
+a := &cat["a" : i in [1..30]]; b := &cat["b" : i in [1..60]]; b49 := &cat["b" : i in [1..49]];
+printf "%o %o\n", a, b;
+printf "%o %o\n", a, b49;
+printf "%o %o\n", a cat a, b;
+printf "%o %o\n", "a", 10^77;
+printf "%o %o\n", "a", 10^60;
+printf "%o\n", 10^79;
+printf "%o %o\n", a cat a, 10^20;
+printf "%o %o %o\n", a cat a, "x", 10^16;
+printf "x%o\n", b cat b;

@@ -122,8 +122,8 @@ Runtime error in 'SQUFOF': Argument 1 must be greater than 1
 
 >> SQUFOF(2^200+1);
          ^
-Runtime error in 'SQUFOF': Argument 1 
-(1606938044258990275541962092341162602522202993782792835301377) is too large
+Runtime error in 'SQUFOF': Argument 1 (1606938044258990275541962092341162602522\
+202993782792835301377) is too large
 
 1000033 7
 0
