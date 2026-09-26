@@ -8,10 +8,12 @@
 //! Magma; over the ground field this is the basis of `F.1` in which
 //! elements print.
 
+use std::cell::OnceCell;
 use std::rc::Rc;
 
 use calyx_flint::gr::{Ctx, CtxKind, Elem, Truth};
 use calyx_flint::{Integer, Nmod};
+use calyx_syntax::ast::BinOp;
 
 use super::{boolv, intv, none, one};
 use crate::error::{RResult, RuntimeError};
@@ -351,6 +353,101 @@ fn is_isomorphic(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let imp = FieldIso { image, from: e.clone(), to: f.clone() };
     let map = Value::Map(Rc::new(MapObj { kind: MapKind::Map, domain: Value::Struct(e), codomain: Value::Struct(f), imp: MapImpl::Native(Rc::new(imp)) }));
     Ok(vals![Value::Bool(true), map])
+}
+
+/// `hom< F -> R | x >` for a field F that is not prime: the sum of a_i g^i,
+/// for g the generator of F over its prime field and a_i in the prime
+/// field, goes to the sum of a_i x^i. (Magma leaves it to the user that
+/// this is a homomorphism.)
+struct FieldHom {
+    from: Rc<Struct>,
+    /// Coordinates in the powers of g from those in the context of F, and
+    /// back.
+    to_g: LinMap,
+    from_g: LinMap,
+    image: Value,
+    /// For preimages in a finite field R: the coordinates in R of the
+    /// powers of x, and a left inverse.
+    powers: OnceCell<Option<(LinMap, LinMap)>>,
+}
+
+impl NativeMap for FieldHom {
+    fn apply(&self, it: &mut Interp, m: &MapObj, x: &Value) -> RResult<Value> {
+        let failed = || RuntimeError::runtime("Application of map failed").in_context("map application");
+        let x = it.to_structure_elem(&Value::Struct(self.from.clone()), x, false)?.ok_or_else(failed)?;
+        let cs = self.to_g.apply(&Coords::of(&x)).integers();
+        // Horner's rule, with elements when R is a finite field.
+        if let Value::Elt(y) = &self.image {
+            if field_of(&y.parent).is_some() {
+                let ctx = y.x.ctx();
+                let mut acc = Elem::zero(ctx);
+                for c in cs.iter().rev() {
+                    acc = acc.mul(&y.x)?.add(&Elem::from_integer(ctx, c)?)?;
+                }
+                return Ok(make_elt(&y.parent, acc));
+            }
+        }
+        let mut acc = it.coerce(&m.codomain, &Value::int(0))?;
+        for c in cs.into_iter().rev() {
+            acc = it.binop(BinOp::Mul, acc, self.image.clone())?;
+            acc = it.binop(BinOp::Add, acc, Value::Int(c))?;
+        }
+        Ok(acc)
+    }
+
+    fn preimage(&self, it: &mut Interp, m: &MapObj, y: &Value) -> RResult<Value> {
+        let failed = || RuntimeError::runtime("Element has no preimage under the map").in_context("@@");
+        let Value::Elt(x) = &self.image else { return Err(failed()) };
+        let Some((xr, xd)) = field_of(&x.parent) else { return Err(failed()) };
+        let n = degree(&self.from) as usize;
+        let mats = self.powers.get_or_init(|| {
+            if xd.p != ff(&self.from).1.p {
+                return None;
+            }
+            let mut cols = Vec::with_capacity(n);
+            let mut pw = Elem::one(&xr.ctx).ok()?;
+            for _ in 0..n {
+                cols.push(Coords::of(&pw));
+                pw = pw.mul(&x.x).ok()?;
+            }
+            let a = LinMap::from_columns(&xd.p, &cols, xd.degree as usize);
+            let l = a.left_inverse()?;
+            Some((a, l))
+        });
+        let Some((a, l)) = mats else { return Err(failed()) };
+        let y = it.to_structure_elem(&m.codomain, y, false)?.ok_or_else(failed)?;
+        let v = Coords::of(&y);
+        let cs = l.apply(&v);
+        if a.apply(&cs) != v {
+            return Err(failed());
+        }
+        Ok(make_elt(&self.from, self.from_g.apply(&cs).to_elem(&ff(&self.from).0.ctx)))
+    }
+}
+
+/// `hom< F -> R | x >` (or `iso< >`) for a finite field F that is not a
+/// prime field (see `FieldHom`); `None` for other domains.
+pub fn hom_images(it: &mut Interp, domain: &Value, codomain: &Value, images: &[Value]) -> RResult<Option<Value>> {
+    let Some(f) = finite::field_struct(domain).cloned() else { return Ok(None) };
+    let [x] = images else { return Ok(None) };
+    if degree(&f) == 1 {
+        return Ok(None);
+    }
+    let image = it.coerce(codomain, x)?;
+    let (p, n, ctx) = (ff(&f).1.p.clone(), degree(&f) as usize, ff(&f).0.ctx.clone());
+    let k = it.default_field(&p, 1)?;
+    let g = gen_over(it, &f, &k)?;
+    let mut cols = Vec::with_capacity(n);
+    let mut pw = Elem::one(&ctx)?;
+    for _ in 0..n {
+        cols.push(Coords::of(&pw));
+        pw = pw.mul(&g)?;
+    }
+    let from_g = LinMap::from_columns(&p, &cols, n);
+    let to_g = from_g.inverse().ok_or_else(bad)?;
+    let imp = FieldHom { from: f, to_g, from_g, image, powers: OnceCell::new() };
+    let imp = MapImpl::Native(Rc::new(imp));
+    Ok(Some(Value::Map(Rc::new(MapObj { kind: MapKind::Map, domain: domain.clone(), codomain: codomain.clone(), imp }))))
 }
 
 // ----- structure -----------------------------------------------------------------
