@@ -59,6 +59,8 @@ Argsech(<FldRatElt> x) -> FldReElt
 Argsinh(<FldRatElt> x) -> FldReElt
 Argtanh(<FldRatElt> x) -> FldReElt
 Argument(<FldRatElt> x) -> FldReElt
+BesselFunction(<RngIntElt> n, <FldRatElt> x) -> FldReElt
+BesselFunctionSecondKind(<RngIntElt> n, <FldRatElt> x) -> FldReElt
 Ceiling(<FldRatElt> x) -> RngIntElt
 ComplexConjugate(<FldRatElt> q) -> FldRatElt
 Conjugate(<FldRatElt> q) -> FldRatElt
@@ -84,6 +86,13 @@ Floor(<FldRatElt> x) -> RngIntElt
 GCD(<FldRatElt> x, <FldRatElt> y) -> FldRatElt
 GCD(<RngIntElt> x, <FldRatElt> y) -> FldRatElt
 GCD(<FldRatElt> x, <RngIntElt> y) -> FldRatElt
+Gamma(<FldRatElt> x) -> FldReElt
+Gamma(<RngIntElt> s, <FldRatElt> t) -> FldReElt
+Gamma(<FldRatElt> s, <RngIntElt> t) -> FldReElt
+Gamma(<FldRatElt> s, <FldRatElt> t) -> FldReElt
+Gamma(<FldRatElt> s, <FldReElt> t) -> FldReElt
+Gamma(<FldReElt> s, <FldRatElt> t) -> FldReElt
+GammaD(<FldRatElt> s) -> FldReElt
 Gcd(<FldRatElt> x, <FldRatElt> y) -> FldRatElt
 Gcd(<RngIntElt> x, <FldRatElt> y) -> FldRatElt
 Gcd(<FldRatElt> x, <RngIntElt> y) -> FldRatElt
@@ -94,6 +103,25 @@ GreatestCommonDivisor(<FldRatElt> x, <RngIntElt> y) -> FldRatElt
 HJContinuedFraction(<FldRatElt> q) -> [RngIntElt]
 Height(<FldRatElt> q) -> RngIntElt
 HirzebruchJungContinuedFraction(<FldRatElt> q) -> [RngIntElt]
+HypergeometricU(<RngIntElt> a, <RngIntElt> b, <FldRatElt> x) -> FldReElt
+HypergeometricU(<RngIntElt> a, <FldRatElt> b, <RngIntElt> x) -> FldReElt
+HypergeometricU(<RngIntElt> a, <FldRatElt> b, <FldRatElt> x) -> FldReElt
+HypergeometricU(<RngIntElt> a, <FldRatElt> b, <FldReElt> x) -> FldReElt
+HypergeometricU(<RngIntElt> a, <FldReElt> b, <FldRatElt> x) -> FldReElt
+HypergeometricU(<FldRatElt> a, <RngIntElt> b, <RngIntElt> x) -> FldReElt
+HypergeometricU(<FldRatElt> a, <RngIntElt> b, <FldRatElt> x) -> FldReElt
+HypergeometricU(<FldRatElt> a, <RngIntElt> b, <FldReElt> x) -> FldReElt
+HypergeometricU(<FldRatElt> a, <FldRatElt> b, <RngIntElt> x) -> FldReElt
+HypergeometricU(<FldRatElt> a, <FldRatElt> b, <FldRatElt> x) -> FldReElt
+HypergeometricU(<FldRatElt> a, <FldRatElt> b, <FldReElt> x) -> FldReElt
+HypergeometricU(<FldRatElt> a, <FldReElt> b, <RngIntElt> x) -> FldReElt
+HypergeometricU(<FldRatElt> a, <FldReElt> b, <FldRatElt> x) -> FldReElt
+HypergeometricU(<FldRatElt> a, <FldReElt> b, <FldReElt> x) -> FldReElt
+HypergeometricU(<FldReElt> a, <RngIntElt> b, <FldRatElt> x) -> FldReElt
+HypergeometricU(<FldReElt> a, <FldRatElt> b, <RngIntElt> x) -> FldReElt
+HypergeometricU(<FldReElt> a, <FldRatElt> b, <FldRatElt> x) -> FldReElt
+HypergeometricU(<FldReElt> a, <FldRatElt> b, <FldReElt> x) -> FldReElt
+HypergeometricU(<FldReElt> a, <FldReElt> b, <FldRatElt> x) -> FldReElt
 Im(<FldRatElt> x) -> FldReElt
 Imaginary(<FldRatElt> x) -> FldReElt
 IsIdempotent(<RngElt> x) -> BoolElt
@@ -116,6 +144,10 @@ JacobiTheta(<FldRatElt> q, <FldComElt> z) -> FldComElt
 JacobiTheta(<FldReElt> q, <FldRatElt> z) -> FldReElt
 JacobiTheta(<FldComElt> q, <FldRatElt> z) -> FldComElt
 JacobiThetaNullK(<FldRatElt> q, <RngIntElt> k) -> FldReElt
+KBessel(<FldRatElt> n, <FldReElt> x) -> FldReElt
+KBessel(<FldReElt> n, <FldRatElt> x) -> FldReElt
+KBessel2(<FldRatElt> n, <FldReElt> x) -> FldReElt
+KBessel2(<FldReElt> n, <FldRatElt> x) -> FldReElt
 LaguerrePolynomial(<RngIntElt> n, <RngElt> m) -> RngUPolElt
 Log(<FldRatElt> x) -> FldReElt
 Log(<RngIntElt> b, <FldRatElt> x) -> FldReElt
@@ -123,6 +155,8 @@ Log(<FldRatElt> b, <RngIntElt> x) -> FldReElt
 Log(<FldRatElt> b, <FldRatElt> x) -> FldReElt
 Log(<FldRatElt> b, <FldReElt> x) -> FldReElt
 Log(<FldReElt> b, <FldRatElt> x) -> FldReElt
+LogDerivative(<FldRatElt> x) -> FldReElt
+LogGamma(<FldRatElt> x) -> FldReElt
 MinimalField(<FldRatElt> q) -> FldRat
 MinimalPolynomial(<FldRatElt> q) -> RngUPolElt
 Modulus(<FldRatElt> x) -> FldReElt
@@ -137,6 +171,7 @@ Polylog(<RngIntElt> m, <FldRatElt> x) -> FldComElt
 PolylogD(<RngIntElt> m, <FldRatElt> x) -> FldReElt
 PolylogDold(<RngIntElt> m, <FldRatElt> x) -> FldReElt
 PolylogP(<RngIntElt> m, <FldRatElt> x) -> FldReElt
+Psi(<FldRatElt> x) -> FldReElt
 Qround(<FldRatElt> q, <RngIntElt> M) -> FldRatElt
 Re(<FldRatElt> x) -> FldReElt
 Real(<FldRatElt> x) -> FldReElt

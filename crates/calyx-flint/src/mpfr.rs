@@ -1,8 +1,8 @@
 //! Declarations for the parts of MPFR used by calyx. MPFR is a dependency
 //! of FLINT (and linked with it), but flint3-sys does not bind it.
 //!
-//! Only functions present in MPFR 4.1 are declared (the reference VM has
-//! 4.1; macOS has 4.2).
+//! MPFR 4.2 functions may be declared: the lab has MPFR 4.2.0, CI 4.2.1
+//! and macOS 4.2.
 
 #![allow(dead_code)]
 
@@ -141,12 +141,28 @@ unsafe extern "C" {
     pub fn mpfr_beta(r: *mut Mpfr, a: *const Mpfr, b: *const Mpfr, rnd: Rnd) -> c_int;
     pub fn mpfr_ai(r: *mut Mpfr, a: *const Mpfr, rnd: Rnd) -> c_int;
 
+    pub fn mpfr_check_range(x: *mut Mpfr, t: c_int, rnd: Rnd) -> c_int;
+    pub fn mpfr_get_emax() -> c_long;
+
     // FLINT's conversions between `arf` and MPFR.
     pub fn arf_get_mpfr(r: *mut Mpfr, x: *const sys::arf_struct, rnd: Rnd) -> c_int;
     pub fn arf_set_mpfr(r: *mut sys::arf_struct, x: *const Mpfr);
 
     pub fn mpfr_get_version() -> *const c_char;
     static __gmp_version: *const c_char;
+}
+
+/// `arf_get_mpfr` to nearest, in MPFR's exponent range: a value beyond it
+/// overflows to an infinity or underflows to a zero, as the value of an
+/// MPFR function would.
+///
+/// # Safety
+/// `r` must be an initialized MPFR number and `x` an initialized `arf`.
+pub unsafe fn arf_to_mpfr(r: *mut Mpfr, x: *const sys::arf_struct) {
+    unsafe {
+        let t = arf_get_mpfr(r, x, RNDN);
+        mpfr_check_range(r, t, RNDN);
+    }
 }
 
 /// The version of the MPFR library linked.

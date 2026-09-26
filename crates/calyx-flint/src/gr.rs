@@ -78,7 +78,7 @@ unsafe fn set_arf_from_real(a: *mut sys::arf_struct, x: &Real, prec: u64) {
 /// A real of `prec` bits from an `arf`.
 unsafe fn real_from_arf(a: *const sys::arf_struct, prec: u64) -> Real {
     let mut r = Real::zero(prec);
-    unsafe { crate::mpfr::arf_get_mpfr(r.raw_mut(), a, crate::mpfr::RNDN) };
+    unsafe { crate::mpfr::arf_to_mpfr(r.raw_mut(), a) };
     r
 }
 

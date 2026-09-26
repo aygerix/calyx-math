@@ -109,7 +109,7 @@ impl Real {
 
     fn from_arf(a: &Arf, prec: u64) -> Real {
         let mut r = Real::alloc(prec);
-        unsafe { m::arf_get_mpfr(&mut r.raw, &a.0, m::RNDN) };
+        unsafe { m::arf_to_mpfr(&mut r.raw, &a.0) };
         r
     }
 
