@@ -11,3 +11,11 @@ x := 1; y := "a"; [x, y];
 [-1, 2.5, "b"];
 {@ 1, "a" @};
 {* 1, "a" *};
+
+// The new universe must be a structure.
+ChangeUniverse([1], 10^70);
+ChangeUniverse({1}, 3);
+x := [1, 2]; ChangeUniverse(~x, 5);
+ChangeUniverse([1, 2], Rationals());
+ChangeUniverse([[1], [2]], PowerSequence(Rationals()));
+ChangeUniverse([<1, 2>], CartesianProduct(Integers(), Rationals()));

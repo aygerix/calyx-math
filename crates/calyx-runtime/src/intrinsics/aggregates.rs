@@ -1485,8 +1485,8 @@ pub fn register(it: &mut Interp) {
     it.def("Sort", "L::List, C::Program -> List", "L sorted using the comparison function C.", sort_func);
     it.def("ParallelSort", "~S::SeqEnum, ~T::SeqEnum", "Sort S, applying the same permutation to T.", parallel_sort);
     for t in ["SeqEnum", "SetEnum", "SetIndx", "SetMulti"] {
-        it.def("ChangeUniverse", &format!("~S::{t}, V::."), "Coerce the elements of S into V.", change_universe_proc);
-        it.def("ChangeUniverse", &format!("S::{t}, V::. -> {t}"), "S with its elements coerced into V.", change_universe_func);
+        it.def("ChangeUniverse", &format!("~S::{t}, V::Str"), "Coerce the elements of S into V.", change_universe_proc);
+        it.def("ChangeUniverse", &format!("S::{t}, V::Str -> {t}"), "S with its elements coerced into V.", change_universe_func);
         it.def("CanChangeUniverse", &format!("S::{t}, V::. -> BoolElt, {t}"), "Whether the elements of S can be coerced into V, and the result.", can_change_universe);
     }
 
