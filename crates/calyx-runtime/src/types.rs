@@ -107,6 +107,10 @@ builtin_types! {
     POW_MAP_AUT = "PowMapAut": [POW_MAP],
 
     // Finite fields and nearfields (#39, #43).
+    NFD = "Nfd": [STR],
+    NFD_DCK = "NfdDck": [NFD],
+    NFD_ZSS = "NfdZss": [NFD],
+    NFD_ELT = "NfdElt": [ELT],
 
     // Polynomial rings (#40, #41).
     RNG_UPOL_RES = "RngUPolRes": [RNG],
@@ -174,6 +178,9 @@ impl TypeRegistry {
             // Rational field (#38).
 
             // Finite fields and nearfields (#39, #43).
+            (t::NFD, t::NFD_ELT),
+            (t::NFD_DCK, t::NFD_ELT),
+            (t::NFD_ZSS, t::NFD_ELT),
 
             // Polynomial rings (#40, #41).
             (t::RNG_UPOL_RES, t::RNG_UPOL_RES_ELT),

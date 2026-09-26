@@ -118,14 +118,9 @@ fn sort_elems(v: &mut [Elem]) {
 }
 
 /// A random element of the field.
-/// `Random(F)`: by index as for other finite structures when F is small
-/// enough to list, else by coordinates.
+/// `Random(F)`: by coordinates, without listing F.
 fn random(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let f = field_arg(a, 0)?;
-    if ff(&f).1.order().to_u64().is_some_and(|q| q <= 1 << 30) {
-        let (_, x) = it.random_element_indexed(&a.args[0])?;
-        return one(x);
-    }
     one(make_elt(&f, random_elem(it, &f)))
 }
 

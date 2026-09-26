@@ -61,6 +61,7 @@ pub fn value_kind(v: &Value) -> &'static str {
         Value::Elt(_) | Value::Small(..) => "RngElt",
         Value::Perm(_) => "GrpPermElt",
         Value::AbElt(_) => "GrpAbElt",
+        Value::Nfd(_) => "NfdElt",
         Value::Infinity(_) => "Infty",
     }
 }

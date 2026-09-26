@@ -72,6 +72,8 @@ pub enum Value {
     Perm(Rc<Perm>),
     /// An element of an abelian group (`GrpAbElt`).
     AbElt(Rc<AbElt>),
+    /// An element of a nearfield (`NfdElt`).
+    Nfd(Rc<crate::intrinsics::nearfields::NfdElt>),
     /// `Infinity()` (`true`) or `-Infinity()` (`false`).
     Infinity(bool),
 }
@@ -480,6 +482,8 @@ pub enum StructKind {
     UPolIdeal(Rc<crate::rings::Elt>),
     /// An abelian group; every construction makes a new group.
     AbGroup(Rc<AbGroup>),
+    /// A nearfield (`intrinsics/nearfields.rs`).
+    Nearfield(Rc<crate::intrinsics::nearfields::Nearfield>),
     /// The set of all automorphisms of a structure (`PowMapAut`).
     Automorphisms(Value),
 }
@@ -707,6 +711,7 @@ impl Value {
                 StructKind::ResIdeal(..) => t::RNG_INT_RES,
                 StructKind::UPolIdeal(_) => t::RNG_UPOL,
                 StructKind::AbGroup(_) => t::GRP_AB,
+                StructKind::Nearfield(n) => n.type_id(),
                 StructKind::Automorphisms(_) => t::POW_MAP_AUT,
             },
             Value::Cat(_) => t::CAT,
@@ -719,6 +724,7 @@ impl Value {
             Value::Small(r, _) => r.elt_type(),
             Value::Perm(_) => t::GRP_PERM_ELT,
             Value::AbElt(_) => t::GRP_AB_ELT,
+            Value::Nfd(_) => t::NFD_ELT,
             Value::Infinity(_) => t::INFTY,
         }
     }
@@ -825,6 +831,10 @@ impl Hash for Value {
                 state.write_u8(21);
                 x.coords.hash(state);
             }
+            Value::Nfd(x) => {
+                state.write_u8(22);
+                crate::intrinsics::nearfields::as_field_value(x).hash(state);
+            }
             Value::Infinity(pos) => state.write_u8(if *pos { 19 } else { 20 }),
         }
     }
@@ -882,6 +892,10 @@ fn struct_hash<H: Hasher>(s: &Struct, state: &mut H) {
             g.hash_u64().hash(state);
         }
         StructKind::AbGroup(g) => (Rc::as_ptr(g) as usize).hash(state),
+        StructKind::Nearfield(n) => {
+            state.write_u8(23);
+            n.hash_key().hash(state);
+        }
         StructKind::Automorphisms(x) => {
             state.write_u8(14);
             x.hash(state);
@@ -925,6 +939,7 @@ impl PartialEq for Value {
             (Small(r, x), Small(s, y)) => r == s && x == y,
             (Perm(a), Perm(b)) => a.images == b.images,
             (AbElt(a), AbElt(b)) => Rc::ptr_eq(&a.group, &b.group) && a.coords == b.coords,
+            (Nfd(a), Nfd(b)) => Rc::ptr_eq(&a.parent, &b.parent) && a.x.equal(&b.x) == calyx_flint::gr::Truth::True,
             (Infinity(a), Infinity(b)) => a == b,
             _ => false,
         }
@@ -953,6 +968,7 @@ pub fn struct_eq(a: &Rc<Struct>, b: &Rc<Struct>) -> bool {
         (ResIdeal(r, d), ResIdeal(s, e)) => struct_eq(r, s) && d == e,
         (UPolIdeal(f), UPolIdeal(g)) => f.same_as(g),
         (AbGroup(x), AbGroup(y)) => Rc::ptr_eq(x, y),
+        (Nearfield(x), Nearfield(y)) => x.same_as(y),
         (Automorphisms(x), Automorphisms(y)) => x == y,
         _ => false,
     }

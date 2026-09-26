@@ -227,6 +227,7 @@ fn needs_newline(v: &Value) -> bool {
         Value::Seq(_) | Value::Set(_) | Value::ISet(_) | Value::MSet(_) | Value::Struct(_) | Value::Rec(_) => true,
         Value::Elt(e) => elt_is_compound(e),
         Value::Perm(_) | Value::AbElt(_) => true,
+        Value::Nfd(x) => needs_newline(&crate::intrinsics::nearfields::as_field_value(x)),
         Value::Tuple(t) => t.elems.iter().any(needs_newline),
         _ => false,
     }
@@ -566,6 +567,10 @@ impl Interp {
             Value::Io(io) => p.write(&format!("File \"{}\" (mode \"{}\")", io.name, io.mode)),
             Value::Small(_, x) => p.write(&x.to_string()),
             Value::AbElt(x) => p.write(&x.format()),
+            Value::Nfd(x) => {
+                let v = crate::intrinsics::nearfields::as_field_value(x);
+                self.fmt(p, &v, indent)?;
+            }
             Value::Elt(e) => {
                 let s = crate::rings::format_ring_elt(self, e, p.level)?;
                 // Continuation lines of a sum are indented further.
@@ -759,6 +764,12 @@ impl Interp {
         }
         match &s.kind {
             StructKind::AbGroup(g) => fmt_abgroup(p, s, g, indent),
+            StructKind::Nearfield(_) => {
+                let [kind, order] = crate::intrinsics::nearfields::describe(s);
+                p.write(&kind);
+                p.newline(indent);
+                p.write(&order);
+            }
             StructKind::Integers => p.write("Integer Ring"),
             StructKind::Rationals => p.write("Rational Field"),
             // Real and complex fields print their name at the minimal level.
