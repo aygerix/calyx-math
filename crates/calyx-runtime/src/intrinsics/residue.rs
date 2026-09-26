@@ -230,7 +230,7 @@ fn factored_modulus(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 /// `Z/mZ` for the integer `m` a factorization sequence stands for, which
 /// the ring keeps.
 fn residue_ring_fact(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let mut f = fact_of(&a.args[0]);
+    let mut f = fact_of(&a.args[0])?;
     f.retain(|(_, k)| *k > 0);
     f.sort_by(|x, y| x.0.cmp(&y.0));
     let mut merged: Vec<(Integer, u64)> = Vec::with_capacity(f.len());

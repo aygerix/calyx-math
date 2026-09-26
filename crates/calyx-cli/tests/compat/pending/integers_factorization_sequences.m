@@ -55,3 +55,22 @@ CarmichaelLambda(Factorization(1)); CarmichaelLambda(2); EulerPhi(Factorization(
 SquarefreeFactorization(-12); SquarefreeFactorization(Factorization(12));
 IsSquare(Factorization(1));
 x := Factorization(12); x[1] := <3, 1>; x; Facint(x); IsPrime(x); IsSquare(x); x * Factorization(2);
+// A prime with exponent 0, left by an assignment, stands for 1 (#10).
+x := Factorization(12); x[1] := <2, 0>; EulerPhi(x); CarmichaelLambda(x); FactoredEulerPhi(x); FactoredCarmichaelLambda(x);
+Divisors(x); NumberOfDivisors(x); SumOfDivisors(x); MoebiusMu(x); PrimeDivisors(x); IsSquarefree(x); IsPrime(x); IsEven(x);
+x * x; Facint(x); EulerPhiInverse(x); SquarefreeFactorization(x);
+// A sequence of tuples must be a factorization list, as for SeqFact.
+EulerPhi([<2, 20>, <3, 1>]); CarmichaelLambda([<2, 5>, <7, 2>]); FactoredEulerPhi([<3, 4>]);
+EulerPhi([<2, 1/2>]);
+EulerPhi([<4, 1>]);
+EulerPhi([<3, 1>, <2, 1>]);
+EulerPhi([<2, -1>]);
+EulerPhi([<2, 0>]);
+EulerPhi([<2, 2^30>]);
+EulerPhi([<-2, 1>]);
+CarmichaelLambda([<2, -1>]);
+FactoredEulerPhi([<2, -1>]);
+FactoredCarmichaelLambda([<2, 1>, <2, 1>]);
+SeqFact([<2, 2^30 - 1>]);
+SeqFact([<2, 2^30>]);
+Factorization(2)^(2^40);
