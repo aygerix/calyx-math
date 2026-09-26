@@ -13,9 +13,11 @@ use calyx_flint::{Integer, Rational};
 use calyx_groebner::{self as gb, Order, Terms};
 
 use super::mpoly::leading;
+use super::poly_ideals::{Easy, EasyKind, MPolIdeal};
 use super::{arg_ge, arg_not, boolv, one};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
+use crate::rings::props::ring_props;
 use crate::rings::{Ring, RingKind, make_elt, ring_of};
 use crate::value::*;
 
@@ -265,6 +267,117 @@ fn is_groebner(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(engine(r, gb::is_groebner(base, n, order, &s.terms()))?)
 }
 
+// ----- ideals ----------------------------------------------------------------
+
+/// Argument `i`, an ideal of a multivariate polynomial ring or such a ring,
+/// the ideal with basis [1].
+fn ideal_arg(a: &CallArgs, i: usize) -> RResult<Rc<MPolIdeal>> {
+    let Value::Struct(st) = &a.args[i] else { unreachable!("a polynomial ring or ideal") };
+    match &st.kind {
+        StructKind::MPolIdeal(id) => Ok(id.clone()),
+        StructKind::Ring(r) => Ok(Rc::new(MPolIdeal::new(st.clone(), vec![Elem::one(&r.ctx)?], false))),
+        _ => unreachable!("a polynomial ring or ideal"),
+    }
+}
+
+/// Argument `i`, a polynomial of the ring of the ideal `id`.
+fn member_arg(a: &CallArgs, i: usize, id: &MPolIdeal) -> RResult<Elem> {
+    let Value::Elt(f) = &a.args[i] else { unreachable!("a polynomial") };
+    if f.ring().id != id.poly_ring().id {
+        return Err(RuntimeError::runtime("Arguments are not compatible"));
+    }
+    Ok(f.x.clone())
+}
+
+/// The sequence of the polynomials `xs` of the ring `pst`.
+fn poly_seq(pst: &Rc<Struct>, xs: impl IntoIterator<Item = Elem>) -> Value {
+    Value::seq(Some(Value::Struct(pst.clone())), xs.into_iter().map(|x| make_elt(pst, x)).collect())
+}
+
+/// `GroebnerBasis(I)`: the reduced Gröbner basis of I, which becomes its
+/// basis.
+fn ideal_groebner_basis(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let id = ideal_arg(a, 0)?;
+    let g = id.groebner()?;
+    // The degrees of the steps of F4, left unassigned as for sequences.
+    let mut out = vals![poly_seq(&id.ring, g.iter().cloned())];
+    out.extend((1..a.nresults.min(2)).map(|_| Value::Undef));
+    Ok(out)
+}
+
+/// `Groebner(I)`: compute the Gröbner basis of I.
+fn groebner_of(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    ideal_arg(a, 0)?.groebner()?;
+    Ok(vals![])
+}
+
+/// `NormalForm(f, I)`: the normal form of f modulo the Gröbner basis of I.
+fn normal_form_mod(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let id = ideal_arg(a, 1)?;
+    let f = member_arg(a, 0, &id)?;
+    one(make_elt(&id.ring, normal_form(id.poly_ring(), &f, &id.groebner()?)?))
+}
+
+/// `Coordinates(I, f)`: for f in I, polynomials c with f the sum of the c_i
+/// times the elements of the Gröbner basis of I: the quotients of the
+/// division of f by it.
+fn coordinates(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let id = ideal_arg(a, 0)?;
+    let f = member_arg(a, 1, &id)?;
+    if id.fixed {
+        return Err(RuntimeError::runtime("Coordinates for an ideal with a fixed basis are not implemented"));
+    }
+    let r = id.poly_ring();
+    let (base, n, order) = shape(r);
+    let g: Vec<Terms> = id.groebner()?.iter().map(terms).collect();
+    let (rem, q) = engine(r, gb::divide(base, n, order, &terms(&f), &g))?;
+    if !rem.is_empty() {
+        return Err(RuntimeError::runtime("Argument 2 is not in argument 1"));
+    }
+    one(poly_seq(&id.ring, q.iter().map(|t| Elem::mpoly_from_terms(&r.ctx, t)).collect::<Result<Vec<_>, _>>()?))
+}
+
+/// `HasGroebnerBasis(I)`: whether the coefficient ring of I allows Gröbner
+/// bases: an exact field or a Euclidean ring.
+fn has_groebner_basis(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let id = ideal_arg(a, 0)?;
+    boolv(id.poly_ring().base().and_then(ring_props).is_some_and(|p| p.exact && (p.field || p.magma_euclidean)))
+}
+
+/// The ring of the easy basis of `id`: its own, or the ring with the same
+/// coefficients, rank and names in the easy order.
+fn easy_ring(it: &mut Interp, id: &MPolIdeal, easy: &Easy) -> RResult<Rc<Struct>> {
+    if easy.kind == EasyKind::Ring {
+        return Ok(id.ring.clone());
+    }
+    let r = id.poly_ring();
+    let (_, n, _) = shape(r);
+    let q = it.mpoly_ring(r.base().expect("a polynomial ring"), n, easy.order.clone(), None, false)?;
+    let Some((qst, qr)) = ring_of(&q) else { unreachable!("a polynomial ring") };
+    *qr.names.borrow_mut() = r.names.borrow().clone();
+    Ok(qst.clone())
+}
+
+/// `EasyBasis(I)`: the Gröbner basis of I in the easy order, which Magma
+/// chooses for the computations that allow any order.
+fn easy_basis(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let id = ideal_arg(a, 0)?;
+    let easy = id.easy()?;
+    let qst = easy_ring(it, &id, &easy)?;
+    let StructKind::Ring(q) = &qst.kind else { unreachable!("a polynomial ring") };
+    let xs = easy.terms.iter().map(|t| Elem::mpoly_from_terms(&q.ctx, t)).collect::<Result<Vec<_>, _>>()?;
+    one(poly_seq(&qst, xs))
+}
+
+/// `SmallBasis(I)`: the shorter of the basis given and the Gröbner basis,
+/// once known; the Gröbner basis when they are as long.
+fn small_basis(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let id = ideal_arg(a, 0)?;
+    let g = id.basis();
+    let small = if id.has_groebner() && g.len() <= id.gens.len() { g } else { id.gens.clone() };
+    one(poly_seq(&id.ring, small))
+}
+
 /// The parameters of Magma's Gröbner basis functions that choose among
 /// algorithms and strategies: they leave the result as it is, so they are
 /// accepted and have no effect.
@@ -313,4 +426,15 @@ pub fn register(it: &mut Interp) {
         }
     }
     it.def("SPolynomial", "f::RngMPolElt, g::RngMPolElt -> RngMPolElt", "The S-polynomial of f and g.", s_polynomial);
+    let doc = "The reduced Gröbner basis of the ideal I, which becomes its basis.";
+    it.def_params("GroebnerBasis", "I::RngMPol -> [RngMPolElt], [RngIntElt]", &params, doc, ideal_groebner_basis);
+    it.def_params("Groebner", "I::RngMPol", &params, "Compute the Gröbner basis of the ideal I.", groebner_of);
+    it.def("NormalForm", "f::RngMPolElt, I::RngMPol -> RngMPolElt", "The normal form of f modulo the ideal I.", normal_form_mod);
+    let doc = "Polynomials giving f, an element of the ideal I, as a combination of the Gröbner basis of I.";
+    it.def("Coordinates", "I::RngMPol, f::RngMPolElt -> [RngMPolElt]", doc, coordinates);
+    let doc = "Whether Gröbner bases can be computed over the coefficient ring of the ideal I.";
+    it.def("HasGroebnerBasis", "I::RngMPol -> BoolElt", doc, has_groebner_basis);
+    it.def("EasyBasis", "I::RngMPol -> [RngMPolElt]", "The Gröbner basis of the ideal I in the easy order.", easy_basis);
+    let doc = "The shorter of the basis of the ideal I as given and its Gröbner basis, once known.";
+    it.def("SmallBasis", "I::RngMPol -> [RngMPolElt]", doc, small_basis);
 }
