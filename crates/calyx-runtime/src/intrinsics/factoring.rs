@@ -14,7 +14,7 @@ use crate::interp::{CallArgs, Interp};
 use crate::random::Rng;
 use crate::value::*;
 
-mod arith;
+pub(crate) mod arith;
 mod ecm;
 mod pm1;
 mod siqs;

@@ -8,6 +8,8 @@ use crate::error::{RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
 use crate::value::*;
 
+mod ecpp;
+
 /// `x mod m` in `[0, m)` for `m > 0`.
 pub fn modp(x: &Integer, m: &Integer) -> Integer {
     x.fdiv_qr(m).unwrap().1
@@ -854,6 +856,7 @@ fn dickman_rho_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 }
 
 pub fn register(it: &mut Interp) {
+    ecpp::register(it);
     it.def_params("IsPrime", "n::RngIntElt -> BoolElt", &[("Proof", Value::Bool(true))], "Whether n is a prime number (or the negative of one).", is_prime);
     for name in ["IsProbablePrime", "IsProbablyPrime"] {
         it.def_params(name, "n::RngIntElt -> BoolElt", &[("Bases", Value::int(20))], "Whether |n| passes a strong probable-prime test.", is_probable_prime);

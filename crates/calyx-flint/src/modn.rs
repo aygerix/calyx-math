@@ -249,6 +249,13 @@ fn shr(x: &mut [u64], s: u32) {
     x[last] >>= s;
 }
 
+/// A copy of FLINT's integer at `x`.
+fn copy(x: *const sys::fmpz) -> Integer {
+    let mut c = Integer::zero();
+    unsafe { sys::fmpz_set(c.as_raw_mut(), x) };
+    c
+}
+
 /// A vector of `fmpz` for FLINT's vector functions.
 struct FmpzVec {
     ptr: *mut sys::fmpz,
@@ -278,6 +285,7 @@ impl Drop for FmpzVec {
 /// A modulus for polynomials, shared by them: FLINT's `fmpz_mod` context.
 pub struct ModCtx {
     ctx: sys::fmpz_mod_ctx_struct,
+    n: Integer,
 }
 
 impl ModCtx {
@@ -287,7 +295,7 @@ impl ModCtx {
         assert!(n.sign() > 0 && !n.is_one(), "the modulus must exceed 1");
         let mut ctx = sys::fmpz_mod_ctx_struct::default();
         unsafe { sys::fmpz_mod_ctx_init(&mut ctx, n.as_raw()) };
-        Rc::new(ModCtx { ctx })
+        Rc::new(ModCtx { ctx, n: n.clone() })
     }
 }
 
@@ -364,6 +372,84 @@ impl ModPoly {
             })
             .collect()
     }
+
+    /// The roots of a polynomial of positive degree modulo a prime, if it has
+    /// as many distinct nonzero roots as its degree (by Rabin's splitting).
+    pub fn distinct_roots(&self) -> Option<Vec<Integer>> {
+        let deg = self.len().checked_sub(1).filter(|&d| d > 0)?;
+        let roots = FmpzVec::zeroed(deg);
+        let found = unsafe { sys::fmpz_mod_poly_find_distinct_nonzero_roots(roots.ptr, &self.f, &self.ctx.ctx) };
+        (found != 0).then(|| (0..deg).map(|i| copy(unsafe { roots.ptr.add(i) })).collect())
+    }
+
+    /// A root of a polynomial of positive degree modulo a prime `n`, if it has
+    /// as many distinct roots as its degree: split by gcds with
+    /// `(x + c)^((n - 1)/2) - 1` for random `c` (from `seed`), keeping the
+    /// smaller factor each time. That costs about two splits of the whole
+    /// polynomial, where all the roots take a split at each level. None
+    /// after 64 failed splits in a row.
+    pub fn one_root(&self, seed: u64) -> Option<Integer> {
+        let ctx = &self.ctx.ctx;
+        let n = &self.ctx.n;
+        let half = (n - 1).fdiv_2exp(1);
+        let zero = || ModPoly::zero(&self.ctx);
+        let (mut f, mut t, mut finv, mut g, mut rest) = (zero(), zero(), zero(), zero(), zero());
+        if self.is_empty() {
+            return None;
+        }
+        unsafe { sys::fmpz_mod_poly_make_monic(&mut f.f, &self.f, ctx) };
+        let mut s = seed | 1;
+        let mut fails = 0;
+        while f.len() > 2 {
+            let c = {
+                s ^= s << 13;
+                s ^= s >> 7;
+                s ^= s << 17;
+                Integer::from_u64(s)
+            };
+            unsafe {
+                sys::fmpz_mod_poly_reverse(&mut t.f, &f.f, f.f.length, ctx);
+                sys::fmpz_mod_poly_inv_series(&mut finv.f, &t.f, f.f.length, ctx);
+                sys::fmpz_mod_poly_powmod_linear_fmpz_preinv(&mut t.f, c.as_raw(), half.as_raw(), &f.f, &finv.f, ctx);
+                sys::fmpz_mod_poly_sub_si(&mut t.f, &t.f, 1, ctx);
+                sys::fmpz_mod_poly_gcd(&mut g.f, &t.f, &f.f, ctx);
+            }
+            if g.len() <= 1 || g.len() >= f.len() {
+                fails += 1;
+                if fails == 64 {
+                    return None;
+                }
+                continue;
+            }
+            fails = 0;
+            unsafe { sys::fmpz_mod_poly_divrem(&mut rest.f, &mut t.f, &f.f, &g.f, ctx) };
+            if g.len() <= rest.len() {
+                std::mem::swap(&mut f, &mut g);
+            } else {
+                std::mem::swap(&mut f, &mut rest);
+            }
+        }
+        // f = x + c0.
+        let c0 = f.coeffs(0, 1).pop()?;
+        Some(if c0.is_zero() { c0 } else { n - &c0 })
+    }
+}
+
+/// The Hilbert class polynomial of the discriminant `d < 0`, from the
+/// constant term on (FLINT's `acb_modular_hilbert_class_poly`).
+///
+/// # Panics
+/// Unless `d < 0` and `d` is 0 or 1 modulo 4.
+pub fn hilbert_class_poly(d: i64) -> Vec<Integer> {
+    assert!(d < 0 && d.rem_euclid(4) <= 1, "not a negative discriminant");
+    let mut f = sys::fmpz_poly_struct::default();
+    unsafe {
+        sys::fmpz_poly_init(&mut f);
+        sys::acb_modular_hilbert_class_poly(&mut f, d as sys::slong);
+    }
+    let cs = (0..f.length as usize).map(|i| copy(unsafe { f.coeffs.add(i) })).collect();
+    unsafe { sys::fmpz_poly_clear(&mut f) };
+    cs
 }
 
 impl Drop for ModPoly {
@@ -482,5 +568,66 @@ mod tests {
         }
         assert_eq!(f.product_at(&points), want);
     }
+
+    #[test]
+    fn class_polynomials_and_their_roots() {
+        let int = |x: i64| Integer::from_i64(x);
+        assert_eq!(hilbert_class_poly(-3), vec![int(0), int(1)]);
+        assert_eq!(hilbert_class_poly(-7), vec![int(3375), int(1)]);
+        assert_eq!(hilbert_class_poly(-15), vec![int(-121287375), int(191025), int(1)]);
+        let h = hilbert_class_poly(-23);
+        assert_eq!(h, vec![int(12771880859375), int(-5151296875), int(3491750), int(1)]);
+        // 4 * 59 = 12^2 + 23 * 2^2, so H splits modulo 59; not modulo 5.
+        let p = Integer::from_u64(59);
+        let roots = ModPoly::new(&ModCtx::new(&p), &h).distinct_roots().unwrap();
+        assert_eq!(roots.len(), 3);
+        for r in &roots {
+            let v = h.iter().rev().fold(Integer::zero(), |v, c| (&(&v * r) + c).div_rem_euclid(&p).unwrap().1);
+            assert!(v.is_zero(), "root {r}");
+        }
+        assert_eq!(ModPoly::new(&ModCtx::new(&Integer::from_u64(5)), &h).distinct_roots(), None);
+        for seed in 1..20 {
+            let r = ModPoly::new(&ModCtx::new(&p), &h).one_root(seed).unwrap();
+            assert!(roots.contains(&r), "root {r}");
+        }
+        // x^2 + 1 has no roots modulo 7, and x (degree 1) the root 0.
+        assert_eq!(ModPoly::new(&ModCtx::new(&Integer::from_u64(7)), &[Integer::one(), Integer::zero(), Integer::one()]).one_root(3), None);
+        assert_eq!(ModPoly::new(&ModCtx::new(&p), &[Integer::zero(), Integer::from_u64(5)]).one_root(3), Some(Integer::zero()));
+    }
 }
 
+#[cfg(test)]
+mod bench {
+    use super::*;
+
+    /// Times of class polynomials and their roots modulo primes of 1000 bits
+    /// (`cargo test --release -p calyx-flint --lib -- --ignored class_times --nocapture`).
+    #[test]
+    #[ignore]
+    fn class_times() {
+        for d in [-1048i64, -4099, -9523, -19203, -30011, -50051, -100003] {
+            let t = std::time::Instant::now();
+            let h = hilbert_class_poly(d);
+            let t1 = t.elapsed().as_secs_f64();
+            // A prime p with 4p = u^2 - d v^2 splits H.
+            let mut u = Integer::one().mul_2exp(499);
+            let p = loop {
+                u = &u + &Integer::one();
+                let q = &(&u * &u) + &Integer::from_i64(-d);
+                if q.mod_u64(4) == 0 && q.divexact(&Integer::from_u64(4)).is_probable_prime() {
+                    break q.divexact(&Integer::from_u64(4));
+                }
+            };
+            let t = std::time::Instant::now();
+            let roots = ModPoly::new(&ModCtx::new(&p), &h).distinct_roots();
+            let t2 = t.elapsed().as_secs_f64();
+            let t = std::time::Instant::now();
+            let one = ModPoly::new(&ModCtx::new(&p), &h).one_root(7);
+            let t3 = t.elapsed().as_secs_f64();
+            assert!(roots.as_ref().is_some_and(|r| one.as_ref().is_some_and(|x| r.contains(x))));
+            let bits = h.iter().map(|c| c.bits()).max().unwrap();
+            let count = roots.map_or(0, |r| r.len());
+            println!("D {d}: degree {}, {bits} bits, {t1:.4} s; mod {} bits: {count} roots in {t2:.4} s, one in {t3:.4} s", h.len() - 1, p.bits());
+        }
+    }
+}
