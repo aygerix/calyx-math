@@ -45,7 +45,7 @@ impl Interp {
     /// `$n`). `nres` is the number of values wanted (0 = all, for printing).
     pub fn eval_multi(&mut self, e: &E, f: &mut Frame, nres: usize) -> RResult<Vec<Value>> {
         match &e.kind {
-            Ex::Call(c) => match self.call_expr(c, f, nres, false, e.span)? {
+            Ex::Call(c) => match self.call_expr(c, f, nres, false, e.span).map_err(|err| err.at(e.span))? {
                 Some(v) if !v.is_empty() => Ok(v.into_vec()),
                 _ => Err(RuntimeError::runtime("Procedure call has no return value").at(e.span)),
             },
@@ -77,8 +77,30 @@ impl Interp {
                 f.set(*slot, val);
                 self.eval_multi(body, f, nres)
             }
+            Ex::LetMulti(slots, v, body) => {
+                self.bind_values(slots, v, f)?;
+                self.eval_multi(body, f, nres)
+            }
             _ => Ok(vec![self.eval(e, f)?]),
         }
+    }
+
+    /// Bind the values of `v` to the slots of a `where` clause.
+    pub fn bind_values(&mut self, slots: &[Slot], v: &E, f: &mut Frame) -> RResult<()> {
+        if let [slot] = slots {
+            let val = self.eval(v, f)?;
+            f.set(*slot, val);
+            return Ok(());
+        }
+        let vals = self.eval_multi(v, f, slots.len())?;
+        if vals.len() < slots.len() {
+            let msg = format!("Expected to assign {} value(s) but only computed {} value(s)", slots.len(), vals.len());
+            return Err(RuntimeError::runtime(msg).at(v.span));
+        }
+        for (slot, val) in slots.iter().zip(vals) {
+            f.set(*slot, val);
+        }
+        Ok(())
     }
 
     fn previous_values(&self, n: u32) -> Option<Vec<Value>> {
@@ -212,6 +234,10 @@ impl Interp {
             Ex::Let(slot, v, body) => {
                 let val = self.eval(v, f)?;
                 f.set(*slot, val);
+                self.eval(body, f)
+            }
+            Ex::LetMulti(slots, v, body) => {
+                self.bind_values(slots, v, f)?;
                 self.eval(body, f)
             }
             Ex::Multiplicity(..) => Err(RuntimeError::runtime("'^^' may only be used in multiset constructors")),
@@ -566,9 +592,8 @@ impl Interp {
     fn run_comprehension_with_head(&mut self, c: &ComprEx, hv: &E, hn: &E, f: &mut Frame, out: &mut Vec<(Value, u64)>) -> RResult<()> {
         fn level(it: &mut Interp, c: &ComprEx, k: usize, hv: &E, hn: &E, f: &mut Frame, out: &mut Vec<(Value, u64)>) -> RResult<()> {
             if k == 0 {
-                for (slot, e) in &c.lets {
-                    let v = it.eval(e, f)?;
-                    f.set(*slot, v);
+                for (slots, e) in &c.lets {
+                    it.bind_values(slots, e, f)?;
                 }
                 if let Some(p) = &c.pred {
                     if !it.eval_bool(p, f)? {
@@ -583,7 +608,7 @@ impl Interp {
                 return Ok(());
             }
             let ie = &c.iters[k - 1];
-            let mut iter = it.domain_iter(&ie.domain, f, ie.index.is_some())?;
+            let mut iter = it.loop_domain(&ie.domain, f, ie.index.is_some(), ie.span)?;
             while let Some((i, x)) = iter.next_item() {
                 if let Some(s) = ie.index {
                     f.set(s, i);
@@ -637,9 +662,8 @@ impl Interp {
     /// Returns `Ok(false)` if the search stopped (a witness was found).
     fn quant_level(&mut self, c: &ComprEx, k: usize, f: &mut Frame, want: bool, witness: &mut Option<Value>) -> RResult<bool> {
         if k == 0 {
-            for (slot, e) in &c.lets {
-                let v = self.eval(e, f)?;
-                f.set(*slot, v);
+            for (slots, e) in &c.lets {
+                self.bind_values(slots, e, f)?;
             }
             let holds = match &c.pred {
                 Some(p) => self.eval_bool(p, f)?,
@@ -652,7 +676,7 @@ impl Interp {
             return Ok(true);
         }
         let ie = &c.iters[k - 1];
-        let mut it = self.domain_iter(&ie.domain, f, ie.index.is_some())?;
+        let mut it = self.loop_domain(&ie.domain, f, ie.index.is_some(), ie.span)?;
         while let Some((i, x)) = it.next_item() {
             self.check_interrupt()?;
             if let Some(s) = ie.index {
@@ -707,6 +731,10 @@ impl Interp {
             // prints as a plain mapping.
             MapBodyEx::Exprs(es) if es.is_empty() && kind == MapKind::Hom && matches!(domain.as_struct(), Some(StructKind::Integers)) => {
                 return Ok(Value::Map(Rc::new(MapObj { kind: MapKind::Map, domain, codomain, imp: MapImpl::Coercion })));
+            }
+            // The natural homomorphism from a residue class ring.
+            MapBodyEx::Exprs(es) if es.is_empty() && kind == MapKind::Hom && crate::intrinsics::abgroups::residue_hom(&domain, &codomain).is_some() => {
+                return Ok(crate::intrinsics::abgroups::residue_hom(&domain, &codomain).unwrap());
             }
             MapBodyEx::Exprs(es) => {
                 let mut vals = Vec::new();

@@ -98,6 +98,8 @@ builtin_types! {
     INFTY = "Infty": [ANY],
     EXT_RE = "ExtRe": [STR],
     EXT_RE_ELT = "ExtReElt": [ELT],
+    GRP_AB = "GrpAb": [GRP],
+    GRP_AB_ELT = "GrpAbElt": [GRP_ELT],
 }
 
 #[derive(Clone, Debug)]
@@ -155,6 +157,7 @@ impl TypeRegistry {
             (t::RNG_MPOL, t::RNG_MPOL_ELT),
             (t::FLD_COM, t::FLD_COM_ELT),
             (t::EXT_RE, t::EXT_RE_ELT),
+            (t::GRP_AB, t::GRP_AB_ELT),
         ];
         for (s, e) in elts {
             r.types[s.0 as usize].elt_type = Some(e);

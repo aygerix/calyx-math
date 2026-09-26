@@ -13,8 +13,12 @@ use calyx_flint::{Integer, Rational, Real};
 use indexmap::{IndexMap, IndexSet};
 use rustc_hash::{FxHashMap, FxHasher};
 
+use crate::abgroups::{AbElt, AbGroup};
+use crate::error::RResult;
+use crate::interp::Interp;
 use crate::ir::FuncCode;
 use crate::perms::Perm;
+use crate::rings::small::SmallRing;
 use crate::rings::{Elt, Ring};
 use crate::sym::Sym;
 use crate::types::{TypeId, TypeVal, t};
@@ -59,11 +63,19 @@ pub enum Value {
     /// An element of a ring built on FLINT (residue class rings, finite
     /// fields, polynomial rings, the complex field, ...).
     Elt(Rc<Elt>),
+    /// An element of a ring whose elements fit in a word (`Z/nZ` or `GF(p)`
+    /// with a modulus below 2^64): the ring and the residue.
+    Small(SmallRing, u64),
     /// A permutation, an element of `Sym(n)`.
     Perm(Rc<Perm>),
+    /// An element of an abelian group (`GrpAbElt`).
+    AbElt(Rc<AbElt>),
     /// `Infinity()` (`true`) or `-Infinity()` (`false`).
     Infinity(bool),
 }
+
+// Values are copied everywhere; keep them two words.
+const _: () = assert!(std::mem::size_of::<Value>() == 16);
 
 /// The contents of a string. Strings grow in place under `cat:=` when not
 /// shared, and remember whether they are ASCII so that lengths and
@@ -389,6 +401,15 @@ pub enum MapImpl {
     Injection(usize),
     /// The inverse of another map.
     Inverse(Rc<MapObj>),
+    /// A map computed by the runtime (the maps of unit groups, for example).
+    Native(Rc<dyn NativeMap>),
+}
+
+/// A map implemented in Rust. Unlike other maps, arguments reach it as
+/// given, so it decides itself what it accepts.
+pub trait NativeMap {
+    fn apply(&self, it: &mut Interp, m: &MapObj, x: &Value) -> RResult<Value>;
+    fn preimage(&self, it: &mut Interp, m: &MapObj, y: &Value) -> RResult<Value>;
 }
 
 // ----- structures -----------------------------------------------------------
@@ -431,6 +452,11 @@ pub enum StructKind {
     /// The ideal `nZ` of the integers (`n = 0` or `n > 1`), itself of type
     /// `RngInt`.
     IntIdeal(Integer),
+    /// The ideal `dR` of a residue class ring `R = Z/mZ`, for a divisor
+    /// `d > 1` of `m` (`d = m` is the zero ideal); of type `RngIntRes`.
+    ResIdeal(Rc<Struct>, Integer),
+    /// An abelian group; every construction makes a new group.
+    AbGroup(Rc<AbGroup>),
 }
 
 #[derive(Clone)]
@@ -647,6 +673,8 @@ impl Value {
                 StructKind::SymGroup(_) => t::GRP_PERM,
                 StructKind::ExtendedReals => t::EXT_RE,
                 StructKind::IntIdeal(_) => t::RNG_INT,
+                StructKind::ResIdeal(..) => t::RNG_INT_RES,
+                StructKind::AbGroup(_) => t::GRP_AB,
             },
             Value::Cat(_) => t::CAT,
             Value::ECat(_) => t::ECAT,
@@ -655,7 +683,9 @@ impl Value {
             Value::CopElt(_) => t::COP_ELT,
             Value::Io(_) => t::IO,
             Value::Elt(e) => e.ring().elt_type(),
+            Value::Small(r, _) => r.elt_type(),
             Value::Perm(_) => t::GRP_PERM_ELT,
+            Value::AbElt(_) => t::GRP_AB_ELT,
             Value::Infinity(_) => t::INFTY,
         }
     }
@@ -749,9 +779,17 @@ impl Hash for Value {
             Value::Formal(f) => (Rc::as_ptr(f) as usize).hash(state),
             Value::Io(f) => (Rc::as_ptr(f) as usize).hash(state),
             Value::Elt(e) => state.write_u64(e.hash_u64()),
+            Value::Small(r, x) => {
+                r.hash(state);
+                state.write_u64(*x);
+            }
             Value::Perm(p) => {
                 state.write_u8(18);
                 p.images.hash(state);
+            }
+            Value::AbElt(x) => {
+                state.write_u8(21);
+                x.coords.hash(state);
             }
             Value::Infinity(pos) => state.write_u8(if *pos { 19 } else { 20 }),
         }
@@ -800,6 +838,12 @@ fn struct_hash<H: Hasher>(s: &Struct, state: &mut H) {
             state.write_u8(12);
             n.hash(state);
         }
+        StructKind::ResIdeal(r, d) => {
+            state.write_u8(13);
+            struct_hash(r, state);
+            d.hash(state);
+        }
+        StructKind::AbGroup(g) => (Rc::as_ptr(g) as usize).hash(state),
     }
 }
 
@@ -835,7 +879,9 @@ impl PartialEq for Value {
             (Formal(a), Formal(b)) => Rc::ptr_eq(a, b),
             (Io(a), Io(b)) => Rc::ptr_eq(a, b),
             (Elt(a), Elt(b)) => a.same_as(b),
+            (Small(r, x), Small(s, y)) => r == s && x == y,
             (Perm(a), Perm(b)) => a.images == b.images,
+            (AbElt(a), AbElt(b)) => Rc::ptr_eq(&a.group, &b.group) && a.coords == b.coords,
             (Infinity(a), Infinity(b)) => a == b,
             _ => false,
         }
@@ -861,6 +907,8 @@ pub fn struct_eq(a: &Rc<Struct>, b: &Rc<Struct>) -> bool {
         (SymGroup(x), SymGroup(y)) => x == y,
         (ExtendedReals, ExtendedReals) => true,
         (IntIdeal(m), IntIdeal(n)) => m == n,
+        (ResIdeal(r, d), ResIdeal(s, e)) => struct_eq(r, s) && d == e,
+        (AbGroup(x), AbGroup(y)) => Rc::ptr_eq(x, y),
         _ => false,
     }
 }
@@ -882,6 +930,7 @@ pub fn natural_cmp(a: &Value, b: &Value) -> Option<Ordering> {
         (Infinity(x), Int(_) | Rat(_) | Real(_)) => if *x { Ordering::Greater } else { Ordering::Less },
         (Int(_) | Rat(_) | Real(_), Infinity(y)) => if *y { Ordering::Less } else { Ordering::Greater },
         (Elt(x), Elt(y)) => x.natural_cmp(y)?,
+        (Small(r, x), Small(s, y)) if r == s => x.cmp(y),
         (Seq(x), Seq(y)) => seq_cmp(&x.elems, &y.elems)?,
         (Tuple(x), Tuple(y)) => seq_cmp(&x.elems, &y.elems)?,
         (Set(x), Set(y)) => match x.len().cmp(&y.len()) {

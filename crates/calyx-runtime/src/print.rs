@@ -57,11 +57,13 @@ pub struct Printer {
     /// Set once a quoted string has been written: Magma does not wrap such
     /// output.
     pub no_wrap: bool,
+    /// Lines start without indentation, as in `Sprint` and `Sprintf`.
+    pub bare: bool,
 }
 
 impl Printer {
     pub fn new(col: usize, width: usize, level: Level) -> Printer {
-        Printer { buf: String::new(), col, width: width.max(20), level, cont: 0, line_start: 0, no_wrap: false }
+        Printer { buf: String::new(), col, width: width.max(20), level, cont: 0, line_start: 0, no_wrap: false, bare: false }
     }
 
     pub fn write(&mut self, s: &str) {
@@ -124,6 +126,7 @@ impl Printer {
             self.buf.pop();
         }
         self.buf.push('\n');
+        let indent = if self.bare { 0 } else { indent };
         for _ in 0..indent {
             self.buf.push(' ');
         }
@@ -150,8 +153,15 @@ fn is_simple(v: &Value) -> bool {
         Value::CopElt(c) => is_simple(&c.value),
         Value::Func(_) => true,
         Value::Elt(e) => !elt_is_compound(e),
+        Value::Small(..) => true,
         _ => false,
     }
+}
+
+/// Values that aggregates set off by a blank line, and that make a tuple
+/// print one element per line: abelian groups.
+fn is_block(v: &Value) -> bool {
+    matches!(v, Value::Struct(s) if matches!(s.kind, StructKind::AbGroup(_)))
 }
 
 /// Ring elements that print as sums of terms (polynomials, and finite field
@@ -170,13 +180,53 @@ fn group_name(s: &Struct) -> String {
     s.name.borrow().map(|n| n.to_string()).unwrap_or_else(|| "$".to_string())
 }
 
+/// An abelian group: its invariants and its relations, one per line.
+fn fmt_abgroup(p: &mut Printer, s: &Struct, g: &crate::abgroups::AbGroup, indent: usize) {
+    let n = g.ngens();
+    let free = g.orders.iter().all(|o| o.is_zero());
+    if p.level == Level::Magma {
+        if free {
+            p.write(&format!("FreeAbelianGroup({n})"));
+            return;
+        }
+        let gens: Vec<String> = (1..=n).map(|i| format!("x{i}")).collect();
+        let rels: Vec<String> =
+            g.orders.iter().enumerate().filter(|(_, o)| !o.is_zero()).map(|(i, o)| if o.is_one() { format!("x{}", i + 1) } else { format!("{o}*x{}", i + 1) }).collect();
+        p.write(&format!("AbelianGroup<{} | {}>", gens.join(", "), rels.join(", ")));
+        return;
+    }
+    if g.order().is_some_and(|o| o.is_one()) {
+        p.write("Abelian Group of order 1");
+        if n == 0 {
+            return;
+        }
+    } else {
+        let parts: Vec<String> = g.invariants().iter().map(|d| if d.is_zero() { "Z".to_string() } else { format!("Z/{d}") }).collect();
+        p.write(&format!("Abelian Group isomorphic to {}", parts.join(" + ")));
+    }
+    p.newline(indent);
+    p.write(&format!("Defined on {n} generator{}", if n == 1 { "" } else { "s" }));
+    if free {
+        p.write(" (free)");
+        return;
+    }
+    p.newline(indent);
+    p.write("Relations:");
+    let name = group_name(s);
+    for (i, o) in g.orders.iter().enumerate().filter(|(_, o)| !o.is_zero()) {
+        p.newline(indent + 4);
+        let c = if o.is_one() { String::new() } else { format!("{o}*") };
+        p.write(&format!("{c}{name}.{} = 0", i + 1));
+    }
+}
+
 /// Whether the next value in a print list goes on a new line after `v`
 /// (rather than after a space).
 fn needs_newline(v: &Value) -> bool {
     match v {
         Value::Seq(_) | Value::Set(_) | Value::ISet(_) | Value::MSet(_) | Value::Struct(_) | Value::Rec(_) => true,
         Value::Elt(e) => elt_is_compound(e),
-        Value::Perm(_) => true,
+        Value::Perm(_) | Value::AbElt(_) => true,
         Value::Tuple(t) => t.elems.iter().any(needs_newline),
         _ => false,
     }
@@ -250,6 +300,14 @@ impl Interp {
 
     pub fn format_value(&mut self, v: &Value, level: Level) -> RResult<String> {
         let mut p = Printer::new(0, self.out.columns, level);
+        self.fmt(&mut p, v, 0)?;
+        Ok(p.buf)
+    }
+
+    /// `Sprint`: like printing, but without indenting nested lines.
+    pub fn format_bare(&mut self, v: &Value, level: Level) -> RResult<String> {
+        let mut p = Printer::new(0, self.out.columns, level);
+        p.bare = true;
         self.fmt(&mut p, v, 0)?;
         Ok(p.buf)
     }
@@ -373,6 +431,9 @@ impl Interp {
                         if same_line {
                             p.write(" ");
                         } else {
+                            if i > 0 && is_block(e) {
+                                p.newline(0);
+                            }
                             p.newline(indent + 4);
                         }
                         self.fmt(p, e, indent + 4)?;
@@ -384,6 +445,23 @@ impl Interp {
                     p.newline(indent);
                     p.write("*]");
                 }
+            }
+            Value::Tuple(t) if t.elems.iter().any(is_block) => {
+                // One element per line, with blank lines between them.
+                p.write("<");
+                let saved = p.cont;
+                p.cont = indent + 4;
+                for (i, e) in t.elems.iter().enumerate() {
+                    if i > 0 {
+                        p.write(",");
+                        p.newline(0);
+                    }
+                    p.newline(indent + 4);
+                    self.fmt(p, e, indent + 4)?;
+                }
+                p.cont = saved;
+                p.newline(indent);
+                p.write(">");
             }
             Value::Tuple(t) => {
                 p.write("<");
@@ -486,6 +564,8 @@ impl Interp {
                 self.fmt(p, &u, indent)?;
             }
             Value::Io(io) => p.write(&format!("File \"{}\" (mode \"{}\")", io.name, io.mode)),
+            Value::Small(_, x) => p.write(&x.to_string()),
+            Value::AbElt(x) => p.write(&x.format()),
             Value::Elt(e) => {
                 let s = crate::rings::format_ring_elt(self, e, p.level)?;
                 // Continuation lines of a sum are indented further.
@@ -541,6 +621,9 @@ impl Interp {
             let saved = p.cont;
             p.cont = indent + 4;
             for (i, e) in elems.iter().enumerate() {
+                if i > 0 && is_block(e) {
+                    p.newline(0);
+                }
                 p.newline(indent + 4);
                 self.fmt(p, e, indent + 4)?;
                 if let Some(m) = mults {
@@ -662,6 +745,7 @@ impl Interp {
             }
         }
         match &s.kind {
+            StructKind::AbGroup(g) => fmt_abgroup(p, s, g, indent),
             StructKind::Integers => p.write("Integer Ring"),
             StructKind::Rationals => p.write("Rational Field"),
             // Real and complex fields print their name at the minimal level.
@@ -723,10 +807,14 @@ impl Interp {
                 p.write(">");
             }
             StructKind::Maps(d, c) => {
+                // Both ends print briefly, but not by name.
+                let saved = p.level;
+                p.level = Level::Minimal;
                 p.write("Set of all maps from ");
                 self.fmt(p, d, indent)?;
                 p.write(" to ");
                 self.fmt(p, c, indent)?;
+                p.level = saved;
             }
             StructKind::PowerStructure(t) if *t == crate::types::t::RNG_INT_ELT_FACT => p.write("Set of integer factorization sequences"),
             StructKind::PowerStructure(t) => p.write(&format!("Power Structure of {}", self.types.name(*t))),
@@ -748,6 +836,16 @@ impl Interp {
                 p.cont = saved;
             }
             StructKind::IntIdeal(n) => p.write(&if p.level == Level::Magma { format!("ideal<IntegerRing() | {n}>") } else { format!("Ideal of Integer Ring generated by {n}") }),
+            StructKind::ResIdeal(r, d) => {
+                let m = crate::rings::ideals::residue_modulus(r);
+                // The zero ideal is generated by 0 (by m at the Magma level).
+                let g = if *d == m { calyx_flint::Integer::zero() } else { d.clone() };
+                p.write(&if p.level == Level::Magma {
+                    format!("ideal<IntegerRing({m}) | {d}>")
+                } else {
+                    format!("Ideal of residue class ring of integers modulo {m} generated by {g}")
+                });
+            }
             StructKind::ExtendedReals => p.write(if p.level == Level::Magma { "ExtendedReals()" } else { "Extended Reals" }),
             StructKind::SymGroup(n) => {
                 let n = *n as usize;
@@ -914,6 +1012,7 @@ impl Interp {
         // The whole printf output is wrapped afterwards.
         let _ = col;
         let mut p = Printer::new(0, usize::MAX / 2, level);
+        p.bare = true;
         self.fmt(&mut p, v, 0)?;
         Ok(p.buf)
     }

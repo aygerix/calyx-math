@@ -41,8 +41,9 @@ fn is_minus_one(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 
 /// `x^2 = x`
 fn is_idempotent(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let arg = crate::rings::small::expand(&a.args[0]);
     let zero_or_one = |q: Option<calyx_flint::Rational>| q.is_some_and(|q| q.sign() == 0 || (q.is_integral() && q.numerator().is_one()));
-    boolv(match &a.args[0] {
+    boolv(match &arg {
         Value::Int(n) => n.is_zero() || n.is_one(),
         Value::Rat(q) => zero_or_one(Some((**q).clone())),
         Value::Real(r) => zero_or_one(r.x.to_rational()),
@@ -53,8 +54,9 @@ fn is_idempotent(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 
 /// Whether some power of x is zero, and if so the least such power.
 fn is_nilpotent(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let arg = crate::rings::small::expand(&a.args[0]);
     let yes = |k: u64| Ok(vals![Value::Bool(true), Value::Int(Integer::from_u64(k))]);
-    let zero = match &a.args[0] {
+    let zero = match &arg {
         Value::Int(n) => n.is_zero(),
         Value::Rat(q) => q.sign() == 0,
         Value::Real(r) => r.x.sign() == 0,
@@ -86,7 +88,8 @@ fn is_nilpotent(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 
 /// Whether x is a non-zero element with a non-zero multiple equal to zero.
 fn is_zero_divisor(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let Value::Elt(e) = &a.args[0] else { return boolv(false) };
+    let arg = crate::rings::small::expand(&a.args[0]);
+    let Value::Elt(e) = &arg else { return boolv(false) };
     boolv(match &e.ring().kind {
         RingKind::Residue(m) => !truth(e.x.is_zero()) && e.residue().is_some_and(|r| !r.gcd(m).is_one()),
         RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. } => {
@@ -125,16 +128,18 @@ fn elt_irreducible(e: &Rc<Elt>) -> RResult<bool> {
 }
 
 fn is_irreducible(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    boolv(irreducible(&a.args[0])?)
+    let arg = crate::rings::small::expand(&a.args[0]);
+    boolv(irreducible(&arg)?)
 }
 
 fn is_prime_elt(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    if let Value::Elt(e) = &a.args[0] {
+    let arg = crate::rings::small::expand(&a.args[0]);
+    if let Value::Elt(e) = &arg {
         if matches!(e.ring().kind, RingKind::Residue(_)) {
             return Err(RuntimeError::runtime("Algorithm not possible for this type of element"));
         }
     }
-    boolv(irreducible(&a.args[0])?)
+    boolv(irreducible(&arg)?)
 }
 
 pub fn register(it: &mut Interp) {

@@ -174,8 +174,9 @@ pub enum ExprKind {
     Reduce(BinOp, Box<Expr>),
     Assigned(Box<Expr>),
     Eval(Box<Expr>),
-    /// `e where x is v`
-    Where(Box<Expr>, Name, Box<Expr>),
+    /// `e where x is v`, or `e where x, y := v` binding several values of
+    /// a call (`_` skips one).
+    Where(Box<Expr>, Vec<Name>, Box<Expr>),
     /// `x ^^ n` (multiplicity in multiset constructors)
     Multiplicity(Box<Expr>, Box<Expr>),
     Tuple(Vec<Expr>),

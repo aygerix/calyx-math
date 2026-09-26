@@ -41,7 +41,9 @@ impl Interp {
             Value::Map(m) => Value::structure(StructKind::Maps(m.domain.clone(), m.codomain.clone())),
             Value::CopElt(c) => Value::Struct(c.cop.clone()),
             Value::Elt(e) => e.parent_value(),
+            Value::Small(r, _) => r.parent_value(),
             Value::Perm(p) => Value::Struct(p.group.clone()),
+            Value::AbElt(e) => Value::Struct(e.group.clone()),
             Value::Obj(o) => {
                 let sym = Sym::new("Parent");
                 if self.select_signature(sym, std::slice::from_ref(v), &[false], false).is_some_and(|s| !s.generic) {
@@ -58,7 +60,14 @@ impl Interp {
 
     /// `S ! x`
     pub fn coerce(&mut self, s: &Value, x: &Value) -> RResult<Value> {
-        match self.try_coerce(s, x)? {
+        let attempt = match s {
+            Value::Struct(st) if matches!(st.kind, StructKind::AbGroup(_)) => {
+                let st = st.clone();
+                self.coerce_into_abgroup(&st, x, true)?
+            }
+            _ => self.try_coerce(s, x)?,
+        };
+        match attempt {
             Ok(v) => Ok(v),
             Err(msg) => {
                 let reason = msg.unwrap_or_else(|| "Illegal coercion".to_string());
@@ -100,6 +109,7 @@ impl Interp {
             Value::Struct(st) => match &st.kind {
                 StructKind::Ring(_) => self.coerce_into_ring(st, x),
                 StructKind::SymGroup(n) => self.coerce_into_sym(*n as usize, x),
+                StructKind::AbGroup(_) => self.coerce_into_abgroup(st, x, false),
                 StructKind::IntIdeal(n) => match x {
                     Value::Int(_) | Value::Rat(_) => {
                         let v = match self.try_coerce(&Value::integers(), x)? {
@@ -116,9 +126,25 @@ impl Interp {
                     Value::Int(_) | Value::Rat(_) | Value::Real(_) | Value::Infinity(_) => Ok(Ok(x.clone())),
                     _ => fail(),
                 },
-                StructKind::Integers | StructKind::Rationals | StructKind::Reals(_) if matches!(x, Value::Elt(_)) => {
-                    let Value::Elt(e) = x else { unreachable!() };
-                    match self.coerce_ring_elt_down(&st.kind, e) {
+                // An element of the ring that lies in the ideal.
+                StructKind::ResIdeal(r, d) => {
+                    let v = match self.coerce_into_ring(r, x)? {
+                        Ok(v) => v,
+                        Err(e) => return Ok(Err(e)),
+                    };
+                    let rep = match &v {
+                        Value::Small(_, k) => calyx_flint::Integer::from_u64(*k),
+                        Value::Elt(e) => e.residue().unwrap_or_default(),
+                        _ => return fail(),
+                    };
+                    if rep.is_divisible_by(d) { Ok(Ok(v)) } else { Ok(Err(Some("Element is not in the ideal".into()))) }
+                }
+                StructKind::Integers | StructKind::Rationals | StructKind::Reals(_) if matches!(x, Value::Elt(_) | Value::Small(..)) => {
+                    if let (StructKind::Integers, Value::Small(_, v)) = (&st.kind, x) {
+                        return Ok(Ok(Value::Int(calyx_flint::Integer::from_u64(*v))));
+                    }
+                    let e = crate::rings::small::elt_of(x).unwrap();
+                    match self.coerce_ring_elt_down(&st.kind, &e) {
                         Some(v) => Ok(Ok(v)),
                         None if matches!(st.kind, StructKind::Integers) && e.ring().finite_field().is_some() => {
                             Ok(Err(Some("Element not from a prime field".into())))
@@ -459,6 +485,12 @@ impl Interp {
         if k != 0 && vals.iter().all(|v| kind(v) == k) {
             return Ok(Some(self.parent_of(&vals[0])?));
         }
+        // So do elements of one residue class ring or prime field.
+        if let Value::Small(r, _) = vals[0] {
+            if vals.iter().all(|v| matches!(v, Value::Small(s, _) if *s == r)) {
+                return Ok(Some(r.parent_value()));
+            }
+        }
         let mut parents = Vec::with_capacity(vals.len());
         let mut u: Option<Value> = None;
         for (i, v) in vals.iter().enumerate() {
@@ -670,8 +702,8 @@ impl Interp {
                 }
             }
             Value::Assoc(_) => Err(RuntimeError::runtime("Use IsDefined to test membership in an associative array").in_context("in")),
-            Value::Struct(st) if matches!((&st.kind, x), (StructKind::Ring(_), Value::Elt(_))) => {
-                let Value::Elt(e) = x else { unreachable!() };
+            Value::Struct(st) if matches!((&st.kind, x), (StructKind::Ring(_), Value::Elt(_) | Value::Small(..))) => {
+                let e = crate::rings::small::elt_of(x).unwrap();
                 let StructKind::Ring(r) = &st.kind else { unreachable!() };
                 if let Some(err) = ring_membership_error(r, e.ring()) {
                     return Err(RuntimeError::runtime(err).in_context("in"));
@@ -680,6 +712,18 @@ impl Interp {
                     Ok(v) => Ok(self.values_equal_weak(&v, x)?),
                     Err(_) => Ok(false),
                 }
+            }
+            Value::Struct(st) if matches!((&st.kind, x), (StructKind::ResIdeal(..), Value::Elt(_) | Value::Small(..))) => {
+                let StructKind::ResIdeal(r, _) = &st.kind else { unreachable!() };
+                let (StructKind::Ring(r), Some(e)) = (&r.kind, crate::rings::small::elt_of(x)) else { unreachable!() };
+                if let Some(err) = ring_membership_error(r, e.ring()) {
+                    return Err(RuntimeError::runtime(err).in_context("in"));
+                }
+                Ok(self.try_coerce(s, x)?.is_ok())
+            }
+            Value::Struct(st) if matches!(st.kind, StructKind::AbGroup(_)) => {
+                let st = st.clone();
+                self.ab_contains(&st, x)
             }
             Value::Struct(st) if matches!((&st.kind, x), (StructKind::SymGroup(_), Value::Perm(_))) => {
                 let Value::Perm(p) = x else { unreachable!() };
@@ -750,6 +794,8 @@ impl Interp {
                 StructKind::SymGroup(_) => TypeVal::Cat(t::GRP_PERM_ELT),
                 StructKind::ExtendedReals => TypeVal::Cat(t::EXT_RE_ELT),
                 StructKind::IntIdeal(_) => TypeVal::Cat(t::RNG_INT_ELT),
+                StructKind::ResIdeal(..) => TypeVal::Cat(t::RNG_INT_RES_ELT),
+                StructKind::AbGroup(_) => TypeVal::Cat(t::GRP_AB_ELT),
             },
             Value::Seq(s) => match s.universe.clone() {
                 Some(u) => self.element_type_of(&u),
@@ -853,6 +899,8 @@ impl Interp {
                 StructKind::SymGroup(_) => TypeVal::Cat(t::GRP_PERM_ELT),
                 StructKind::ExtendedReals => TypeVal::Cat(t::EXT_RE_ELT),
                 StructKind::IntIdeal(_) => TypeVal::Cat(t::RNG_INT_ELT),
+                StructKind::ResIdeal(..) => TypeVal::Cat(t::RNG_INT_RES_ELT),
+                StructKind::AbGroup(_) => TypeVal::Cat(t::GRP_AB_ELT),
             },
             Value::Seq(s) => s.universe.as_ref().map(|u| self.static_element_type(u)).unwrap_or(TypeVal::Cat(t::ANY)),
             Value::Set(s) => s.universe.as_ref().map(|u| self.static_element_type(u)).unwrap_or(TypeVal::Cat(t::ANY)),

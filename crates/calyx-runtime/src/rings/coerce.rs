@@ -13,7 +13,7 @@ use std::rc::Rc;
 use calyx_flint::Integer;
 use calyx_flint::gr::{Ctx, Elem, GrError, Truth, is_irreducible_mod_p};
 
-use super::{FiniteField, Ring, RingKind, ZECH_LIMIT, make_elt, ring_of};
+use super::{FiniteField, Ring, RingKind, ZECH_LIMIT, make_elt, ring_of, small};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::Interp;
 use crate::value::{Struct, StructKind, Value};
@@ -166,6 +166,18 @@ impl Interp {
                 return Ok(Some(e.x.clone()));
             }
         }
+        if let Value::Small(s, v) = x {
+            if r.small == Some(*s) {
+                return Ok(Some(Elem::from_word(&r.ctx, *v)));
+            }
+        }
+        let expanded;
+        let x = if matches!(x, Value::Small(..)) {
+            expanded = small::expand(x);
+            &expanded
+        } else {
+            x
+        };
         let ctx = r.ctx.clone();
         match &r.kind {
             RingKind::Residue(m) => Ok(match x {
@@ -268,6 +280,7 @@ impl Interp {
                 for v in &s.elems {
                     let c = match v {
                         Value::Int(i) => i.clone(),
+                        Value::Small(s, c) if Integer::from_u64(s.modulus().modulus()) == f.p => Integer::from_u64(*c),
                         Value::Elt(e) => match e.residue() {
                             Some(i) if e.ring().finite_field().is_some_and(|g| g.p == f.p && g.degree == 1) || matches!(&e.ring().kind, RingKind::Residue(n) if n == &f.p) => i,
                             _ => return Ok(None),
@@ -284,6 +297,15 @@ impl Interp {
 
     /// Coerce into a ring structure `s` (the `!` operator for rings).
     pub fn coerce_into_ring(&mut self, st: &Rc<Struct>, x: &Value) -> RResult<Result<Value, Option<String>>> {
+        if let StructKind::Ring(r) = &st.kind {
+            if let Some(s) = r.small {
+                match x {
+                    Value::Int(i) => return Ok(Ok(Value::Small(s, s.modulus().reduce_integer(i)))),
+                    Value::Small(t, _) if *t == s => return Ok(Ok(x.clone())),
+                    _ => {}
+                }
+            }
+        }
         match self.to_ring_elem(st, x, true)? {
             Some(e) => Ok(Ok(make_elt(st, e))),
             None => {

@@ -7,10 +7,12 @@
 
 pub mod gr;
 mod integer;
+mod nmod;
 mod rational;
 mod real;
 
 pub use integer::{Factorization, Integer};
+pub use nmod::{Nmod, gcd as gcd_u64};
 pub use rational::Rational;
 pub use real::{Real, bits_for_digits, parse_decimal};
 

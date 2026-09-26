@@ -1,9 +1,11 @@
 //! The table of intrinsics (built-in and user-defined functions with type
 //! signatures) and the built-in libraries.
 
+pub mod abgroups;
 pub mod aggregates;
 pub mod combinat;
 pub mod core;
+pub mod dlog;
 pub mod env;
 pub mod factoring;
 pub mod factseq;
@@ -15,6 +17,7 @@ pub mod numtheory;
 pub mod perms;
 pub mod ring_elts;
 pub mod reals;
+pub mod residue;
 pub mod rings;
 pub mod strings;
 
@@ -470,6 +473,8 @@ pub fn register_all(it: &mut Interp) {
     aggregates::register(it);
     maps::register(it);
     rings::register(it);
+    residue::register(it);
+    abgroups::register(it);
     perms::register(it);
     ring_elts::register(it);
     ideals::register(it);

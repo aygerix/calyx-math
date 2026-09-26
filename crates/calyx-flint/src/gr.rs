@@ -287,15 +287,29 @@ impl Ctx {
     }
 }
 
+/// Elements of up to this many words (integers mod n, finite field
+/// elements, polynomials, floats) are stored inside the `Elem`, so making
+/// one does not allocate; larger ones go on the heap. FLINT elements hold
+/// no pointers into themselves, so they can be moved.
+const INLINE_WORDS: usize = 8;
+
 /// An element of a generic ring.
 pub struct Elem {
     ctx: Rc<Ctx>,
-    ptr: NonNull<c_void>,
+    data: Data,
+}
+
+enum Data {
+    Inline([u64; INLINE_WORDS]),
+    Heap(NonNull<c_void>),
 }
 
 impl Drop for Elem {
     fn drop(&mut self) {
-        unsafe { sys::gr_heap_clear(self.ptr.as_ptr(), self.ctx.ptr()) };
+        match self.data {
+            Data::Inline(_) => unsafe { sys::gr_clear(self.as_mut_ptr(), self.ctx.ptr()) },
+            Data::Heap(p) => unsafe { sys::gr_heap_clear(p.as_ptr(), self.ctx.ptr()) },
+        }
     }
 }
 
@@ -352,8 +366,13 @@ macro_rules! predicates {
 impl Elem {
     /// The zero element of `ctx`.
     pub fn new(ctx: &Rc<Ctx>) -> Elem {
+        if ctx.elem_size() <= INLINE_WORDS * 8 {
+            let mut e = Elem { ctx: ctx.clone(), data: Data::Inline([0; INLINE_WORDS]) };
+            unsafe { sys::gr_init(e.as_mut_ptr(), ctx.ptr()) };
+            return e;
+        }
         let p = unsafe { sys::gr_heap_init(ctx.ptr()) };
-        Elem { ctx: ctx.clone(), ptr: NonNull::new(p).expect("gr_heap_init returned null") }
+        Elem { ctx: ctx.clone(), data: Data::Heap(NonNull::new(p).expect("gr_heap_init returned null")) }
     }
 
     pub fn zero(ctx: &Rc<Ctx>) -> Elem {
@@ -370,6 +389,22 @@ impl Elem {
         let mut e = Elem::new(ctx);
         check(unsafe { sys::gr_set_si(e.as_mut_ptr(), v as sys::slong, ctx.ptr()) })?;
         Ok(e)
+    }
+
+    /// An element of an integers-mod-n context from its residue `v < n`.
+    pub fn from_word(ctx: &Rc<Ctx>, v: u64) -> Elem {
+        let mut e = Elem::new(ctx);
+        let st = unsafe { sys::gr_set_ui(e.as_mut_ptr(), v as sys::ulong, ctx.ptr()) };
+        assert_eq!(st, 0, "gr_set_ui failed");
+        e
+    }
+
+    /// The residue of an element of an integers-mod-n context.
+    pub fn to_word(&self) -> Option<u64> {
+        match self.ctx.kind {
+            CtxKind::Nmod(_) => Some(unsafe { *self.as_ptr().cast::<sys::ulong>() } as u64),
+            _ => None,
+        }
     }
 
     pub fn from_integer(ctx: &Rc<Ctx>, v: &Integer) -> GrResult<Elem> {
@@ -455,12 +490,20 @@ impl Elem {
         &self.ctx
     }
 
+    #[inline]
     pub fn as_ptr(&self) -> *const c_void {
-        self.ptr.as_ptr()
+        match &self.data {
+            Data::Inline(w) => w.as_ptr().cast(),
+            Data::Heap(p) => p.as_ptr(),
+        }
     }
 
+    #[inline]
     pub fn as_mut_ptr(&mut self) -> *mut c_void {
-        self.ptr.as_ptr()
+        match &mut self.data {
+            Data::Inline(w) => w.as_mut_ptr().cast(),
+            Data::Heap(p) => p.as_ptr(),
+        }
     }
 
     binary_ops! {

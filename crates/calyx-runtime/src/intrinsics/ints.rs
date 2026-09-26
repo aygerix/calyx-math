@@ -480,7 +480,7 @@ fn seqint(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 /// Maximum and Minimum of two values are not defined on ring elements, even
 /// where `lt` is.
 fn check_max_args(it: &Interp, x: &Value, y: &Value) -> RResult<()> {
-    if matches!(x, Value::Elt(_)) || matches!(y, Value::Elt(_)) {
+    if matches!(x, Value::Elt(_) | Value::Small(..)) || matches!(y, Value::Elt(_) | Value::Small(..)) {
         return Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}, {}", it.type_name_ext(x), it.type_name_ext(y))));
     }
     Ok(())

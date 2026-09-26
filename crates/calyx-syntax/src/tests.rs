@@ -15,7 +15,7 @@ fn sexp(e: &Expr) -> String {
         ExprKind::Unary(op, e) => format!("({op:?} {})", sexp(e)),
         ExprKind::Binary(op, a, b) => format!("({} {} {})", op.intrinsic_name(), sexp(a), sexp(b)),
         ExprKind::Select(c, a, b) => format!("(select {} {} {})", sexp(c), sexp(a), sexp(b)),
-        ExprKind::Where(e, n, v) => format!("(where {} {n} {})", sexp(e), sexp(v)),
+        ExprKind::Where(e, n, v) => format!("(where {} {} {})", sexp(e), n.join(","), sexp(v)),
         ExprKind::Coerce(a, b, _) => format!("(! {} {})", sexp(a), sexp(b)),
         ExprKind::Image(a, b) => format!("(@ {} {})", sexp(a), sexp(b)),
         ExprKind::Call(f, args, _) => {

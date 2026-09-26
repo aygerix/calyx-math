@@ -52,6 +52,8 @@ pub enum Ex {
     Eval(Box<E>),
     /// Bind a slot (for `where`) and evaluate the body.
     Let(Slot, Box<E>, Box<E>),
+    /// Bind several values of a call (`where x, y := f(a)`).
+    LetMulti(Vec<Slot>, Box<E>, Box<E>),
     Multiplicity(Box<E>, Box<E>),
     Tuple(Vec<E>),
     TupleCompr(Box<ComprEx>),
@@ -134,7 +136,7 @@ pub struct ComprEx {
     pub head: E,
     pub iters: Vec<IterEx>,
     /// `where` bindings from the predicate, visible in the head.
-    pub lets: Vec<(Slot, E)>,
+    pub lets: Vec<(Vec<Slot>, E)>,
     pub pred: Option<E>,
 }
 
@@ -248,7 +250,8 @@ pub enum St {
     If(Vec<(E, Vec<S>)>, Option<Vec<S>>),
     Case(E, Vec<(Vec<E>, Vec<S>)>, Option<Vec<S>>),
     ForRange { var: Place, from: E, to: E, by: Option<E>, body: Vec<S> },
-    ForIn { var: Place, index: Option<Place>, domain: DomainEx, random: bool, body: Vec<S> },
+    /// `var_span` locates the loop variable, where iteration errors point.
+    ForIn { var: Place, index: Option<Place>, domain: DomainEx, random: bool, body: Vec<S>, var_span: Span },
     While(E, Vec<S>),
     Repeat(Vec<S>, E),
     Break(Option<Sym>),

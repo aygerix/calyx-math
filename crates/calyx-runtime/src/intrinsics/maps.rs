@@ -47,6 +47,10 @@ fn codomain(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 fn image(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let m = map_arg(a, 0);
     let dom = m.domain.clone();
+    // The images of groups are subgroups, which calyx cannot build yet.
+    if matches!(m.imp, MapImpl::Native(_)) && matches!(dom.as_struct(), Some(StructKind::AbGroup(_))) {
+        return Err(RuntimeError::runtime("Image is not computable or representable"));
+    }
     let mut iter = it.iter_value(&dom, false).map_err(|_| RuntimeError::runtime("The image can only be computed for maps with a finite domain"))?;
     let mut out = Vec::new();
     while let Some((_, x)) = iter.next_item() {

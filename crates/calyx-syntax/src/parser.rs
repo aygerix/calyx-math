@@ -1060,13 +1060,17 @@ impl<'a> Parser<'a> {
                 }
                 Tok::Kw(Kw::Where) if BP_WHERE >= min_bp => {
                     self.bump();
-                    let (name, _) = self.ident()?;
-                    if !self.eat_kw(Kw::Is) && !self.eat(&Tok::Assign) {
-                        return self.unexpected("'is' or ':='");
+                    let mut names = vec![self.binder()?.0];
+                    while self.eat(&Tok::Comma) {
+                        names.push(self.binder()?.0);
+                    }
+                    let bound = (names.len() == 1 && self.eat_kw(Kw::Is)) || self.eat(&Tok::Assign);
+                    if !bound {
+                        return self.unexpected(if names.len() == 1 { "'is' or ':='" } else { "':='" });
                     }
                     let v = self.expr_bp(BP_WHERE + 1)?;
                     let sp = lhs.span.to(v.span);
-                    lhs = Self::mk(ExprKind::Where(Box::new(lhs), name, Box::new(v)), sp);
+                    lhs = Self::mk(ExprKind::Where(Box::new(lhs), names, Box::new(v)), sp);
                 }
                 _ => {
                     let Some((op, lbp, rbp)) = binop_of(&tok) else { break };

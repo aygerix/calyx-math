@@ -1,16 +1,18 @@
 //! Arithmetic and comparison of ring elements.
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::rc::Rc;
 
 use calyx_flint::gr::{CtxKind, Elem, GrError, MonomialOrder, Truth};
 use calyx_syntax::ast::BinOp;
 
+use super::small::{self, SmallRing};
 use super::{Elt, Ring, RingKind, make_elt};
 use crate::error::{RResult, RuntimeError};
 use crate::interp::Interp;
 use crate::ops::div_by_zero;
-use crate::value::{StructKind, Value};
+use crate::value::{Struct, StructKind, Value};
 
 /// Compare exponent vectors in a monomial order.
 fn monomial_cmp(order: MonomialOrder, a: &[u64], b: &[u64]) -> Ordering {
@@ -20,6 +22,63 @@ fn monomial_cmp(order: MonomialOrder, a: &[u64], b: &[u64]) -> Ordering {
         MonomialOrder::DegLex => deg(a).cmp(&deg(b)).then_with(|| a.cmp(b)),
         MonomialOrder::DegRevLex => deg(a).cmp(&deg(b)).then_with(|| b.iter().rev().cmp(a.iter().rev())),
     }
+}
+
+/// Arithmetic and comparison of inline ring elements with each other and
+/// with integers. `None` leaves the operation to the generic path, which
+/// also reports errors (a non-invertible divisor, say).
+#[inline]
+pub fn small_binop(op: BinOp, a: &Value, b: &Value) -> Option<Value> {
+    use BinOp::*;
+    let (r, x, y) = match (a, b) {
+        (Value::Small(r, x), Value::Small(s, y)) if r == s => (*r, *x, *y),
+        (Value::Small(r, x), Value::Int(k)) if op == Pow => return small_pow(*r, *x, k),
+        (Value::Small(r, x), Value::Int(i)) => (*r, *x, r.modulus().reduce_integer(i)),
+        (Value::Int(i), Value::Small(r, y)) if op != Pow => (*r, r.modulus().reduce_integer(i), *y),
+        _ => return None,
+    };
+    let m = r.modulus();
+    Some(match op {
+        Add => Value::Small(r, m.add(x, y)),
+        Sub => Value::Small(r, m.sub(x, y)),
+        Mul => Value::Small(r, m.mul(x, y)),
+        Div if m.modulus() > 1 => Value::Small(r, m.mul(x, m.inv(y)?)),
+        IntDiv if y != 0 && r.info().kind == small::SmallKind::Residue => Value::Small(r, residue_div(m, x, y)),
+        Eq | Cmpeq => Value::Bool(x == y),
+        Ne | Cmpne => Value::Bool(x != y),
+        Lt => Value::Bool(x < y),
+        Le => Value::Bool(x <= y),
+        Gt => Value::Bool(x > y),
+        Ge => Value::Bool(x >= y),
+        _ => return None,
+    })
+}
+
+/// `x div y` in `Z/nZ` for `y ≠ 0`, as Magma computes it: with `s y = g`
+/// from the textbook extended Euclidean algorithm on `(y, n)`, the quotient
+/// is `floor(x / g) * s` (`x / y` for a unit `y`).
+fn residue_div(m: calyx_flint::Nmod, x: u64, y: u64) -> u64 {
+    let n = m.modulus();
+    let (mut r0, mut r1) = (y as i128, n as i128);
+    let (mut s0, mut s1) = (1i128, 0i128);
+    while r1 != 0 {
+        let q = r0 / r1;
+        (r0, r1) = (r1, r0 - q * r1);
+        (s0, s1) = (s1, s0 - q * s1);
+    }
+    m.mul(x / r0 as u64, s0.rem_euclid(n as i128) as u64)
+}
+
+/// `x^k` for an inline element (`None` for a non-invertible `x` and `k < 0`).
+fn small_pow(r: SmallRing, x: u64, k: &calyx_flint::Integer) -> Option<Value> {
+    let m = r.modulus();
+    if k.sign() >= 0 {
+        return Some(Value::Small(r, m.pow_integer(x, k)));
+    }
+    if m.modulus() == 1 {
+        return None;
+    }
+    Some(Value::Small(r, m.pow_integer(m.inv(x)?, &-k)))
 }
 
 fn arith_err(e: GrError, op: &str) -> RuntimeError {
@@ -35,6 +94,18 @@ impl Interp {
     /// usual error can take over).
     pub fn ring_binop(&mut self, op: BinOp, a: &Value, b: &Value) -> RResult<Option<Value>> {
         use BinOp::*;
+        // Sums and products of two elements of the same ring.
+        if let (Value::Elt(x), Value::Elt(y)) = (a, b) {
+            if matches!(op, Add | Sub | Mul) && x.ring().id == y.ring().id {
+                let r = match op {
+                    Add => x.x.add(&y.x),
+                    Sub => x.x.sub(&y.x),
+                    _ => x.x.mul(&y.x),
+                };
+                return Ok(Some(make_elt(&x.parent, r.map_err(|e| arith_err(e, op.intrinsic_name()))?)));
+            }
+        }
+        let (a, b) = (&small::expand(a), &small::expand(b));
         if op == Pow {
             return self.ring_pow(a, b);
         }
@@ -56,9 +127,9 @@ impl Interp {
             let y = self.coerce(&r, b)?;
             return self.binop(op, x, y).map(Some);
         }
-        let Some(x) = self.to_ring_elem(st, a, false)? else { return Ok(None) };
-        let Some(y) = self.to_ring_elem(st, b, false)? else { return Ok(None) };
         let StructKind::Ring(ring) = &st.kind else { unreachable!() };
+        let Some(x) = self.ring_operand(st, ring, a)? else { return Ok(None) };
+        let Some(y) = self.ring_operand(st, ring, b)? else { return Ok(None) };
         let name = op.intrinsic_name();
         let v = match op {
             Add => x.add(&y).map_err(|e| arith_err(e, name))?,
@@ -95,6 +166,15 @@ impl Interp {
                 }
             }
             IntDiv | Mod => {
+                if let RingKind::Residue(m) = &ring.kind {
+                    // Residues have a quotient but no remainder.
+                    if op == Mod {
+                        return Ok(None);
+                    }
+                    let (x, y) = (x.to_integer().unwrap_or_default(), y.to_integer().unwrap_or_default());
+                    let q = crate::intrinsics::residue::residue_div(&x, &y, m).ok_or_else(|| div_by_zero().in_context(name))?;
+                    return Ok(Some(crate::intrinsics::residue::residue_value(st, ring, &q)?));
+                }
                 if y.is_zero() == Truth::True {
                     return Err(div_by_zero().in_context(name));
                 }
@@ -124,6 +204,16 @@ impl Interp {
         Ok(Some(make_elt(st, v)))
     }
 
+    /// An operand as an element of `ring`, borrowed when it already is one.
+    fn ring_operand<'v>(&mut self, st: &Rc<Struct>, ring: &Ring, v: &'v Value) -> RResult<Option<Cow<'v, Elem>>> {
+        if let Value::Elt(e) = v {
+            if e.ring().id == ring.id {
+                return Ok(Some(Cow::Borrowed(&e.x)));
+            }
+        }
+        Ok(self.to_ring_elem(st, v, false)?.map(Cow::Owned))
+    }
+
     /// Magma's order on the elements of a ring, where it has one: residues
     /// and prime field elements by value, other finite field elements by
     /// their representation (powers of the primitive element, or
@@ -132,7 +222,7 @@ impl Interp {
     pub fn ring_elt_cmp(&mut self, ring: &Ring, x: &Elem, y: &Elem) -> RResult<Option<Ordering>> {
         Ok(Some(match &ring.kind {
             RingKind::Residue(_) => x.to_integer().ok().cmp(&y.to_integer().ok()),
-            RingKind::Finite(f) if f.degree == 1 => x.fq_prime_value().cmp(&y.fq_prime_value()),
+            RingKind::Finite(f) if f.degree == 1 => x.to_integer().ok().cmp(&y.to_integer().ok()),
             RingKind::Finite(_) => match x.ctx().kind() {
                 // Zero, then the powers of the primitive element.
                 CtxKind::FqZech { .. } => x.zech_log().map(|k| k + 1).unwrap_or(0).cmp(&y.zech_log().map(|k| k + 1).unwrap_or(0)),

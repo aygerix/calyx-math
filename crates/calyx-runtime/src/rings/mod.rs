@@ -11,8 +11,9 @@ mod coerce;
 pub mod ideals;
 mod print;
 pub mod props;
+pub mod small;
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
@@ -26,6 +27,7 @@ use crate::interp::Interp;
 use crate::types::{TypeId, t};
 use crate::value::{Struct, StructKind, Value};
 
+pub use arith::small_binop;
 pub use print::format_ring_elt;
 
 /// Largest field whose elements are stored as Zech logarithms (and printed
@@ -39,6 +41,10 @@ pub struct Ring {
     pub names: RefCell<Vec<Rc<str>>>,
     /// Distinguishes rings; equal rings are the same object.
     pub id: u64,
+    /// Set when the elements are stored inline (see `small`).
+    pub small: Option<small::SmallRing>,
+    /// The factorization of the modulus of a residue class ring, once known.
+    pub factored: OnceCell<Rc<[(Integer, u64)]>>,
 }
 
 pub enum RingKind {
@@ -86,10 +92,6 @@ fn next_ring_id() -> u64 {
 }
 
 impl Ring {
-    pub fn new(kind: RingKind, ctx: Rc<Ctx>) -> Ring {
-        Ring { kind, ctx, names: RefCell::default(), id: next_ring_id() }
-    }
-
     pub fn type_id(&self) -> TypeId {
         match &self.kind {
             RingKind::Residue(_) => t::RNG_INT_RES,
@@ -142,6 +144,13 @@ impl Ring {
 
     pub fn is_prime_field(&self) -> bool {
         matches!(&self.kind, RingKind::Finite(f) if f.degree == 1)
+    }
+
+    /// The factorization of the modulus of a residue class ring (increasing
+    /// primes; empty for `Z/1Z`).
+    pub fn modulus_factors(&self) -> Option<Rc<[(Integer, u64)]>> {
+        let RingKind::Residue(m) = &self.kind else { return None };
+        Some(self.factored.get_or_init(|| m.factor().map(|f| f.factors).unwrap_or_default().into()).clone())
     }
 
     /// The coefficient ring of a polynomial ring.
@@ -235,6 +244,11 @@ pub fn ring_of(v: &Value) -> Option<(&Rc<Struct>, &Ring)> {
 }
 
 pub fn make_elt(parent: &Rc<Struct>, x: Elem) -> Value {
+    if let StructKind::Ring(r) = &parent.kind {
+        if let Some(s) = r.small {
+            return Value::Small(s, x.to_word().expect("a word-sized ring with a non-word element"));
+        }
+    }
     Value::Elt(Rc::new(Elt { parent: parent.clone(), x }))
 }
 
@@ -266,12 +280,21 @@ pub struct RingCache {
     complex: FxHashMap<u32, Value>,
     /// Ideals of the integers by generator.
     pub(crate) ideals: FxHashMap<Integer, Value>,
+    /// Ideals of residue class rings by ring and generator.
+    pub(crate) res_ideals: FxHashMap<(u64, Integer), Value>,
     reals: FxHashMap<u32, Rc<Ctx>>,
 }
 
 impl Interp {
     fn new_ring(&mut self, kind: RingKind, ctx: Rc<Ctx>) -> Value {
-        Value::Struct(Struct::new(StructKind::Ring(Rc::new(Ring::new(kind, ctx)))))
+        let info = small::small_info(&kind, ctx.kind());
+        let idx = info.map(|_| small::next_index());
+        let ring = Ring { kind, ctx, names: RefCell::default(), id: next_ring_id(), small: idx, factored: OnceCell::new() };
+        let st = Struct::new(StructKind::Ring(Rc::new(ring)));
+        if let (Some(info), Some(idx)) = (info, idx) {
+            small::register(idx, info, st.clone());
+        }
+        Value::Struct(st)
     }
 
     /// `Z/mZ` for `m ≥ 1`.
@@ -366,7 +389,7 @@ impl Interp {
         let size = match &r.kind {
             RingKind::Residue(m) => m.clone(),
             RingKind::Finite(f) => f.order(),
-            _ => return Err(RuntimeError::runtime("Cannot iterate over an infinite ring")),
+            _ => return Err(RuntimeError::runtime(crate::error::NOT_ITERABLE)),
         };
         let n = size.to_u64().filter(|&n| n <= 1 << 26).ok_or_else(|| RuntimeError::runtime("The ring is too large to enumerate"))?;
         let mut out = Vec::with_capacity(n as usize);
@@ -400,11 +423,14 @@ impl Interp {
                     }
                 }
             }
-            _ => {
-                for i in 0..n {
-                    out.push(make_elt(st, Elem::from_integer(&ctx, &Integer::from_u64(i)).map_err(|e| gr_error(e, "Arithmetic error"))?));
+            _ => match r.small {
+                Some(s) => out.extend((0..n).map(|i| Value::Small(s, i))),
+                None => {
+                    for i in 0..n {
+                        out.push(make_elt(st, Elem::from_integer(&ctx, &Integer::from_u64(i)).map_err(|e| gr_error(e, "Arithmetic error"))?));
+                    }
                 }
-            }
+            },
         }
         Ok(out)
     }

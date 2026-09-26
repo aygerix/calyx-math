@@ -25,10 +25,7 @@ fn ring_arg(a: &CallArgs, i: usize) -> RResult<(Rc<Struct>, Rc<Ring>)> {
 }
 
 fn elt_arg(a: &CallArgs, i: usize) -> RResult<Rc<crate::rings::Elt>> {
-    match &a.args[i] {
-        Value::Elt(e) => Ok(e.clone()),
-        _ => Err(RuntimeError::runtime("Bad argument types")),
-    }
+    crate::rings::small::elt_of(&a.args[i]).ok_or_else(|| RuntimeError::runtime("Bad argument types"))
 }
 
 // ----- residue class rings ---------------------------------------------------
@@ -51,6 +48,9 @@ fn residue_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 }
 
 fn modulus(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    if let Some((r, _)) = crate::rings::ideals::res_ideal_parts(&a.args[0]) {
+        return intv(crate::rings::ideals::residue_modulus(&r));
+    }
     let (_, r) = ring_arg(a, 0)?;
     match &r.kind {
         RingKind::Residue(m) => intv(m.clone()),
@@ -264,6 +264,9 @@ fn complex_field(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 // ----- generic ring functions -------------------------------------------------
 
 fn ngens(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    if matches!(a.args[0].as_struct(), Some(StructKind::ResIdeal(..))) {
+        return Err(RuntimeError::runtime("Ngens not supported for this structure"));
+    }
     let (_, r) = ring_arg(a, 0)?;
     intv(Integer::from_u64(r.ngens() as u64))
 }
@@ -386,6 +389,7 @@ fn prime_ring(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
         Ok(match v.as_struct() {
             Some(StructKind::Integers) => Value::integers(),
             Some(StructKind::Rationals | StructKind::Reals(_)) => Value::rationals(),
+            Some(StructKind::ResIdeal(..)) => v.clone(),
             Some(StructKind::Ring(r)) => match &r.kind {
                 RingKind::Complex(_) => Value::rationals(),
                 RingKind::Residue(_) => v.clone(),
@@ -436,7 +440,7 @@ fn is_unit(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 /// Units: non-zero complex numbers, and constant polynomials whose constant
 /// is a unit of the coefficient ring.
 fn elt_is_unit(it: &mut Interp, ring: &Ring, x: &Elem) -> bool {
-    let base_unit = |it: &mut Interp, base: &Value, c: Elem| match it.elem_to_value(base, c) {
+    let base_unit = |it: &mut Interp, base: &Value, c: Elem| match crate::rings::small::expand(&it.elem_to_value(base, c)) {
         Value::Int(n) => n.is_one() || (-&n).is_one(),
         Value::Rat(q) => q.sign() != 0,
         Value::Real(r) => r.x.sign() != 0,
@@ -462,7 +466,7 @@ fn multiplicative_order(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     match &e.ring().kind {
         RingKind::Finite(f) => {
             if e.x.is_zero() == Truth::True {
-                return Err(RuntimeError::runtime("Argument must be non-zero"));
+                return Err(RuntimeError::runtime("Can not take order of zero element"));
             }
             if f.degree == 1 {
                 let x = e.residue().unwrap();
@@ -472,6 +476,9 @@ fn multiplicative_order(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
         }
         RingKind::Residue(m) => {
             let x = e.residue().unwrap();
+            if x.is_zero() {
+                return Err(RuntimeError::runtime("Can not take order of zero element"));
+            }
             intv(crate::intrinsics::ints::modorder(&x, m))
         }
         _ => Err(RuntimeError::runtime("Bad argument types")),

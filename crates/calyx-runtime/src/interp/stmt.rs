@@ -148,7 +148,7 @@ impl Interp {
                 }
             }
             St::ForRange { var, from, to, by, body } => return self.for_range(var, from, to, by.as_ref(), body, f),
-            St::ForIn { var, index, domain, random, body } => return self.for_in(var, index.as_ref(), domain, *random, body, f),
+            St::ForIn { var, index, domain, random, body, var_span } => return self.for_in(var, index.as_ref(), domain, *random, body, f, *var_span),
             St::While(c, body) => {
                 while self.eval_cond(c, f, "while")? {
                     self.check_interrupt()?;

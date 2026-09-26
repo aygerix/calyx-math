@@ -193,6 +193,9 @@ pub fn user_err<T>(msg: impl Into<String>) -> RResult<T> {
     Err(RuntimeError::user(msg))
 }
 
+/// The error for iterating over something that cannot be iterated over.
+pub const NOT_ITERABLE: &str = "Iteration is not possible over this object";
+
 /// How Magma names an error context: the name, whether it is quoted, and
 /// whether a blank line follows the report. Intrinsics and operators are
 /// quoted; constructions of the language are not.
@@ -207,6 +210,7 @@ pub fn context_style(ctx: &str) -> (&str, bool, bool) {
         "{@ @}" => ("{@ ... @}", false, true),
         "{* *}" => ("{* ... *}", false, true),
         "sequence construction" => ("sequence construction", false, false),
+        "for" => ("for", false, false),
         "ideal< ... >" | "quo< ... >" | "ext< ... >" | "sub< ... >" | "elt< ... >" => (ctx, false, true),
         "[]:=" => (":=", false, false),
         _ => (ctx, true, true),

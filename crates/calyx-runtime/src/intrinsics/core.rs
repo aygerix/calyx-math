@@ -204,6 +204,9 @@ fn zero(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 
 fn one_of(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let s = a.args[0].clone();
+    if matches!(s.as_struct(), Some(StructKind::ResIdeal(..))) {
+        return Err(RuntimeError::runtime("Ring has no one"));
+    }
     one(it.coerce(&s, &Value::int(1))?)
 }
 
@@ -215,6 +218,15 @@ fn random_elt(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
         // Infinite rings have no Random.
         _ if crate::rings::props::ring_props(&s).is_some_and(|p| p.cardinality.is_none()) => Err(RuntimeError::runtime(format!("Bad argument types\nArgument types given: {}", it.type_name_ext(&s)))),
         Value::Formal(_) => Err(RuntimeError::runtime("Cannot choose a random element of a formal set")),
+        // Residue class rings and their ideals: a random multiple of the
+        // generator, without listing the elements.
+        _ if crate::rings::ideals::res_ideal_parts(&s).is_some() => {
+            let (r, d) = crate::rings::ideals::res_ideal_parts(&s).unwrap();
+            let n = crate::rings::ideals::residue_modulus(&r).divexact(&d);
+            let k = it.rng.below(&n);
+            let StructKind::Ring(ring) = &r.kind else { unreachable!() };
+            one(crate::intrinsics::residue::residue_value(&r, ring, &(&d * &k))?)
+        }
         _ => {
             let (_, x) = it.random_element_indexed(&s)?;
             one(x)

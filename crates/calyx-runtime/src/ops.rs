@@ -159,10 +159,18 @@ impl Interp {
                 _ => {}
             }
         }
-        let ring_result = if matches!(a, Value::Elt(_)) || matches!(b, Value::Elt(_)) {
+        // Fast path for residues and prime field elements.
+        if matches!(a, Value::Small(..)) || matches!(b, Value::Small(..)) {
+            if let Some(v) = crate::rings::small_binop(op, &a, &b) {
+                return Ok(v);
+            }
+        }
+        let ring_result = if matches!(a, Value::Elt(_) | Value::Small(..)) || matches!(b, Value::Elt(_) | Value::Small(..)) {
             self.ring_binop(op, &a, &b)?
         } else if matches!(a, Value::Perm(_)) || matches!(b, Value::Perm(_)) {
             self.perm_binop(op, &a, &b)?
+        } else if matches!(a, Value::AbElt(_)) || matches!(b, Value::AbElt(_)) {
+            self.ab_binop(op, &a, &b)?
         } else if matches!((&a, &b), (Value::Struct(_), Value::Struct(_))) {
             self.ideal_binop(op, &a, &b)?
         } else if factseq::is_fact(&a) || factseq::is_fact(&b) {
@@ -439,6 +447,8 @@ impl Interp {
             Value::Rat(q) => Ok(Value::rat(-&*q)),
             Value::Real(r) => Ok(Value::Real(Rc::new(RealV { x: r.x.neg(), digits: r.digits, fixed: r.fixed }))),
             Value::Elt(e) => self.ring_negate(&e),
+            Value::Small(r, x) => Ok(Value::Small(r, r.modulus().neg(x))),
+            Value::AbElt(x) => Ok(x.neg()),
             other => self.unary_intrinsic("-", other),
         }
     }
@@ -479,6 +489,7 @@ impl Interp {
                 StructKind::Coproduct(parts) => parts.len(),
                 StructKind::RecFormat(r) => r.names.len(),
                 StructKind::SymGroup(n) => return Ok(Value::Int(Integer::factorial(*n as u64))),
+                StructKind::AbGroup(g) => return Ok(g.order().map_or(Value::Infinity(true), Value::Int)),
                 _ if crate::rings::props::ring_props(v).is_some() => {
                     return Ok(match crate::rings::props::ring_props(v).unwrap().cardinality {
                         Some(n) => Value::Int(n),
@@ -511,7 +522,7 @@ impl Interp {
                 Ok(Some(false))
             }
         };
-        if matches!(a, Value::Elt(_)) || matches!(b, Value::Elt(_)) {
+        if matches!(a, Value::Elt(_) | Value::Small(..)) || matches!(b, Value::Elt(_) | Value::Small(..)) {
             let op = if strict { BinOp::Eq } else { BinOp::Cmpeq };
             return match self.ring_binop(op, a, b)? {
                 Some(Value::Bool(e)) => Ok(Some(e)),
@@ -527,6 +538,9 @@ impl Interp {
                 if m != n {
                     return incompatible("Could not find a covering group");
                 }
+            }
+            if matches!((&x.kind, &y.kind), (StructKind::AbGroup(_), StructKind::AbGroup(_))) && !Rc::ptr_eq(x, y) {
+                return incompatible("Could not find a covering module");
             }
             if !Rc::ptr_eq(x, y) {
                 if let (Some(_), Some(_)) = (crate::rings::props::ring_props(a), crate::rings::props::ring_props(b)) {
@@ -566,6 +580,17 @@ impl Interp {
                 return incompatible("Arguments are not compatible\nArgument types given: GrpPermElt, GrpPermElt");
             }
             return Ok(Some(x.images == y.images));
+        }
+        if let (Map(x), Map(y)) = (a, b) {
+            if !Rc::ptr_eq(x, y) && (matches!(x.imp, MapImpl::Native(_)) || matches!(y.imp, MapImpl::Native(_))) {
+                return incompatible("Cannot test equality for those maps");
+            }
+        }
+        if let (Value::AbElt(x), Value::AbElt(y)) = (a, b) {
+            if !Rc::ptr_eq(&x.group, &y.group) {
+                return incompatible("Arguments are not compatible\nArgument types given: GrpAbElt, GrpAbElt");
+            }
+            return Ok(Some(x.coords == y.coords));
         }
         Ok(Some(match (a, b) {
             (Int(x), Int(y)) => x == y,
@@ -694,6 +719,7 @@ impl Interp {
                 let ring = x.ring_rc();
                 return self.ring_elt_cmp(&ring, &x.x, &y.x);
             }
+            (Small(r, x), Small(s, y)) if r == s => x.cmp(y),
             (Seq(x), Seq(y)) => {
                 for (p, q) in x.elems.iter().zip(&y.elems) {
                     match self.compare_ord(p, q)? {
@@ -975,6 +1001,9 @@ impl Interp {
     // ----- maps -----------------------------------------------------------
 
     pub fn apply_map(&mut self, m: &Rc<MapObj>, x: &Value) -> RResult<Value> {
+        if let MapImpl::Native(n) = &m.imp {
+            return n.clone().apply(self, m, x);
+        }
         let x = match self.try_coerce(&m.domain, x)? {
             Ok(v) => v,
             Err(_) => return Err(RuntimeError::runtime("Element is not in the domain of the map").in_context("map application")),
@@ -1004,6 +1033,7 @@ impl Interp {
                 let inner = inner.clone();
                 return self.map_preimage(&inner, &x);
             }
+            MapImpl::Native(_) => unreachable!(),
         };
         if matches!(m.imp, MapImpl::Rule { .. } | MapImpl::Coercion | MapImpl::Reduction(_)) {
             return self.coerce(&m.codomain, &y).map_err(|_| RuntimeError::runtime("Element is not in the codomain of the map").in_context("map application"));
@@ -1012,6 +1042,9 @@ impl Interp {
     }
 
     pub fn map_preimage(&mut self, m: &Rc<MapObj>, y: &Value) -> RResult<Value> {
+        if let MapImpl::Native(n) = &m.imp {
+            return n.clone().preimage(self, m, y);
+        }
         let y = match self.try_coerce(&m.codomain, y)? {
             Ok(v) => v,
             Err(_) => return Err(RuntimeError::runtime("Argument is not in the codomain of the map").in_context("@@")),
@@ -1040,6 +1073,7 @@ impl Interp {
                 let inner = inner.clone();
                 self.apply_map(&inner, &y)
             }
+            MapImpl::Native(_) => unreachable!(),
         }
     }
 

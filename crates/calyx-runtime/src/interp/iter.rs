@@ -3,9 +3,10 @@
 use std::rc::Rc;
 
 use calyx_flint::Integer;
+use calyx_syntax::Span;
 
 use super::{Flow, Frame, Interp};
-use crate::error::{RResult, RuntimeError};
+use crate::error::{NOT_ITERABLE, RResult, RuntimeError};
 use crate::ir::*;
 use crate::value::*;
 
@@ -163,16 +164,24 @@ impl Interp {
                     }
                     Ok(out.into_iter().map(|elems| Value::Tuple(Rc::new(Tuple { elems, parent: Some(s.clone()) }))).collect())
                 }
-                StructKind::Coproduct(_) => Err(RuntimeError::runtime("Cannot iterate over a coproduct")),
+                StructKind::Coproduct(_) => Err(RuntimeError::runtime(NOT_ITERABLE)),
                 StructKind::Ring(_) => self.enumerate_ring(st),
-                _ => Err(RuntimeError::runtime(format!("Cannot iterate over {}", self.type_name(s)))),
+                StructKind::ResIdeal(..) => self.enumerate_res_ideal(st),
+                StructKind::AbGroup(_) => self.enumerate_abgroup(st),
+                _ => Err(RuntimeError::runtime(NOT_ITERABLE)),
             },
-            _ => Err(RuntimeError::runtime(format!("Cannot iterate over an object of type {}", self.type_name(s)))),
+            _ => Err(RuntimeError::runtime(NOT_ITERABLE)),
         }
     }
 
     pub fn type_name(&self, v: &Value) -> String {
         self.types.name(v.type_id()).to_string()
+    }
+
+    /// The domain of a loop or comprehension: one that cannot be iterated
+    /// over is reported at the loop variable, as an error in `for`.
+    pub fn loop_domain(&mut self, d: &DomainEx, f: &mut Frame, dual: bool, var_span: Span) -> RResult<ValueIter> {
+        self.domain_iter(d, f, dual).map_err(|e| if e.message == NOT_ITERABLE && e.context.is_none() { e.in_context("for").at(var_span) } else { e })
     }
 
     pub fn domain_iter(&mut self, d: &DomainEx, f: &mut Frame, dual: bool) -> RResult<ValueIter> {
@@ -248,9 +257,10 @@ impl Interp {
         self.store_place(var, v, f);
     }
 
-    pub(super) fn for_in(&mut self, var: &Place, index: Option<&Place>, domain: &DomainEx, random: bool, body: &[S], f: &mut Frame) -> RResult<Flow> {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn for_in(&mut self, var: &Place, index: Option<&Place>, domain: &DomainEx, random: bool, body: &[S], f: &mut Frame, var_span: Span) -> RResult<Flow> {
         let mut named = None;
-        let r = self.for_in_named(var, index, domain, random, body, f, &mut named);
+        let r = self.for_in_named(var, index, domain, random, body, f, &mut named, var_span);
         if let Some(cell) = named.as_ref().and_then(|n| n.name_cell()) {
             *cell.borrow_mut() = None;
         }
@@ -258,7 +268,7 @@ impl Interp {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn for_in_named(&mut self, var: &Place, index: Option<&Place>, domain: &DomainEx, random: bool, body: &[S], f: &mut Frame, named: &mut Option<Value>) -> RResult<Flow> {
+    fn for_in_named(&mut self, var: &Place, index: Option<&Place>, domain: &DomainEx, random: bool, body: &[S], f: &mut Frame, named: &mut Option<Value>, var_span: Span) -> RResult<Flow> {
         if random {
             let dom = match domain {
                 DomainEx::General(e) => self.eval(e, f)?,
@@ -279,7 +289,7 @@ impl Interp {
                 }
             }
         }
-        let mut it = self.domain_iter(domain, f, index.is_some())?;
+        let mut it = self.loop_domain(domain, f, index.is_some(), var_span)?;
         while let Some((i, x)) = it.next_item() {
             self.check_interrupt()?;
             if let Some(ip) = index {
@@ -302,9 +312,8 @@ impl Interp {
     /// `k` iterators remain; the last one is the outermost loop.
     fn compr_level(&mut self, c: &ComprEx, k: usize, f: &mut Frame, sink: &mut dyn FnMut(&mut Interp, Value, &mut Frame) -> RResult<bool>) -> RResult<bool> {
         if k == 0 {
-            for (slot, e) in &c.lets {
-                let v = self.eval(e, f)?;
-                f.set(*slot, v);
+            for (slots, e) in &c.lets {
+                self.bind_values(slots, e, f)?;
             }
             if let Some(p) = &c.pred {
                 if !self.eval_bool(p, f)? {
@@ -315,7 +324,7 @@ impl Interp {
             return sink(self, v, f);
         }
         let it_ex = &c.iters[k - 1];
-        let mut it = self.domain_iter(&it_ex.domain, f, it_ex.index.is_some())?;
+        let mut it = self.loop_domain(&it_ex.domain, f, it_ex.index.is_some(), it_ex.span)?;
         while let Some((i, x)) = it.next_item() {
             self.check_interrupt()?;
             if let Some(islot) = it_ex.index {

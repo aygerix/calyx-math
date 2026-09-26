@@ -130,7 +130,7 @@ fn sprint(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     } else {
         Level::Default
     };
-    one(Value::str(&it.format_value(&v, level)?))
+    one(Value::str(&it.format_bare(&v, level)?))
 }
 
 fn sprintf(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {

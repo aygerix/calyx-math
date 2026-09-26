@@ -5,6 +5,7 @@ macro_rules! vals {
     ($($x:tt)*) => { smallvec::smallvec![$($x)*] };
 }
 
+pub mod abgroups;
 pub mod coerce;
 pub mod compile;
 pub mod error;
@@ -56,8 +57,9 @@ pub fn value_kind(v: &Value) -> &'static str {
         Value::Obj(_) => "object",
         Value::CopElt(_) => "CopElt",
         Value::Io(_) => "IO",
-        Value::Elt(_) => "RngElt",
+        Value::Elt(_) | Value::Small(..) => "RngElt",
         Value::Perm(_) => "GrpPermElt",
+        Value::AbElt(_) => "GrpAbElt",
         Value::Infinity(_) => "Infty",
     }
 }

@@ -470,7 +470,7 @@ impl<'a> Compiler<'a> {
                 let body = self.block(body);
                 self.cur().loops.pop();
                 self.unbind(n);
-                Ok(S { kind: St::ForIn { var: Place::Local(slot, vsym), index, domain, random, body: body? }, span })
+                Ok(S { kind: St::ForIn { var: Place::Local(slot, vsym), index, domain, random, body: body?, var_span: var.1 }, span })
             }
         }
     }
@@ -649,12 +649,12 @@ impl<'a> Compiler<'a> {
                     chains.push(later);
                 }
             }
-            let mut bindings: Vec<(Sym, &Expr)> = Vec::new();
+            let mut bindings: Vec<(&[String], &Expr)> = Vec::new();
             for c in &chains {
                 let mut b = Vec::new();
                 let mut cur = *c;
                 while let ExprKind::Where(inner, n, v) = &cur.kind {
-                    b.push((Sym::new(n), &**v));
+                    b.push((n.as_slice(), &**v));
                     cur = inner;
                 }
                 // Outermost binding first.
@@ -666,16 +666,19 @@ impl<'a> Compiler<'a> {
             }
             let mut slots = Vec::new();
             let mut values = Vec::new();
-            for (n, v) in &bindings {
+            let mut nbound = 0;
+            for (names, v) in &bindings {
                 values.push(self.expr(v)?);
-                slots.push(self.bind(*n));
+                slots.push(names.iter().map(|n| self.bind(Sym::new(n))).collect::<Vec<_>>());
+                nbound += names.len();
             }
             let body = self.expr(e);
-            self.unbind(slots.len());
+            self.unbind(nbound);
             let mut ex = body?;
-            for (slot, v) in slots.into_iter().zip(values).rev() {
+            for (s, v) in slots.into_iter().zip(values).rev() {
                 let span = ex.span;
-                ex = E { kind: Ex::Let(slot, Box::new(v), Box::new(ex)), span };
+                let kind = if s.len() == 1 { Ex::Let(s[0], Box::new(v), Box::new(ex)) } else { Ex::LetMulti(s, Box::new(v), Box::new(ex)) };
+                ex = E { kind, span };
             }
             out.push(ex);
         }
@@ -761,12 +764,12 @@ impl<'a> Compiler<'a> {
                 Ex::Assigned(Box::new(target))
             }
             ExprKind::Eval(a) => Ex::Eval(self.bx(a)?),
-            ExprKind::Where(body, n, v) => {
+            ExprKind::Where(body, names, v) => {
                 let value = self.bx(v)?;
-                let slot = self.bind(Sym::new(n));
+                let slots: Vec<Slot> = names.iter().map(|n| self.bind(Sym::new(n))).collect();
                 let b = self.bx(body);
-                self.unbind(1);
-                Ex::Let(slot, value, b?)
+                self.unbind(slots.len());
+                if slots.len() == 1 { Ex::Let(slots[0], value, b?) } else { Ex::LetMulti(slots, value, b?) }
             }
             ExprKind::Multiplicity(a, b) => Ex::Multiplicity(self.bx(a)?, self.bx(b)?),
             ExprKind::Tuple(es) => Ex::Tuple(self.expr_list(es)?),
@@ -911,13 +914,13 @@ impl<'a> Compiler<'a> {
                 let mut chain = Vec::new();
                 let mut cur: &Expr = p;
                 while let ExprKind::Where(inner, n, v) = &cur.kind {
-                    chain.push((Sym::new(n), &**v));
+                    chain.push((n, &**v));
                     cur = inner;
                 }
-                for (n, v) in chain {
+                for (names, v) in chain {
                     let ve = self.expr(v)?;
-                    nbound += 1;
-                    lets.push((self.bind(n), ve));
+                    nbound += names.len();
+                    lets.push((names.iter().map(|n| self.bind(Sym::new(n))).collect(), ve));
                 }
                 pred = Some(self.expr(cur)?);
             }

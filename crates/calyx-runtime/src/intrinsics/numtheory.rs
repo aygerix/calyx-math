@@ -350,60 +350,84 @@ fn sqrt_mod_prime(n: &Integer, p: &Integer) -> Integer {
     r
 }
 
-/// A square root of `n` modulo `p^k`, the one Magma chooses.
+/// Whether `n` is a square modulo `p^k`.
+pub fn is_square_mod_prime_power(n: &Integer, p: &Integer, k: u64) -> bool {
+    let n = modp(n, &p.pow(k));
+    if n.is_zero() {
+        return true;
+    }
+    let (e, u) = n.remove(p);
+    if e % 2 == 1 {
+        return false;
+    }
+    if p.is_even() {
+        let need = 1u64 << (k - e).min(3);
+        u.mod_u64(need) == 1 % need
+    } else {
+        u.kronecker(p) == 1
+    }
+}
+
+/// A square root of `n` modulo `p^k`, the one Magma chooses: the integer
+/// square root when `n` (as an integer in `[0, p^k)`) is a perfect square,
+/// and otherwise, for `n = p^(2s) u` with `u` a unit, `p^s` times the root
+/// of `u` modulo `p^k`.
 fn sqrt_mod_prime_power(n: &Integer, p: &Integer, k: u64) -> Option<Integer> {
     let m = p.pow(k);
     let n = modp(n, &m);
     if n.is_square() {
         return n.isqrt();
     }
-    if n.is_zero() {
-        return Some(n);
+    let (e, u) = n.remove(p);
+    if e % 2 == 1 {
+        return None;
     }
-    if n.is_divisible_by(p) {
-        // n = p^e * u: a root of u modulo p^(k - e/2), times p^(e/2).
-        let (e, u) = n.remove(p);
-        if e % 2 == 1 {
+    let r = unit_sqrt_mod_prime_power(&u, p, k)?;
+    Some(modp(&(&r * &p.pow(e / 2)), &m))
+}
+
+/// The square root Magma takes of a unit `u < p^k` modulo `p^k`. For odd
+/// `p` it is the lift of the Tonelli–Shanks root modulo `p` (which
+/// determines it). For `p = 2` it is where Magma's Newton iteration stops.
+fn unit_sqrt_mod_prime_power(u: &Integer, p: &Integer, k: u64) -> Option<Integer> {
+    let m = p.pow(k);
+    if p.is_even() {
+        if u.mod_u64(8) != 1 {
             return None;
         }
-        let r = sqrt_mod_prime_power(&u, p, k - e / 2)?;
-        return Some(modp(&(&r * &p.pow(e / 2)), &m));
+        if k <= 3 {
+            return Some(modp(&Integer::one(), &m));
+        }
+        // x <- x - ((x^2 - u) mod 2^k) / 2 * x^-1 modulo 2^k, from
+        // (u + 1) / 2 until x is fixed. Halving after the reduction loses
+        // the top bit of x^2 - u, so which of the two roots that are 1 mod 4
+        // it reaches depends on the path, and this path is Magma's.
+        let mut x = (u + 1).fdiv_2exp(1);
+        // A step takes a root modulo 2^j (j >= 3) to one modulo 2^(2j-2),
+        // so about log2(k) steps reach 2^k.
+        for _ in 0..=k {
+            let d = modp(&(&(&x * &x) - u), &m);
+            let next = modp(&(&x - &(&d.fdiv_2exp(1) * &x.invmod(&m)?)), &m);
+            if next == x {
+                return Some(x);
+            }
+            x = next;
+        }
+        unreachable!("Newton's iteration converges modulo 2^k");
     }
+    if u.kronecker(p) != 1 {
+        return None;
+    }
+    // Newton's iteration lifts the root modulo p to p^k.
     let two = Integer::from_i64(2);
-    let mut r = if *p == two {
-        let need = if k >= 3 { 8 } else { 1 << k };
-        if n.mod_u64(need) != 1 {
-            return None;
-        }
-        Integer::one()
-    } else {
-        if n.kronecker(p) != 1 {
-            return None;
-        }
-        sqrt_mod_prime(&modp(&n, p), p)
-    };
-    // Newton's iteration lifts the root to p^k.
-    for _ in 0..300 {
-        let d = &(&r * &r) - &n;
+    let mut r = sqrt_mod_prime(&modp(u, p), p);
+    loop {
+        let d = &(&r * &r) - u;
         if d.is_divisible_by(&m) {
             return Some(modp(&r, &m));
         }
-        r = if *p == two {
-            let (h, _) = d.fdiv_qr(&two).unwrap();
-            modp(&(&r - &(&h * &r.invmod(&m)?)), &m)
-        } else {
-            modp(&(&r - &(&d * &(&two * &r).invmod(&m)?)), &m)
-        };
+        r = modp(&(&r - &(&d * &(&two * &r).invmod(&m)?)), &m);
     }
-    // Lift bit by bit if the iteration did not settle.
-    let mut r = Integer::one();
-    for j in 3..k {
-        let d = &(&r * &r) - &n;
-        if !d.is_divisible_by(&two.pow(j + 1)) {
-            r = &r + &two.pow(j - 1);
-        }
-    }
-    Some(modp(&r, &m))
 }
 
 /// The square roots of a unit `u` modulo `p^j`: y and -y, and for p = 2
@@ -419,6 +443,39 @@ fn unit_sqrts_mod_prime_power(u: &Integer, p: &Integer, j: u64) -> Vec<Integer> 
     }
     out.dedup();
     out
+}
+
+/// All square roots of `n` modulo `p^k` in increasing order (at most
+/// `limit` of them).
+fn roots_mod_prime_power(n: &Integer, p: &Integer, k: u64, limit: usize) -> Vec<Integer> {
+    // With n = p^v u (u a unit), a root is p^s y with v = 2s and y^2 = u
+    // modulo p^(k-2s), and each such y gives p^s roots modulo p^k. When p^k
+    // divides n the roots are the multiples of p^ceil(k/2).
+    let m = p.pow(k);
+    let nn = modp(n, &m);
+    let (units, s) = if nn.is_zero() {
+        (vec![Integer::zero()], k / 2)
+    } else {
+        let (v, u) = nn.remove(p);
+        if v % 2 == 1 {
+            return Vec::new();
+        }
+        (unit_sqrts_mod_prime_power(&u, p, k - v), v / 2)
+    };
+    let (ps, step) = (p.pow(s), p.pow(k - s));
+    let mut all = Vec::new();
+    'units: for y in &units {
+        let mut x = &ps * y;
+        for _ in 0..ps.to_u64().unwrap_or(u64::MAX) {
+            if all.len() >= limit {
+                break 'units;
+            }
+            all.push(modp(&x, &m));
+            x = &x + &step;
+        }
+    }
+    all.sort();
+    all
 }
 
 /// The square roots of `n` modulo `p^k` (at most `limit` of them), the one
@@ -439,29 +496,7 @@ fn all_sqrt_mod_prime_power(n: &Integer, p: &Integer, k: u64, limit: usize) -> V
         }
         return out;
     }
-    // With n = p^v u (u a unit), a root is p^s y with v = 2s and y^2 = u
-    // modulo p^(k-2s), and each such y gives p^s roots modulo p^k. When p^k
-    // divides n the roots are the multiples of p^ceil(k/2).
-    let nn = modp(n, &m);
-    let (units, s) = if nn.is_zero() {
-        (vec![Integer::zero()], k / 2)
-    } else {
-        let (v, u) = nn.remove(p);
-        (unit_sqrts_mod_prime_power(&u, p, k - v), v / 2)
-    };
-    let (ps, step) = (p.pow(s), p.pow(k - s));
-    let mut all = Vec::new();
-    'units: for y in &units {
-        let mut x = &ps * y;
-        for _ in 0..ps.to_u64().unwrap_or(u64::MAX) {
-            if all.len() >= limit {
-                break 'units;
-            }
-            all.push(modp(&x, &m));
-            x = &x + &step;
-        }
-    }
-    all.sort();
+    let all = roots_mod_prime_power(n, p, k, limit);
     // The roots found before the others were enumerated keep their places.
     let neg = modp(&-&r, &m);
     let mut first = vec![neg.clone()];
@@ -514,17 +549,56 @@ pub fn modsqrt(n: &Integer, m: &Integer) -> Option<Integer> {
     if n.is_square() {
         return n.isqrt();
     }
-    let f = m.factor()?;
+    modsqrt_factored(&n, &m.factor()?.factors)
+}
+
+/// `x + big * t` with `t` chosen so that the result is `r` modulo `pk`
+/// (`big` and `pk` coprime): one step of the Chinese remainder theorem.
+fn crt_join(x: &Integer, big: &Integer, r: &Integer, pk: &Integer) -> Integer {
+    let t = modp(&(&(r - x) * &modp(big, pk).invmod(pk).unwrap_or_else(Integer::zero)), pk);
+    x + &(big * &t)
+}
+
+/// Magma's square root of `n` modulo the product of the prime powers `f`
+/// (increasing primes).
+pub fn modsqrt_factored(n: &Integer, f: &[(Integer, u64)]) -> Option<Integer> {
+    let m = super::factseq::fact_int(f);
+    let n = modp(n, &m);
+    if n.is_square() {
+        return n.isqrt();
+    }
     let (mut x, mut big) = (Integer::zero(), Integer::one());
-    for (p, k) in &f.factors {
+    for (p, k) in f {
         let pk = p.pow(*k);
         let r = sqrt_mod_prime_power(&n, p, *k)?;
-        // Combine by the Chinese remainder theorem, prime by prime.
-        let t = modp(&(&(&r - &x) * &modp(&big, &pk).invmod(&pk).unwrap_or_else(Integer::zero)), &pk);
-        x = &x + &(&big * &t);
+        x = crt_join(&x, &big, &r, &pk);
         big = &big * &pk;
     }
     Some(modp(&x, &big))
+}
+
+/// Whether `n` is a square modulo the product of the prime powers `f`.
+pub fn is_square_mod_factored(n: &Integer, f: &[(Integer, u64)]) -> bool {
+    f.iter().all(|(p, k)| is_square_mod_prime_power(n, p, *k))
+}
+
+/// All square roots of `n` modulo the product of the prime powers `f`, in
+/// increasing order; `None` if there are more than `limit`.
+pub fn all_sqrts_factored(n: &Integer, f: &[(Integer, u64)], limit: usize) -> Option<Vec<Integer>> {
+    let mut combos = vec![Integer::zero()];
+    let mut big = Integer::one();
+    for (p, k) in f {
+        let pk = p.pow(*k);
+        let roots = roots_mod_prime_power(n, p, *k, limit + 1);
+        if roots.len().saturating_mul(combos.len()) > limit {
+            return None;
+        }
+        combos = combos.iter().flat_map(|x| roots.iter().map(|r| crt_join(x, &big, r, &pk)).collect::<Vec<_>>()).collect();
+        big = &big * &pk;
+    }
+    let mut out: Vec<Integer> = combos.iter().map(|x| modp(x, &big)).collect();
+    out.sort();
+    Some(out)
 }
 
 fn modsqrt_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
@@ -557,7 +631,7 @@ fn primitive_root(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 }
 
 /// The solutions of `a x = b (mod m)` as `x0 + i*k`, if any.
-fn linear_congruence(a: &Integer, b: &Integer, m: &Integer) -> Option<(Integer, Integer)> {
+pub fn linear_congruence(a: &Integer, b: &Integer, m: &Integer) -> Option<(Integer, Integer)> {
     let g = a.gcd(m);
     if !b.is_divisible_by(&g) {
         return None;
@@ -879,6 +953,16 @@ mod tests {
             for n in ns {
                 assert_eq!(roots(n % m, p, k), squares.get(&(n % m)).cloned().unwrap_or_default(), "x^2 = {n} mod {p}^{k}");
             }
+        }
+    }
+
+    #[test]
+    fn square_roots_modulo_powers_of_two_are_magmas() {
+        // Magma 2.22's choices, which are not the 2-adic roots.
+        let cases = [(17, 6, 9), (41, 6, 45), (49, 6, 7), (17, 7, 105), (41, 7, 13), (57, 8, 213), (17, 9, 233), (41, 9, 461)];
+        for (n, k, r) in cases.into_iter().chain([(9876537, 40, 1016796945493)]) {
+            let m = Integer::one().mul_2exp(k);
+            assert_eq!(modsqrt(&Integer::from_u64(n), &m), Some(Integer::from_u64(r)), "Modsqrt({n}, 2^{k})");
         }
     }
 }

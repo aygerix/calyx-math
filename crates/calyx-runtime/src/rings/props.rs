@@ -41,6 +41,23 @@ pub fn ring_props(v: &Value) -> Option<RingProps> {
         cardinality: None,
     };
     Some(match v.as_struct()? {
+        // An ideal dR of R = Z/mZ, a ring without one.
+        StructKind::ResIdeal(r, d) => {
+            let m = super::ideals::residue_modulus(r);
+            RingProps {
+                field: false,
+                ordered: false,
+                domain: false,
+                ufd: false,
+                has_gcd: true,
+                exact: true,
+                euclidean: Some(false),
+                magma_euclidean: true,
+                pid: Some(false),
+                cardinality: Some(m.divexact(d)),
+                characteristic: m,
+            }
+        }
         StructKind::Integers => RingProps { field: false, magma_euclidean: true, ..number_field(true, true) },
         StructKind::Rationals => number_field(true, false),
         StructKind::Reals(_) => number_field(false, false),

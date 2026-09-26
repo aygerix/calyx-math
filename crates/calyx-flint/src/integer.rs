@@ -53,6 +53,9 @@ impl Integer {
 
     #[inline]
     pub fn from_u64(v: u64) -> Self {
+        if v <= COEFF_MAX {
+            return Integer { raw: v as sys::fmpz };
+        }
         let mut z = Integer::zero();
         unsafe { sys::fmpz_set_ui(&mut z.raw, v as sys::ulong) };
         z
@@ -153,6 +156,9 @@ impl Integer {
     }
 
     pub fn to_u64(&self) -> Option<u64> {
+        if let Some(v) = self.to_i64_fast() {
+            return (v >= 0).then_some(v as u64);
+        }
         if self.sign() >= 0 && unsafe { sys::fmpz_abs_fits_ui(&self.raw) } != 0 {
             Some(unsafe { sys::fmpz_get_ui(&self.raw) } as u64)
         } else {
