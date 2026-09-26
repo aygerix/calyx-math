@@ -38,14 +38,6 @@ pub struct Strategy {
     pub rational: bool,
 }
 
-impl Strategy {
-    /// Whether the bases over `base` computed this way are proven: all but
-    /// those over the rationals by the modular method.
-    pub fn proven(self, base: &Ctx) -> bool {
-        !modular(base, self)
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
     /// The engine has no algorithm for this coefficient ring.

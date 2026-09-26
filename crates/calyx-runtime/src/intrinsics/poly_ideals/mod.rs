@@ -200,16 +200,13 @@ impl MPolIdeal {
         self.find_easy_with(gb::Strategy::default())
     }
 
-    /// As `find_easy`, computed as `strategy` says. A kept basis was computed
-    /// the default way, which over the rationals is Monte Carlo: when
-    /// `strategy` asks for a proven basis there, it is computed again.
+    /// As `find_easy`, computed as `strategy` says when it is not known.
     fn find_easy_with(&self, strategy: gb::Strategy) -> RResult<Rc<Easy>> {
+        if let Some(e) = &self.known.borrow().easy {
+            return Ok(e.clone());
+        }
         let r = self.poly_ring();
         let (base, n, _) = shape(r);
-        let kept = self.known.borrow().easy.clone();
-        if let Some(e) = kept.filter(|_| gb::Strategy::default().proven(base) || !strategy.proven(base)) {
-            return Ok(e);
-        }
         let (kind, order) = self.easy_order();
         let terms = engine(r, gb::groebner_with(base, n, &order, &self.gens.iter().map(terms).collect::<Vec<_>>(), strategy))?;
         Ok(Rc::new(Easy { kind, order, terms }))
@@ -245,7 +242,10 @@ impl MPolIdeal {
         self.groebner_with(gb::Strategy::default())
     }
 
-    /// As `groebner`, computed as `strategy` says when it is not known.
+    /// As `groebner`, computed as `strategy` says when it is not known. As
+    /// Magma keeps what it has, a basis already known (or the easy basis it
+    /// comes from) serves whatever the strategy: a proven basis over the
+    /// rationals needs GlobalModular := false on the first computation.
     pub fn groebner_with(&self, strategy: gb::Strategy) -> RResult<Rc<[Elem]>> {
         if let Some(g) = &self.known.borrow().groebner {
             return Ok(g.clone());

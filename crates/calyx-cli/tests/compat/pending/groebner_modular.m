@@ -20,7 +20,8 @@ P<x,y,z> := PolynomialRing(RationalField(), 3, "grevlexw", [1, 2, 3]);
 G := GroebnerBasis(S(P));
 G eq GroebnerBasis(S(P) : GlobalModular := false), [LeadingMonomial(g) : g in G];
 
-// Ideals, also once membership has needed a basis in grevlex.
+// Ideals, also once membership has needed a basis in grevlex (which is then
+// kept).
 P<x,y,z> := PolynomialRing(RationalField(), 3, "lex");
 I := ideal<P | S(P)>;
 Groebner(I : GlobalModular := false);
