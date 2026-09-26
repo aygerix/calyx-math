@@ -227,3 +227,7 @@ Interpolation([Q | 1, 2], [b, b^2], 3);
 Interpolation([GF(7) | 1, 2], [h, h^2], 1);
 Interpolation([GF(7) | 1, 2], [b, b^2], 1);
 Interpolation([Integers() | 1, 2], [x, y], 1);
+
+// Nilpotency is not defined for polynomials.
+P4<a4, b4> := PolynomialRing(Integers(4), 2);
+IsNilpotent(2*a4 + 2*b4);

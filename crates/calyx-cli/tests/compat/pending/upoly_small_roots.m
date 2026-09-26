@@ -61,3 +61,6 @@ SmallRoots(x + 5, N, 10/3);
 SmallRoots(x + 5, N*1.0, 10);
 SmallRoots(PolynomialRing(Rationals())!(x + 5), N, 10);
 SmallRoots(PolynomialRing(GF(7))!(x + 5), 7, 10);
+
+// The verbose flag of SmallRoots.
+SetVerbose("SmallRoots", true); GetVerbose("SmallRoots"); SetVerbose("SmallRoots", false);

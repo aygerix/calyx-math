@@ -158,3 +158,6 @@ Facpol([<x + 1, 2, 3>]);
 SwinnertonDyerPolynomial(0);
 SwinnertonDyerPolynomial(-1);
 Parent(SwinnertonDyerPolynomial(1));
+
+// The verbose flag of factorization.
+SetVerbose("PolyFact", 2); GetVerbose("PolyFact"); SetVerbose("PolyFact", 0);
