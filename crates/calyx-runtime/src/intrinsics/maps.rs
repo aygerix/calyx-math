@@ -46,6 +46,11 @@ fn codomain(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 
 fn image(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let m = map_arg(a, 0);
+    if let MapImpl::Native(n) = &m.imp {
+        if let Some(im) = n.image(it, &m) {
+            return one(im?);
+        }
+    }
     let dom = m.domain.clone();
     // The images of groups are subgroups, which calyx cannot build yet.
     if matches!(m.imp, MapImpl::Native(_)) && matches!(dom.as_struct(), Some(StructKind::AbGroup(_))) {
@@ -61,9 +66,10 @@ fn image(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 
 fn inverse(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let m = map_arg(a, 0);
-    match &m.imp {
-        _ => one(Value::Map(Rc::new(MapObj { kind: m.kind, domain: m.codomain.clone(), codomain: m.domain.clone(), imp: MapImpl::Inverse(m.clone()) }))),
+    if matches!(&m.imp, MapImpl::Native(n) if !n.has_inverse()) {
+        return Err(RuntimeError::runtime("Map has no inverse"));
     }
+    one(Value::Map(Rc::new(MapObj { kind: m.kind, domain: m.codomain.clone(), codomain: m.domain.clone(), imp: MapImpl::Inverse(m.clone()) })))
 }
 
 fn function(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {

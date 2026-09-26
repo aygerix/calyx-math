@@ -432,6 +432,16 @@ pub trait NativeMap {
     fn rule(&self) -> bool {
         false
     }
+
+    /// Whether `Inverse` applies (Magma refuses it for maps with no inverse).
+    fn has_inverse(&self) -> bool {
+        true
+    }
+
+    /// `Image(f)`, for maps that give it themselves.
+    fn image(&self, _it: &mut Interp, _m: &MapObj) -> Option<RResult<Value>> {
+        None
+    }
 }
 
 // ----- structures -----------------------------------------------------------
