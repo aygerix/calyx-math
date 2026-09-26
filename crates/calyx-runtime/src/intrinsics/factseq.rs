@@ -427,7 +427,7 @@ fn euler_phi_inverse(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let m = match &a.args[0] {
         Value::Int(n) => {
             if n.sign() <= 0 {
-                return Err(super::bare(arg_ge(1, n, 1)));
+                return Err(super::require(arg_ge(1, n, 1)));
             }
             n.clone()
         }
@@ -440,7 +440,7 @@ fn factored_euler_phi_inverse(_it: &mut Interp, a: &mut CallArgs) -> RResult<Val
     let m = match &a.args[0] {
         Value::Int(n) => {
             if n.sign() <= 0 {
-                return Err(super::bare(arg_ge(1, n, 1)));
+                return Err(super::require(arg_ge(1, n, 1)));
             }
             n.clone()
         }

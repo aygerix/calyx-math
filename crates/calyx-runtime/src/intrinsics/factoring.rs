@@ -1029,7 +1029,7 @@ fn ecm_curve_mod(p: &Integer, sigma: &Integer) -> RResult<Curve> {
 fn ecm_order_of(it: &mut Interp, a: &CallArgs) -> RResult<Integer> {
     let (p, s) = (a.int(0)?.clone(), a.int(1)?.clone());
     if p.sign() <= 0 || !p.is_prime() {
-        return Err(super::bare(RuntimeError::runtime("First argument must be a positive prime")));
+        return Err(super::require(RuntimeError::runtime("First argument must be a positive prime")));
     }
     let c = ecm_curve_mod(&p, &s)?;
     Ok(c.order(&mut it.rng))

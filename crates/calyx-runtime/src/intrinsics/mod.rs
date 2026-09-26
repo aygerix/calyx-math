@@ -390,10 +390,18 @@ pub fn arg_prime(i: usize, v: &Integer) -> RuntimeError {
     RuntimeError::runtime(format!("Argument {i} ({v}) should be prime"))
 }
 
-/// An error reported without naming the intrinsic, as Magma's package
-/// intrinsics report failed requirements.
+/// An error reported without naming the intrinsic, as errors inside the
+/// code of Magma's package intrinsics are.
 pub fn bare(e: RuntimeError) -> RuntimeError {
     e.in_context("")
+}
+
+/// A failed requirement of a package intrinsic: as Magma reports them, it
+/// names the intrinsic unless the call is a statement of its own.
+pub fn require(e: RuntimeError) -> RuntimeError {
+    let mut e = bare(e);
+    e.require = true;
+    e
 }
 
 impl CallArgs {

@@ -86,11 +86,25 @@ pub struct ErrorInfo {
     /// For errors in `eval` code: where the `eval` is, and whether the error
     /// arose while reading the code (rather than running it).
     pub eval_outer: Option<(Span, bool)>,
+    /// A failed requirement of a package intrinsic, which names the
+    /// intrinsic unless the call is a statement of its own.
+    pub require: bool,
 }
 
 impl ErrorInfo {
     pub fn runtime(message: impl Into<String>) -> ErrorInfo {
-        ErrorInfo { kind: ErrKind::Runtime, context: None, message: message.into(), span: None, trace: Vec::new(), object: None, at_caller: false, style: ErrStyle::Normal, eval_outer: None }
+        ErrorInfo {
+            kind: ErrKind::Runtime,
+            context: None,
+            message: message.into(),
+            span: None,
+            trace: Vec::new(),
+            object: None,
+            at_caller: false,
+            style: ErrStyle::Normal,
+            eval_outer: None,
+            require: false,
+        }
     }
 
     pub fn user(message: impl Into<String>) -> ErrorInfo {

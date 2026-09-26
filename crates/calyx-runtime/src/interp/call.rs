@@ -507,7 +507,12 @@ impl Interp {
                 let r = fun(self, &mut ca);
                 *args = ca.args;
                 args.resize_with(n, Value::default);
-                r.map_err(|e| if e.span.is_none() && e.kind != ErrKind::Syntax { e.in_context(name.to_string()) } else { e })
+                r.map_err(|mut e| {
+                    if e.require && !stmt {
+                        e.context = None;
+                    }
+                    if e.span.is_none() && e.kind != ErrKind::Syntax { e.in_context(name.to_string()) } else { e }
+                })
             }
             Imp::User(clo) => {
                 let clo = clo.clone();
