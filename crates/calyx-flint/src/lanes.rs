@@ -4,11 +4,16 @@
 //! packed field contexts (see `packed`) keep it inline.
 //!
 //! Products sum in the narrowest lanes their bound allows (16 bits for
-//! GF(3^40), 32 for GF(251^10)), eight coefficients of the result at a time
-//! in a vector, then reduce modulo f by the rows x^(n+k) modulo f, with one
-//! reduction modulo p per coefficient. Inverses and norms (resultants with
-//! f) come from Euclid's algorithm with a table of inverses modulo p, the
-//! Frobenius from its matrix, and traces from those of the powers of x.
+//! GF(3^40), 32 for GF(251^10)), a chunk of coefficients of the result at a
+//! time in a vector, then reduce modulo f by the rows x^(n+k) modulo f, with
+//! one reduction modulo p per coefficient. Inverses and norms (resultants
+//! with f) come from Euclid's algorithm, the Frobenius from its matrix, and
+//! traces from those of the powers of x.
+//!
+//! Chunks of 16-bit sums (`Chunk`) are vector registers used through
+//! intrinsics, as the compiler vectorizes the plain loops poorly: 8 lanes
+//! with SSE2 or NEON, 16 with AVX2 where the processor has it (chosen at run
+//! time). Wider sums are arrays of 8.
 
 use std::array;
 use std::cell::OnceCell;
@@ -83,11 +88,34 @@ impl Barrett {
 
 /// A lane for sums of products, as narrow as their bound allows so that
 /// more of them fit in a vector.
-trait Acc: Copy + Default + Eq + std::ops::AddAssign + std::ops::Add<Output = Self> + std::ops::Mul<Output = Self> {
+trait Acc: Copy + Default + Eq + std::fmt::Debug + std::ops::Add<Output = Self> + std::ops::Mul<Output = Self> + 'static {
     fn of(x: u32) -> Self;
     fn get(self) -> u32;
     /// The value modulo p.
     fn modp(self, b: Barrett) -> Self;
+    /// The weights of the terms near the diagonal in `square`: row d has 0
+    /// below lane d, 1 at it and 2 above.
+    fn weights() -> &'static [[Self; 16]; 16];
+}
+
+/// The rows of `Acc::weights`.
+macro_rules! weights {
+    ($t:ty) => {{
+        const W: [[$t; 16]; 16] = {
+            let mut w = [[0; 16]; 16];
+            let mut d = 0;
+            while d < 16 {
+                let mut l = d;
+                while l < 16 {
+                    w[d][l] = if l == d { 1 } else { 2 };
+                    l += 1;
+                }
+                d += 1;
+            }
+            w
+        };
+        &W
+    }};
 }
 
 impl Acc for u16 {
@@ -104,6 +132,10 @@ impl Acc for u16 {
     #[inline(always)]
     fn modp(self, b: Barrett) -> u16 {
         b.short(self)
+    }
+
+    fn weights() -> &'static [[u16; 16]; 16] {
+        weights!(u16)
     }
 }
 
@@ -122,6 +154,10 @@ impl Acc for u32 {
     fn modp(self, b: Barrett) -> u32 {
         b.half(self)
     }
+
+    fn weights() -> &'static [[u32; 16]; 16] {
+        weights!(u32)
+    }
 }
 
 impl Acc for u64 {
@@ -139,21 +175,363 @@ impl Acc for u64 {
     fn modp(self, b: Barrett) -> u64 {
         b.word(self)
     }
+
+    fn weights() -> &'static [[u64; 16]; 16] {
+        weights!(u64)
+    }
 }
 
-/// The rows x^(n+k) modulo f for k below n - 1, which reduce products, in
-/// the lanes products sum in: the narrowest that holds their sums (below
-/// 2n p^2), so that more of them fit in a vector.
+/// Lanes of sums, the unit the kernels work in: 8, or 16 with AVX2.
+trait Chunk: Copy {
+    type A: Acc;
+    /// The number of lanes.
+    const W: usize;
+    /// A multiplier of all lanes, as `mla` takes it: copies of it in a
+    /// vector, or a lane.
+    type S: Copy;
+    fn zero() -> Self;
+    fn scalar(x: u32) -> Self::S;
+    /// The first W lanes of s.
+    fn load(s: &[Self::A]) -> Self;
+    /// Into the first W lanes of s.
+    fn store(self, s: &mut [Self::A]);
+    /// The products lane by lane.
+    fn mul(self, y: Self) -> Self;
+    /// self + x y.
+    fn mla(self, x: Self::S, y: Self) -> Self;
+    /// What `modp` needs of p, made once per call of a kernel so that it
+    /// stays in registers.
+    type R: Copy;
+    fn reducer(b: Barrett) -> Self::R;
+    /// Each lane modulo p, as `Acc::modp`.
+    fn modp(self, r: Self::R) -> Self;
+}
+
+impl<A: Acc> Chunk for [A; 8] {
+    type A = A;
+    type S = A;
+    const W: usize = 8;
+
+    #[inline(always)]
+    fn zero() -> [A; 8] {
+        [A::default(); 8]
+    }
+
+    #[inline(always)]
+    fn scalar(x: u32) -> A {
+        A::of(x)
+    }
+
+    #[inline(always)]
+    fn load(s: &[A]) -> [A; 8] {
+        s[..8].try_into().unwrap()
+    }
+
+    #[inline(always)]
+    fn store(self, s: &mut [A]) {
+        s[..8].copy_from_slice(&self);
+    }
+
+    #[inline(always)]
+    fn mul(self, y: [A; 8]) -> [A; 8] {
+        array::from_fn(|i| self[i] * y[i])
+    }
+
+    #[inline(always)]
+    fn mla(self, x: A, y: [A; 8]) -> [A; 8] {
+        array::from_fn(|i| self[i] + x * y[i])
+    }
+
+    type R = Barrett;
+
+    #[inline(always)]
+    fn reducer(b: Barrett) -> Barrett {
+        b
+    }
+
+    #[inline(always)]
+    fn modp(self, b: Barrett) -> [A; 8] {
+        self.map(|x| x.modp(b))
+    }
+}
+
+/// 16-bit sums in an SSE2 register. The intrinsics are safe to call on
+/// every x86-64 processor, as SSE2 is part of the architecture.
+#[cfg(target_arch = "x86_64")]
+mod simd {
+    use std::arch::x86_64::*;
+
+    use super::{Barrett, Chunk};
+
+    #[derive(Clone, Copy)]
+    pub struct U16x8(__m128i);
+
+    impl Chunk for U16x8 {
+        type A = u16;
+        type S = U16x8;
+        const W: usize = 8;
+
+        #[inline(always)]
+        fn zero() -> U16x8 {
+            U16x8(unsafe { _mm_setzero_si128() })
+        }
+
+        #[inline(always)]
+        fn scalar(x: u32) -> U16x8 {
+            U16x8(unsafe { _mm_set1_epi16(x as i16) })
+        }
+
+        #[inline(always)]
+        fn load(s: &[u16]) -> U16x8 {
+            let s = &s[..8];
+            // SAFETY: s has 8 lanes, and the load may be unaligned.
+            U16x8(unsafe { _mm_loadu_si128(s.as_ptr().cast()) })
+        }
+
+        #[inline(always)]
+        fn store(self, s: &mut [u16]) {
+            let s = &mut s[..8];
+            // SAFETY: as for `load`.
+            unsafe { _mm_storeu_si128(s.as_mut_ptr().cast(), self.0) }
+        }
+
+        #[inline(always)]
+        fn mul(self, y: U16x8) -> U16x8 {
+            U16x8(unsafe { _mm_mullo_epi16(self.0, y.0) })
+        }
+
+        #[inline(always)]
+        fn mla(self, x: U16x8, y: U16x8) -> U16x8 {
+            U16x8(unsafe { _mm_add_epi16(self.0, _mm_mullo_epi16(x.0, y.0)) })
+        }
+
+        /// Copies of p and floor(2^16 / p).
+        type R = (__m128i, __m128i);
+
+        #[inline(always)]
+        fn reducer(b: Barrett) -> (__m128i, __m128i) {
+            unsafe { (_mm_set1_epi16(b.p as i16), _mm_set1_epi16(b.m16 as i16)) }
+        }
+
+        /// `Barrett::short` lane by lane. SSE2 has no unsigned minimum of
+        /// 16-bit lanes for the last step, min(r, r - p): it is r less the
+        /// saturated difference of r and r - p.
+        #[inline(always)]
+        fn modp(self, (p, m): (__m128i, __m128i)) -> U16x8 {
+            unsafe {
+                let r = _mm_sub_epi16(self.0, _mm_mullo_epi16(mulhi(self.0, m), p));
+                U16x8(_mm_sub_epi16(r, _mm_subs_epu16(r, _mm_sub_epi16(r, p))))
+            }
+        }
+    }
+
+    /// The high halves of the products of the lanes, as `_mm_mulhi_epu16`
+    /// but written out: that intrinsic is generic code, which the optimizer
+    /// may turn into four times as many instructions on 32-bit lanes.
+    #[inline(always)]
+    fn mulhi(x: __m128i, m: __m128i) -> __m128i {
+        let mut r = x;
+        // SAFETY: an SSE2 instruction on registers.
+        unsafe { std::arch::asm!("pmulhuw {r}, {m}", r = inout(xmm_reg) r, m = in(xmm_reg) m, options(pure, nomem, nostack, preserves_flags)) };
+        r
+    }
+
+    /// 16-bit sums in an AVX2 register. Its intrinsics need a processor
+    /// with AVX2: the kernels use it only in functions compiled for AVX2,
+    /// which run only where `FpLanes::avx2` is set.
+    #[derive(Clone, Copy)]
+    pub struct U16x16(__m256i);
+
+    impl Chunk for U16x16 {
+        type A = u16;
+        type S = U16x16;
+        const W: usize = 16;
+
+        #[inline(always)]
+        fn zero() -> U16x16 {
+            U16x16(unsafe { _mm256_setzero_si256() })
+        }
+
+        #[inline(always)]
+        fn scalar(x: u32) -> U16x16 {
+            U16x16(unsafe { _mm256_set1_epi16(x as i16) })
+        }
+
+        #[inline(always)]
+        fn load(s: &[u16]) -> U16x16 {
+            let s = &s[..16];
+            // SAFETY: s has 16 lanes, and the load may be unaligned.
+            U16x16(unsafe { _mm256_loadu_si256(s.as_ptr().cast()) })
+        }
+
+        #[inline(always)]
+        fn store(self, s: &mut [u16]) {
+            let s = &mut s[..16];
+            // SAFETY: as for `load`.
+            unsafe { _mm256_storeu_si256(s.as_mut_ptr().cast(), self.0) }
+        }
+
+        #[inline(always)]
+        fn mul(self, y: U16x16) -> U16x16 {
+            U16x16(unsafe { _mm256_mullo_epi16(self.0, y.0) })
+        }
+
+        #[inline(always)]
+        fn mla(self, x: U16x16, y: U16x16) -> U16x16 {
+            U16x16(unsafe { _mm256_add_epi16(self.0, _mm256_mullo_epi16(x.0, y.0)) })
+        }
+
+        /// Copies of p and floor(2^16 / p).
+        type R = (__m256i, __m256i);
+
+        #[inline(always)]
+        fn reducer(b: Barrett) -> (__m256i, __m256i) {
+            unsafe { (_mm256_set1_epi16(b.p as i16), _mm256_set1_epi16(b.m16 as i16)) }
+        }
+
+        /// `Barrett::short` lane by lane.
+        #[inline(always)]
+        fn modp(self, (p, m): (__m256i, __m256i)) -> U16x16 {
+            unsafe {
+                let r = _mm256_sub_epi16(self.0, _mm256_mullo_epi16(mulhi256(self.0, m), p));
+                U16x16(_mm256_min_epu16(r, _mm256_sub_epi16(r, p)))
+            }
+        }
+    }
+
+    /// `mulhi` for AVX2.
+    #[inline]
+    #[target_feature(enable = "avx2")]
+    fn mulhi256(x: __m256i, m: __m256i) -> __m256i {
+        let r;
+        // SAFETY: an AVX2 instruction on registers.
+        unsafe {
+            std::arch::asm!("vpmulhuw {r}, {x}, {m}", r = lateout(ymm_reg) r, x = in(ymm_reg) x, m = in(ymm_reg) m,
+                options(pure, nomem, nostack, preserves_flags))
+        };
+        r
+    }
+}
+
+/// 16-bit sums in a NEON register. The intrinsics are safe to call on
+/// every AArch64 processor, as NEON is part of the architecture.
+#[cfg(target_arch = "aarch64")]
+mod simd {
+    use std::arch::aarch64::*;
+
+    use super::{Barrett, Chunk};
+
+    #[derive(Clone, Copy)]
+    pub struct U16x8(uint16x8_t);
+
+    impl Chunk for U16x8 {
+        type A = u16;
+        type S = U16x8;
+        const W: usize = 8;
+
+        #[inline(always)]
+        fn zero() -> U16x8 {
+            U16x8(unsafe { vdupq_n_u16(0) })
+        }
+
+        #[inline(always)]
+        fn scalar(x: u32) -> U16x8 {
+            U16x8(unsafe { vdupq_n_u16(x as u16) })
+        }
+
+        #[inline(always)]
+        fn load(s: &[u16]) -> U16x8 {
+            let s = &s[..8];
+            // SAFETY: s has 8 lanes.
+            U16x8(unsafe { vld1q_u16(s.as_ptr()) })
+        }
+
+        #[inline(always)]
+        fn store(self, s: &mut [u16]) {
+            let s = &mut s[..8];
+            // SAFETY: as for `load`.
+            unsafe { vst1q_u16(s.as_mut_ptr(), self.0) }
+        }
+
+        #[inline(always)]
+        fn mul(self, y: U16x8) -> U16x8 {
+            U16x8(unsafe { vmulq_u16(self.0, y.0) })
+        }
+
+        #[inline(always)]
+        fn mla(self, x: U16x8, y: U16x8) -> U16x8 {
+            U16x8(unsafe { vmlaq_u16(self.0, x.0, y.0) })
+        }
+
+        /// Copies of p and floor(2^16 / p).
+        type R = (uint16x8_t, uint16x8_t);
+
+        #[inline(always)]
+        fn reducer(b: Barrett) -> (uint16x8_t, uint16x8_t) {
+            unsafe { (vdupq_n_u16(b.p as u16), vdupq_n_u16(b.m16)) }
+        }
+
+        /// `Barrett::short` lane by lane, the high halves of the products
+        /// by floor(2^16 / p) taken from widening products.
+        #[inline(always)]
+        fn modp(self, (p, m): (uint16x8_t, uint16x8_t)) -> U16x8 {
+            unsafe {
+                let x = self.0;
+                let (lo, hi) = (vmull_u16(vget_low_u16(x), vget_low_u16(m)), vmull_high_u16(x, m));
+                let q = vuzp2q_u16(vreinterpretq_u16_u32(lo), vreinterpretq_u16_u32(hi));
+                let r = vmlsq_u16(x, q, p);
+                U16x8(vminq_u16(r, vsubq_u16(r, p)))
+            }
+        }
+    }
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+type C16 = simd::U16x8;
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+type C16 = [u16; 8];
+type C32 = [u32; 8];
+type C64 = [u64; 8];
+
+/// The rows of coefficients products are reduced and mapped by, in the
+/// lanes products sum in: the narrowest that holds their sums (below 2n
+/// p^2), so that more of them fit in a vector.
 #[derive(Clone, Debug)]
 enum Rows<const N: usize> {
-    W16(Vec<[u16; N]>),
-    W32(Vec<[u32; N]>),
-    W64(Vec<[u64; N]>),
+    W16(Tables<u16, N>),
+    W32(Tables<u32, N>),
+    W64(Tables<u64, N>),
+}
+
+#[derive(Clone, Debug)]
+struct Tables<A, const N: usize> {
+    /// x^(n+k) modulo f for k below n - 1, which reduce products.
+    red: Vec<[A; N]>,
+    /// x^(p i) modulo f for i below n: the rows of the Frobenius.
+    frob: Vec<[A; N]>,
+}
+
+impl<A: Acc, const N: usize> Tables<A, N> {
+    fn new(red: &[[u32; N]], frob: &[[u32; N]]) -> Tables<A, N> {
+        let widen = |rows: &[[u32; N]]| rows.iter().map(|r| r.map(A::of)).collect();
+        Tables { red: widen(red), frob: widen(frob) }
+    }
+}
+
+impl<const N: usize> Rows<N> {
+    /// The rows in the lanes for sums below 2n p^2.
+    fn new(p: u64, n: usize, red: &[[u32; N]], frob: &[[u32; N]]) -> Rows<N> {
+        match 2 * n as u64 * (p - 1) * (p - 1) + p {
+            0..0x1_0000 => Rows::W16(Tables::new(red, frob)),
+            0x1_0000..0x1_0000_0000 => Rows::W32(Tables::new(red, frob)),
+            _ => Rows::W64(Tables::new(red, frob)),
+        }
+    }
 }
 
 /// The zeros in front of the polynomials in Euclid's algorithm, so that
-/// shifted reads below them find zeros.
-const PAD: usize = 8;
+/// shifted reads below them find zeros: a chunk's worth.
+const PAD: usize = 16;
 
 /// GF(p^n) for an odd prime p below 2^16, its elements `[T; N]` with n
 /// coordinates (constant term first) and zeros after.
@@ -161,8 +539,11 @@ const PAD: usize = 8;
 pub struct FpLanes<T: Lane, const N: usize> {
     b: Barrett,
     n: usize,
-    /// n rounded up to a multiple of 8, the length of rows.
-    m: usize,
+    /// Whether the kernels with 16-bit sums run in AVX2 registers: the
+    /// processor has it, and N is a multiple of 16 (always so for such
+    /// sums, which need p below 2^8).
+    #[cfg(target_arch = "x86_64")]
+    avx2: bool,
     /// The coefficients of f below x^n, and their negatives (x^n modulo f).
     f: [u32; N],
     fneg: [u32; N],
@@ -171,8 +552,6 @@ pub struct FpLanes<T: Lane, const N: usize> {
     inv: OnceCell<Vec<T>>,
     /// Tr(x^i) for i below n.
     tr: [u32; N],
-    /// x^(p i) modulo f for i below n: the rows of the Frobenius.
-    frob: Vec<[u32; N]>,
 }
 
 /// The degree of the polynomial x (-1 for 0), from `top` down.
@@ -199,13 +578,17 @@ impl<T: Lane, const N: usize> FpLanes<T, N> {
             let top = r[n - 1] as u64;
             r = array::from_fn(|i| if i < n { ((if i > 0 { r[i - 1] as u64 } else { 0 } + top * fneg[i] as u64) % p) as u32 } else { 0 });
         }
-        let rows = match 2 * n as u64 * (p - 1) * (p - 1) + p {
-            0..0x1_0000 => Rows::W16(rows.iter().map(|r| r.map(|x| x as u16)).collect()),
-            0x1_0000..0x1_0000_0000 => Rows::W32(rows),
-            _ => Rows::W64(rows.iter().map(|r| r.map(|x| x as u64)).collect()),
+        let mut k: FpLanes<T, N> = FpLanes {
+            b: Barrett::new(p),
+            n,
+            #[cfg(target_arch = "x86_64")]
+            avx2: N % 16 == 0 && is_x86_feature_detected!("avx2"),
+            f: fr,
+            fneg,
+            rows: Rows::new(p, n, &rows, &[]),
+            inv: OnceCell::new(),
+            tr: [0; N],
         };
-        let (b, m) = (Barrett::new(p), n.next_multiple_of(8));
-        let mut k: FpLanes<T, N> = FpLanes { b, n, m, f: fr, fneg, rows, inv: OnceCell::new(), tr: [0; N], frob: Vec::new() };
         // Newton's identities for the power sums of the roots of f: s_0 = n,
         // s_j = -(j f_(n-j) + the sum over 0 < i < j of f_(n-i) s_(j-i)).
         let mut s = vec![n as u64 % p; n];
@@ -216,12 +599,12 @@ impl<T: Lane, const N: usize> FpLanes<T, N> {
         for (t, &v) in k.tr.iter_mut().zip(&s) {
             *t = v as u32;
         }
-        let xp = k.pow(&k.generator(), &[p]);
-        let mut row = k.scalar(1);
+        let (xp, mut row, mut frob) = (k.pow(&k.generator(), &[p]), k.scalar(1), Vec::with_capacity(n));
         for _ in 0..n {
-            k.frob.push(array::from_fn(|i| row[i].get()));
+            frob.push(array::from_fn(|i| row[i].get()));
             row = k.mul(&row, &xp);
         }
+        k.rows = Rows::new(p, n, &rows, &frob);
         k
     }
 
@@ -287,28 +670,26 @@ impl<T: Lane, const N: usize> FpLanes<T, N> {
         array::from_fn(|i| T::of(self.b.half(a[i].get() * c)))
     }
 
-    /// The 2n - 1 coefficients of a b (sums below n p^2), 8 at a time: each
-    /// chunk sums its terms in a vector and is stored once.
+    /// The 2n - 1 coefficients of a b (sums below n p^2), a chunk at a time:
+    /// each sums its terms in a vector and is stored once.
     #[inline(always)]
-    fn product<A: Acc>(&self, a: &[T; N], b: &[T; N]) -> [[A; 2]; N] {
+    fn product<C: Chunk>(&self, a: &[T; N], b: &[T; N]) -> [[C::A; 2]; N] {
         let n = self.n;
         // b between N zeros on each side, for shifted reads past its ends.
-        let mut bp = [[A::default(); 3]; N];
+        let mut bp = [[C::A::default(); 3]; N];
         let bp = bp.as_flattened_mut();
         for (x, y) in bp[N..2 * N].iter_mut().zip(b) {
-            *x = A::of(y.get());
+            *x = C::A::of(y.get());
         }
-        let mut acc = [[A::default(); 2]; N];
+        let xs: [C::S; N] = array::from_fn(|i| C::scalar(a[i].get()));
+        let mut acc = [[C::A::default(); 2]; N];
         let out = acc.as_flattened_mut();
-        for c in (0..2 * n - 1).step_by(8) {
-            let mut s = [A::default(); 8];
-            for i in (c + 1).saturating_sub(n)..n.min(c + 8) {
-                let x = A::of(a[i].get());
-                for (t, &y) in s.iter_mut().zip(&bp[N + c - i..N + c - i + 8]) {
-                    *t += x * y;
-                }
+        for c in (0..2 * n - 1).step_by(C::W) {
+            let mut s = C::zero();
+            for i in (c + 1).saturating_sub(n)..n.min(c + C::W) {
+                s = s.mla(xs[i], C::load(&bp[N + c - i..]));
             }
-            out[c..c + 8].copy_from_slice(&s);
+            s.store(&mut out[c..]);
         }
         acc
     }
@@ -317,135 +698,155 @@ impl<T: Lane, const N: usize> FpLanes<T, N> {
     /// more taken modulo p and replaced by their multiples of the rows (the
     /// sums stay below 2n p^2), then all modulo p.
     #[inline(always)]
-    fn reduce<A: Acc>(&self, acc: &[[A; 2]; N], rows: &[[A; N]]) -> [T; N] {
-        let (n, m, c) = (self.n, self.m, acc.as_flattened());
-        let mut lo: [A; N] = array::from_fn(|i| if i < n { c[i] } else { A::default() });
-        for (k, row) in rows.iter().enumerate() {
-            let h = c[n + k].modp(self.b);
-            for (r, y) in lo[..m].chunks_exact_mut(8).zip(row[..m].chunks_exact(8)) {
-                for (r, &y) in r.iter_mut().zip(y) {
-                    *r += h * y;
-                }
-            }
+    fn reduce<C: Chunk>(&self, acc: &[[C::A; 2]; N], red: &[[C::A; N]]) -> [T; N] {
+        let (n, c, r) = (self.n, acc.as_flattened(), C::reducer(self.b));
+        let mut h = [C::A::default(); N];
+        for k in (0..n - 1).step_by(C::W) {
+            C::load(&c[n + k..]).modp(r).store(&mut h[k..]);
         }
-        array::from_fn(|i| if i < n { T::of(lo[i].modp(self.b).get()) } else { T::default() })
+        let mut hs = [C::scalar(0); N];
+        for (x, y) in hs.iter_mut().zip(&h[..n - 1]) {
+            *x = C::scalar(y.get());
+        }
+        let mut lo = [C::A::default(); N];
+        lo[..n].copy_from_slice(&c[..n]);
+        for j in (0..n).step_by(C::W) {
+            let s = red.iter().zip(&hs).fold(C::load(&lo[j..]), |s, (row, &h)| s.mla(h, C::load(&row[j..])));
+            s.modp(r).store(&mut lo[j..]);
+        }
+        array::from_fn(|i| if i < n { T::of(lo[i].get()) } else { T::default() })
     }
 
     /// The 2n - 1 coefficients of a^2 as `product` finds them, with each
     /// product of two different coefficients once, doubled: a chunk at c
     /// takes the terms a_i a_(k-i) with 2i < c in full, and those with 2i
-    /// from c to c + 7 weighted lane by lane (2 below the diagonal, 1 on it).
+    /// from c to c + W - 1 weighted lane by lane (2 below the diagonal, 1 on
+    /// it).
     #[inline(always)]
-    fn square<A: Acc>(&self, a: &[T; N]) -> [[A; 2]; N] {
-        const WEIGHTS: [[u32; 8]; 8] = {
-            let mut w = [[0; 8]; 8];
-            let mut d = 0;
-            while d < 8 {
-                let mut l = d;
-                while l < 8 {
-                    w[d][l] = if l == d { 1 } else { 2 };
-                    l += 1;
-                }
-                d += 1;
-            }
-            w
-        };
+    fn square<C: Chunk>(&self, a: &[T; N]) -> [[C::A; 2]; N] {
         let n = self.n;
-        let mut ap = [[A::default(); 3]; N];
+        let mut ap = [[C::A::default(); 3]; N];
         let ap = ap.as_flattened_mut();
         for (x, y) in ap[N..2 * N].iter_mut().zip(a) {
-            *x = A::of(y.get());
+            *x = C::A::of(y.get());
         }
-        let mut acc = [[A::default(); 2]; N];
+        let xs: [C::S; N] = array::from_fn(|i| C::scalar(a[i].get()));
+        let (x2s, w): ([C::S; N], _) = (array::from_fn(|i| C::scalar(2 * a[i].get())), C::A::weights());
+        let mut acc = [[C::A::default(); 2]; N];
         let out = acc.as_flattened_mut();
-        for c in (0..2 * n - 1).step_by(8) {
-            let (mut s, lo) = ([A::default(); 8], (c + 1).saturating_sub(n));
+        for c in (0..2 * n - 1).step_by(C::W) {
+            let (mut s, lo) = (C::zero(), (c + 1).saturating_sub(n));
             for i in lo..(c / 2).min(n) {
-                let x = ap[N + i] + ap[N + i];
-                for (t, &y) in s.iter_mut().zip(&ap[N + c - i..N + c - i + 8]) {
-                    *t += x * y;
-                }
+                s = s.mla(x2s[i], C::load(&ap[N + c - i..]));
             }
-            for i in (c / 2).max(lo)..(c / 2 + 4).min(n) {
-                let x = ap[N + i];
-                for ((t, &y), &w) in s.iter_mut().zip(&ap[N + c - i..N + c - i + 8]).zip(&WEIGHTS[2 * i - c]) {
-                    *t += A::of(w) * (x * y);
-                }
+            for i in (c / 2).max(lo)..(c / 2 + C::W / 2).min(n) {
+                s = s.mla(xs[i], C::load(&ap[N + c - i..]).mul(C::load(&w[2 * i - c])));
             }
-            out[c..c + 8].copy_from_slice(&s);
+            s.store(&mut out[c..]);
         }
         acc
     }
 
     pub fn mul(&self, a: &[T; N], b: &[T; N]) -> [T; N] {
         match &self.rows {
-            Rows::W16(r) => self.reduce(&self.product::<u16>(a, b), r),
-            Rows::W32(r) => self.reduce(&self.product::<u32>(a, b), r),
-            Rows::W64(r) => self.reduce(&self.product::<u64>(a, b), r),
+            // SAFETY: `avx2` is set only where the processor has AVX2.
+            #[cfg(target_arch = "x86_64")]
+            Rows::W16(t) if self.avx2 => unsafe { self.mul_avx2(a, b, &t.red) },
+            Rows::W16(t) => self.reduce::<C16>(&self.product::<C16>(a, b), &t.red),
+            Rows::W32(t) => self.reduce::<C32>(&self.product::<C32>(a, b), &t.red),
+            Rows::W64(t) => self.reduce::<C64>(&self.product::<C64>(a, b), &t.red),
         }
     }
 
     pub fn sqr(&self, a: &[T; N]) -> [T; N] {
         match &self.rows {
-            Rows::W16(r) => self.reduce(&self.square::<u16>(a), r),
-            Rows::W32(r) => self.reduce(&self.square::<u32>(a), r),
-            Rows::W64(r) => self.reduce(&self.square::<u64>(a), r),
+            // SAFETY: as for `mul`.
+            #[cfg(target_arch = "x86_64")]
+            Rows::W16(t) if self.avx2 => unsafe { self.sqr_avx2(a, &t.red) },
+            Rows::W16(t) => self.reduce::<C16>(&self.square::<C16>(a), &t.red),
+            Rows::W32(t) => self.reduce::<C32>(&self.square::<C32>(a), &t.red),
+            Rows::W64(t) => self.reduce::<C64>(&self.square::<C64>(a), &t.red),
         }
     }
 
     /// u_i + t v_(i-j) modulo p for i from j to top, over whole aligned
-    /// chunks of 8 (the other lanes add zeros: v is 0 above its degree and
-    /// PAD zeros lead it). The sums stay below p^2.
+    /// chunks (the other lanes add zeros: v is 0 above its degree and PAD
+    /// zeros lead it). The sums stay below p^2.
     #[inline(always)]
-    fn shift_axpy<A: Acc>(&self, u: &mut [A], t: u32, v: &[A], j: usize, top: usize) {
-        let (t, lo, hi) = (A::of(t), j & !7, (top + 8) & !7);
-        for (x, &y) in u[PAD + lo..PAD + hi].iter_mut().zip(&v[PAD + lo - j..PAD + hi - j]) {
-            *x = (*x + t * y).modp(self.b);
+    fn shift_axpy<C: Chunk>(&self, u: &mut [C::A], t: u32, v: &[C::A], j: usize, top: usize) {
+        let (t, r, k) = (C::scalar(t), C::reducer(self.b), C::W - 1);
+        for i in ((j & !k)..(top + C::W) & !k).step_by(C::W) {
+            C::load(&u[PAD + i..]).mla(t, C::load(&v[PAD + i - j..])).modp(r).store(&mut u[PAD + i..]);
         }
     }
 
-    /// u_i + t v_(i-j) + s v_(i-j+1) modulo p for i from j - 1 to top, as
-    /// `shift_axpy` for two terms (j >= 1). The sums stay below 2p^2.
+    /// c u_i + t v_i modulo p for i up to top, over whole chunks (v is 0
+    /// above its degree). The sums stay below 2p^2.
     #[inline(always)]
-    fn shift_axpy2<A: Acc>(&self, u: &mut [A], t: u32, s: u32, v: &[A], j: usize, top: usize) {
-        let (t, s, lo, hi) = (A::of(t), A::of(s), (j - 1) & !7, (top + 8) & !7);
-        let (v1, v0) = (&v[PAD + lo - j..PAD + hi - j], &v[PAD + lo + 1 - j..PAD + hi + 1 - j]);
-        for ((x, &y), &z) in u[PAD + lo..PAD + hi].iter_mut().zip(v1).zip(v0) {
-            *x = (*x + t * y + s * z).modp(self.b);
+    fn scale_axpy<C: Chunk>(&self, u: &mut [C::A], c: u32, t: u32, v: &[C::A], top: usize) {
+        let (c, t, r) = (C::scalar(c), C::scalar(t), C::reducer(self.b));
+        for i in (0..(top + C::W) & !(C::W - 1)).step_by(C::W) {
+            C::zero().mla(c, C::load(&u[PAD + i..])).mla(t, C::load(&v[PAD + i..])).modp(r).store(&mut u[PAD + i..]);
+        }
+    }
+
+    /// c u_i + t v_(i-j) + s v_(i-j+1) modulo p for i up to top (j >= 1):
+    /// c u_i alone below the chunk of j - 1, where v does not reach, and
+    /// all three above it (PAD zeros lead v). The sums stay below 3p^2.
+    #[inline(always)]
+    fn scale_axpy2<C: Chunk>(&self, u: &mut [C::A], c: u32, t: u32, s: u32, v: &[C::A], j: usize, top: usize) {
+        let (c, t, s, k, r) = (C::scalar(c), C::scalar(t), C::scalar(s), C::W - 1, C::reducer(self.b));
+        let lo = (j - 1) & !k;
+        for i in (0..lo).step_by(C::W) {
+            C::zero().mla(c, C::load(&u[PAD + i..])).modp(r).store(&mut u[PAD + i..]);
+        }
+        for i in (lo..(top + C::W) & !k).step_by(C::W) {
+            let x = C::zero().mla(c, C::load(&u[PAD + i..])).mla(t, C::load(&v[PAD + i - j..]));
+            x.mla(s, C::load(&v[PAD + i + 1 - j..])).modp(r).store(&mut u[PAD + i..]);
         }
     }
 
     /// The inverse of a unit, by the extended Euclidean algorithm on a and
-    /// f, two leading terms at a time, in the narrowest lanes 2p^2 fits.
+    /// f, two leading terms at a time, in the narrowest lanes 3p^2 fits.
     pub fn inv(&self, a: &[T; N]) -> Option<[T; N]> {
         match self.b.p {
-            ..=181 => self.inv_with::<u16>(a),
-            ..=46340 => self.inv_with::<u32>(a),
-            _ => self.inv_with::<u64>(a),
+            // SAFETY: as for `mul`.
+            #[cfg(target_arch = "x86_64")]
+            ..=139 if self.avx2 => unsafe { self.inv_avx2(a) },
+            ..=139 => self.inv_with::<C16>(a),
+            ..=37813 => self.inv_with::<C32>(a),
+            _ => self.inv_with::<C64>(a),
         }
     }
 
     #[inline(always)]
-    fn inv_with<A: Acc>(&self, a: &[T; N]) -> Option<[T; N]> {
-        let (n, p, inv) = (self.n, self.b.p as u32, self.inverses());
+    fn inv_with<C: Chunk>(&self, a: &[T; N]) -> Option<[T; N]> {
+        let (n, p) = (self.n, self.b.p as u32);
         // Remainders u and v with cofactors: gu a = u and gv a = v modulo f.
         // With deg gu + deg v <= n and deg gv + deg u <= n throughout, all
         // have degree at most n. Coefficient i is at PAD + i.
-        let (mut r, mut g) = ([[[A::default(); 4]; N]; 2], [[[A::default(); 4]; N]; 2]);
+        let (mut r, mut g) = ([[[C::A::default(); 4]; N]; 2], [[[C::A::default(); 4]; N]; 2]);
         let ([u, v], [gu, gv]) = (&mut r, &mut g);
         let (mut u, mut v, mut gu, mut gv) = (u.as_flattened_mut(), v.as_flattened_mut(), gu.as_flattened_mut(), gv.as_flattened_mut());
         for i in 0..n {
-            (u[PAD + i], v[PAD + i]) = (A::of(a[i].get()), A::of(self.f[i]));
+            (u[PAD + i], v[PAD + i]) = (C::A::of(a[i].get()), C::A::of(self.f[i]));
         }
-        (v[PAD + n], gu[PAD]) = (A::of(1), A::of(1));
+        (v[PAD + n], gu[PAD]) = (C::A::of(1), C::A::of(1));
         let (mut du, mut dv, mut eu, mut ev) = (degree_of(&u[PAD..], n as isize - 1), n as isize, 0, -1);
         if du < 0 {
             return None;
         }
+        // Each step takes the leading terms of u by a multiple of v, with u
+        // (and gu) scaled by a power of lc(v) instead of dividing by it, so
+        // that no inverse lies on the path from one step to the next. Once
+        // v is not zero, neither is gv. `tops` has the two leading
+        // coefficients of u and of v when the last step found them.
+        let mut tops = None;
         loop {
             if du < dv {
                 (u, v, gu, gv) = (v, u, gv, gu);
                 (du, dv, eu, ev) = (dv, du, ev, eu);
+                tops = tops.map(|(x, y)| (y, x));
             }
             if du == 0 {
                 break;
@@ -453,31 +854,46 @@ impl<T: Lane, const N: usize> FpLanes<T, N> {
             if dv < 0 {
                 return None;
             }
-            let (j, c) = ((du - dv) as usize, inv[v[PAD + dv as usize].get() as usize].get());
-            let t = p - self.b.half(u[PAD + du as usize].get() * c);
+            let (j, d, e) = ((du - dv) as usize, du as usize, dv as usize);
+            let top = |x: &[C::A], d: usize| (x[PAD + d].get(), x[PAD + d - 1].get());
+            let ((ud, u1), (vd, v1)) = tops.take().unwrap_or_else(|| (top(u, d), top(v, e)));
             if j == 0 {
-                self.shift_axpy(u, t, v, j, du as usize);
-                if ev >= 0 {
-                    self.shift_axpy(gu, t, gv, j, j + ev as usize);
-                    eu = eu.max(ev + j as isize);
-                }
+                // u lc(v) - lc(u) v.
+                let t = p - ud;
+                self.scale_axpy::<C>(u, vd, t, v, d);
+                self.scale_axpy::<C>(gu, vd, t, gv, eu.max(ev) as usize);
+                eu = eu.max(ev);
                 du = degree_of(&u[PAD..], du - 1);
                 continue;
             }
-            // The next term of the quotient too, from the coefficient of
-            // x^(du-1) that the first leaves (v_(dv-1) is a leading zero if
-            // dv = 0).
-            let r = self.b.half(u[PAD + du as usize - 1].get() + t * v[PAD + dv as usize - 1].get());
-            let s = if r == 0 { 0 } else { p - self.b.half(r * c) };
-            self.shift_axpy2(u, t, s, v, j, du as usize);
-            if ev >= 0 {
-                self.shift_axpy2(gu, t, s, gv, j, j + ev as usize);
-                eu = eu.max(ev + j as isize);
+            // u lc(v)^2 - (lc(v) lc(u) x^j + (lc(v) u1 - lc(u) v1) x^(j-1)) v,
+            // with u1 and v1 the coefficients below the leading ones (v1 is
+            // a leading zero if dv = 0).
+            let c = self.b.half(vd * vd);
+            let t = p - self.b.half(vd * ud);
+            let s = self.b.word(ud as u64 * v1 as u64 + vd as u64 * (p - u1) as u64) as u32;
+            // The usual step has j = 1 and leaves a remainder of degree dv
+            // - 1: its two leading coefficients, found here before u is
+            // overwritten, let the next step start before the vectors are
+            // stored. At i = d - 2, v_i is v1.
+            let lead = (j == 1).then(|| {
+                let r = |i: usize, vi: u32| {
+                    let x = c as u64 * u[i].get() as u64 + t as u64 * v[i - 1].get() as u64 + s as u64 * vi as u64;
+                    self.b.word(x) as u32
+                };
+                (r(PAD + d - 2, v1), r(PAD + d - 3, v[PAD + d - 3].get()))
+            });
+            self.scale_axpy2::<C>(u, c, t, s, v, j, d);
+            self.scale_axpy2::<C>(gu, c, t, s, gv, j, eu.max(ev + j as isize) as usize);
+            eu = eu.max(ev + j as isize);
+            match lead {
+                Some((r2, r3)) if r2 != 0 => (du, tops) = (du - 2, Some(((r2, r3), (vd, v1)))),
+                _ => du = degree_of(&u[PAD..], du - 2),
             }
-            du = degree_of(&u[PAD..], du - 2);
         }
+        let inv = self.inverses();
         // gu/u, and x^n replaced by its remainder if gu reached degree n.
-        let s = A::of(inv[u[PAD].get() as usize].get());
+        let s = C::A::of(inv[u[PAD].get() as usize].get());
         let top = (gu[PAD + n] * s).modp(self.b).get();
         Some(array::from_fn(|i| if i < n { T::of(self.b.half((gu[PAD + i] * s).modp(self.b).get() + top * self.fneg[i])) } else { T::default() }))
     }
@@ -498,19 +914,24 @@ impl<T: Lane, const N: usize> FpLanes<T, N> {
     /// Res(A, B) = (-1)^(deg A deg B) lc(B)^(deg A - deg R) Res(B, R) for R
     /// = A mod B, and Res(A, c) = c^deg A for a constant c.
     pub fn norm(&self, a: &[T; N]) -> u64 {
-        if self.b.p < 256 { self.norm_with::<u16>(a) } else { self.norm_with::<u32>(a) }
+        #[cfg(target_arch = "x86_64")]
+        if self.b.p < 256 && self.avx2 {
+            // SAFETY: as for `mul`.
+            return unsafe { self.norm_avx2(a) };
+        }
+        if self.b.p < 256 { self.norm_with::<C16>(a) } else { self.norm_with::<C32>(a) }
     }
 
     #[inline(always)]
-    fn norm_with<A: Acc>(&self, a: &[T; N]) -> u64 {
+    fn norm_with<C: Chunk>(&self, a: &[T; N]) -> u64 {
         let (n, p, inv) = (self.n, self.b.p as u32, self.inverses());
-        let mut r = [[[A::default(); 4]; N]; 2];
+        let mut r = [[[C::A::default(); 4]; N]; 2];
         let [x, y] = &mut r;
         let (mut x, mut y) = (x.as_flattened_mut(), y.as_flattened_mut());
         for i in 0..n {
-            (x[PAD + i], y[PAD + i]) = (A::of(self.f[i]), A::of(a[i].get()));
+            (x[PAD + i], y[PAD + i]) = (C::A::of(self.f[i]), C::A::of(a[i].get()));
         }
-        x[PAD + n] = A::of(1);
+        x[PAD + n] = C::A::of(1);
         let (mut dx, mut dy, mut res) = (n as isize, degree_of(&y[PAD..], n as isize - 1), 1);
         loop {
             if dy < 0 {
@@ -523,7 +944,7 @@ impl<T: Lane, const N: usize> FpLanes<T, N> {
             let (d, li) = (dx, inv[lc as usize].get());
             while dx >= dy {
                 let t = p - self.b.half(x[PAD + dx as usize].get() * li);
-                self.shift_axpy(x, t, y, (dx - dy) as usize, dx as usize);
+                self.shift_axpy::<C>(x, t, y, (dx - dy) as usize, dx as usize);
                 dx = degree_of(&x[PAD..], dx - 1);
             }
             if dx < 0 {
@@ -574,28 +995,28 @@ impl<T: Lane, const N: usize> FpLanes<T, N> {
         r.unwrap()
     }
 
-    /// a^p, from the rows of the Frobenius.
+    /// a^p, from the rows of the Frobenius (the sums stay below n p^2).
     #[inline(always)]
-    fn frobenius_with<A: Acc>(&self, a: &[T; N]) -> [T; N] {
-        let (n, m) = (self.n, self.m);
-        let mut acc = [A::default(); N];
-        for (x, row) in a[..n].iter().zip(&self.frob) {
-            let x = A::of(x.get());
-            for (r, y) in acc[..m].chunks_exact_mut(8).zip(row[..m].chunks_exact(8)) {
-                for (r, &y) in r.iter_mut().zip(y) {
-                    *r += x * A::of(y);
-                }
-            }
+    fn frobenius_with<C: Chunk>(&self, a: &[T; N], frob: &[[C::A; N]]) -> [T; N] {
+        let n = self.n;
+        let (xs, r): ([C::S; N], _) = (array::from_fn(|i| C::scalar(a[i].get())), C::reducer(self.b));
+        let mut out = [C::A::default(); N];
+        for j in (0..n).step_by(C::W) {
+            let s = frob.iter().zip(&xs).fold(C::zero(), |s, (row, &x)| s.mla(x, C::load(&row[j..])));
+            s.modp(r).store(&mut out[j..]);
         }
-        array::from_fn(|i| if i < n { T::of(acc[i].modp(self.b).get()) } else { T::default() })
+        array::from_fn(|i| if i < n { T::of(out[i].get()) } else { T::default() })
     }
 
     /// a^(p^k).
     pub fn frobenius(&self, a: &[T; N], k: u64) -> [T; N] {
-        (0..k % self.n as u64).fold(*a, |x, _| match self.rows {
-            Rows::W16(_) => self.frobenius_with::<u16>(&x),
-            Rows::W32(_) => self.frobenius_with::<u32>(&x),
-            Rows::W64(_) => self.frobenius_with::<u64>(&x),
+        (0..k % self.n as u64).fold(*a, |x, _| match &self.rows {
+            // SAFETY: as for `mul`.
+            #[cfg(target_arch = "x86_64")]
+            Rows::W16(t) if self.avx2 => unsafe { self.frobenius_avx2(&x, &t.frob) },
+            Rows::W16(t) => self.frobenius_with::<C16>(&x, &t.frob),
+            Rows::W32(t) => self.frobenius_with::<C32>(&x, &t.frob),
+            Rows::W64(t) => self.frobenius_with::<C64>(&x, &t.frob),
         })
     }
 
@@ -616,6 +1037,36 @@ impl<T: Lane, const N: usize> FpLanes<T, N> {
             *x = T::of((v % self.b.p) as u32);
         }
         r
+    }
+}
+
+/// The kernels with 16-bit sums compiled for AVX2, as `FpLanes::avx2`
+/// chooses at run time.
+#[cfg(target_arch = "x86_64")]
+impl<T: Lane, const N: usize> FpLanes<T, N> {
+    #[target_feature(enable = "avx2")]
+    fn mul_avx2(&self, a: &[T; N], b: &[T; N], red: &[[u16; N]]) -> [T; N] {
+        self.reduce::<simd::U16x16>(&self.product::<simd::U16x16>(a, b), red)
+    }
+
+    #[target_feature(enable = "avx2")]
+    fn sqr_avx2(&self, a: &[T; N], red: &[[u16; N]]) -> [T; N] {
+        self.reduce::<simd::U16x16>(&self.square::<simd::U16x16>(a), red)
+    }
+
+    #[target_feature(enable = "avx2")]
+    fn inv_avx2(&self, a: &[T; N]) -> Option<[T; N]> {
+        self.inv_with::<simd::U16x16>(a)
+    }
+
+    #[target_feature(enable = "avx2")]
+    fn norm_avx2(&self, a: &[T; N]) -> u64 {
+        self.norm_with::<simd::U16x16>(a)
+    }
+
+    #[target_feature(enable = "avx2")]
+    fn frobenius_avx2(&self, a: &[T; N], frob: &[[u16; N]]) -> [T; N] {
+        self.frobenius_with::<simd::U16x16>(a, frob)
     }
 }
 
@@ -669,8 +1120,18 @@ mod tests {
         panic!("no irreducible of degree {n} over F_{p}");
     }
 
+    /// The checks below for each set of kernels the processor has.
     fn lanes_agree<T: Lane, const N: usize>(p: u64, f: &[u64], rng: &mut Lcg) {
-        let (k, n) = (FpLanes::<T, N>::new(p, f), f.len());
+        let k = FpLanes::<T, N>::new(p, f);
+        #[cfg(target_arch = "x86_64")]
+        if k.avx2 {
+            agree(&FpLanes { avx2: false, ..k.clone() }, p, f, rng);
+        }
+        agree(&k, p, f, rng);
+    }
+
+    fn agree<T: Lane, const N: usize>(k: &FpLanes<T, N>, p: u64, f: &[u64], rng: &mut Lcg) {
+        let n = f.len();
         let q = Integer::from_u64(p).pow(n as u64);
         let qm1 = &q - &Integer::one();
         let (e_unit, e_norm) = (qm1.to_limbs(), qm1.divexact(&Integer::from_u64(p - 1)).to_limbs());
@@ -722,7 +1183,7 @@ mod tests {
         for n in [1, 2, 3, 13, 16, 17, 32, 40, 64] {
             check(3, n, &mut rng);
         }
-        for (p, n) in [(5, 7), (7, 30), (7, 33), (127, 2), (251, 5), (251, 64)] {
+        for (p, n) in [(5, 7), (7, 30), (7, 33), (13, 47), (127, 2), (137, 20), (139, 3), (149, 4), (181, 3), (251, 5), (251, 64)] {
             check(p, n, &mut rng);
         }
         for (p, n) in [(257, 1), (257, 2), (257, 32), (1009, 9), (32003, 16), (65521, 2), (65521, 8), (65521, 17), (65521, 32)] {
