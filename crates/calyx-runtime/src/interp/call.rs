@@ -148,7 +148,7 @@ impl Interp {
                     return Err(RuntimeError::runtime("Functions cannot take reference arguments"));
                 }
                 let clo = clo.clone();
-                let r = self.call_closure(&clo, args, refmask, params, nres, span, call_name)?;
+                let r = self.call_closure(&clo, args, refmask, params, nres, stmt, span, call_name)?;
                 Ok(if clo.code.is_procedure { None } else { Some(r) })
             }
             Value::Intr(name) => self.call_intrinsic(*name, args, refmask, params, nres, stmt, span, site),
@@ -199,24 +199,24 @@ impl Interp {
         refmask: &[bool],
         params: Vec<(Sym, Value)>,
         nres: usize,
+        stmt: bool,
         span: Span,
         trace_name: Option<Sym>,
     ) -> RResult<Vals> {
         let code = &clo.code;
         let np = code.params.len();
         let name = trace_name.or(code.name).unwrap_or_else(|| Sym::new("<function>"));
-        if code.variadic {
-            if args.len() + 1 < np {
-                return Err(RuntimeError::statement("procedure call", format!("Number of arguments ({}) is less than the minimum number of arguments ({})", args.len(), np.saturating_sub(1))));
-            }
-        } else if args.len() != np {
-            return Err(RuntimeError::statement("procedure call", format!("Number of arguments ({}) does not equal expected number of arguments ({np})", args.len())));
+        // A bad call is an error "in procedure call" only as a statement.
+        let bad_call = |msg: String| if stmt { RuntimeError::statement("procedure call", msg) } else { RuntimeError::runtime(msg) };
+        // The variadic parameter takes at least one argument.
+        if args.len() < np || !code.variadic && args.len() != np {
+            return Err(bad_call(format!("Number of arguments ({}) does not equal expected number of arguments ({np})", args.len())));
         }
         for (i, p) in code.params.iter().enumerate() {
             let is_ref = refmask.get(i).copied().unwrap_or(false);
             if i < args.len() && p.is_ref != is_ref && !(code.variadic && i == np - 1) {
                 let msg = if p.is_ref { "must be a variable reference (use ~)" } else { "must not be a variable reference" };
-                return Err(RuntimeError::statement("procedure call", format!("Argument {} {msg}", i + 1)));
+                return Err(bad_call(format!("Argument {} {msg}", i + 1)));
             }
         }
         if self.depth >= self.max_depth {
@@ -249,7 +249,7 @@ impl Interp {
             // Restore arguments before failing.
             self.restore_args(code, &mut frame, args);
             let msg = if code.opt_params.is_empty() { "No parameters are possible".to_string() } else { format!("Parameter '{pname}' is not defined for this function") };
-            return Err(RuntimeError::statement("procedure call", msg));
+            return Err(bad_call(msg));
         }
         self.depth += 1;
         self.nresults_stack.push(nres);
@@ -512,7 +512,7 @@ impl Interp {
             Imp::User(clo) => {
                 let clo = clo.clone();
                 let user_params: Vec<(Sym, Value)> = params;
-                self.call_closure(&clo, args, refmask, user_params, nres, span, Some(name))
+                self.call_closure(&clo, args, refmask, user_params, nres, stmt, span, Some(name))
             }
         };
         let vals = result?;
