@@ -9,6 +9,18 @@ use flint3_sys as sys;
 use crate::Integer;
 use crate::gr::{Ctx, CtxKind, Elem, GrResult};
 
+impl Ctx {
+    /// For GF(2^n) with n up to 64 (without Zech logarithms), its words:
+    /// the field defined by the modulus.
+    pub fn fq_gf2_field(&self) -> Option<crate::gf2x::Gf2Field> {
+        let CtxKind::FqNmod { p: 2, degree: n @ 1..=64 } = *self.kind() else { return None };
+        let nctx = fq_ctx_ptr::<sys::fq_nmod_ctx_struct>(self);
+        let f = unsafe { &(*nctx).modulus[0] };
+        let g = (0..n as usize).fold(0u64, |g, i| g | ((unsafe { *f.coeffs.add(i) } as u64 & 1) << i));
+        Some(crate::gf2x::Gf2Field::new(n as u32, g))
+    }
+}
+
 /// `gr_ctx_init_fq_zech_modulus_nmod_poly` with the tables of Zech
 /// logarithms built by `zech_tables` rather than FLINT's loop, which
 /// multiplies with `fq_nmod_mul` and takes most of the time of making a
@@ -203,6 +215,20 @@ impl Elem {
         e
     }
 
+    /// The coordinates of an element of GF(2^n) with n up to 64 (without
+    /// Zech logarithms) as bits, for `gf2x::Gf2Field`.
+    pub fn fq_gf2_bits(&self) -> Option<u64> {
+        let CtxKind::FqNmod { p: 2, degree: 1..=64 } = *self.ctx().kind() else { return None };
+        let a = unsafe { &*(self.as_ptr() as *const sys::nmod_poly_struct) };
+        Some((0..a.length as usize).fold(0, |b, i| b | ((unsafe { *a.coeffs.add(i) } as u64 & 1) << i)))
+    }
+
+    /// The element of GF(2^n) with n up to 64 with the given bits.
+    pub fn fq_from_gf2_bits(ctx: &Rc<Ctx>, bits: u64) -> Elem {
+        let coords: Vec<u64> = (0..64).map(|i| bits >> i & 1).collect();
+        Elem::fq_from_coords_u64(ctx, &coords)
+    }
+
     /// The element `g^k` of a field with Zech logarithms, where g is its
     /// generator (`k < q - 1`).
     pub fn fq_from_zech_log(ctx: &Rc<Ctx>, k: u64) -> Option<Elem> {
@@ -307,6 +333,20 @@ mod tests {
         let f = Ctx::finite_field(&int(3), &[int(1), int(2), int(0), int(1)], true).unwrap();
         assert_eq!(Elem::zech_order(&f), Some(26));
         assert!(Ctx::finite_field(&int(3), &[int(1), int(0), int(1)], true).is_err());
+    }
+
+    #[test]
+    fn gf2_words() {
+        let c = conway_polynomial(2, 40).unwrap();
+        let f = Ctx::finite_field(&int(2), &c, false).unwrap();
+        let k = f.fq_gf2_field().unwrap();
+        let g = f.generator().unwrap();
+        let (a, b) = (g.pow_i64(12345).unwrap(), g.pow_i64(987654321).unwrap());
+        let (wa, wb) = (a.fq_gf2_bits().unwrap(), b.fq_gf2_bits().unwrap());
+        assert_eq!(k.mul(wa, wb), a.mul(&b).unwrap().fq_gf2_bits().unwrap());
+        assert_eq!(k.pow(2, 12345), wa);
+        assert!(Elem::fq_from_gf2_bits(&f, wa).equal(&a) == crate::gr::Truth::True);
+        assert!(Ctx::finite_field(&int(2), &conway_polynomial(2, 10).unwrap(), true).unwrap().fq_gf2_field().is_none());
     }
 
     #[test]
