@@ -455,6 +455,9 @@ pub enum StructKind {
     /// The ideal `dR` of a residue class ring `R = Z/mZ`, for a divisor
     /// `d > 1` of `m` (`d = m` is the zero ideal); of type `RngIntRes`.
     ResIdeal(Rc<Struct>, Integer),
+    /// A proper ideal of a univariate polynomial ring over a field, of type
+    /// `RngUPol`, with its monic (or zero) generator.
+    UPolIdeal(Rc<crate::rings::Elt>),
     /// An abelian group; every construction makes a new group.
     AbGroup(Rc<AbGroup>),
 }
@@ -674,6 +677,7 @@ impl Value {
                 StructKind::ExtendedReals => t::EXT_RE,
                 StructKind::IntIdeal(_) => t::RNG_INT,
                 StructKind::ResIdeal(..) => t::RNG_INT_RES,
+                StructKind::UPolIdeal(_) => t::RNG_UPOL,
                 StructKind::AbGroup(_) => t::GRP_AB,
             },
             Value::Cat(_) => t::CAT,
@@ -843,6 +847,10 @@ fn struct_hash<H: Hasher>(s: &Struct, state: &mut H) {
             struct_hash(r, state);
             d.hash(state);
         }
+        StructKind::UPolIdeal(g) => {
+            state.write_u8(14);
+            g.hash_u64().hash(state);
+        }
         StructKind::AbGroup(g) => (Rc::as_ptr(g) as usize).hash(state),
     }
 }
@@ -908,6 +916,7 @@ pub fn struct_eq(a: &Rc<Struct>, b: &Rc<Struct>) -> bool {
         (ExtendedReals, ExtendedReals) => true,
         (IntIdeal(m), IntIdeal(n)) => m == n,
         (ResIdeal(r, d), ResIdeal(s, e)) => struct_eq(r, s) && d == e,
+        (UPolIdeal(f), UPolIdeal(g)) => f.same_as(g),
         (AbGroup(x), AbGroup(y)) => Rc::ptr_eq(x, y),
         _ => false,
     }

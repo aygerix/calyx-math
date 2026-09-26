@@ -71,7 +71,7 @@ impl Interp {
             (Reals(_), Reals(_)) => true,
             (Rationals | Reals(_), Ring(r)) => match &r.kind {
                 RingKind::Complex(_) => true,
-                RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. } => self.auto_coerces(from, base),
+                RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. } | RingKind::UPolyRes { base, .. } => self.auto_coerces(from, base),
                 _ => false,
             },
             (Ring(a), Ring(b)) => match (&a.kind, &b.kind) {
@@ -79,7 +79,7 @@ impl Interp {
                 (RingKind::Finite(f), RingKind::Finite(g)) => ff_embeds(f, g),
                 (RingKind::UPoly { base: b1, .. }, RingKind::UPoly { base: b2, .. }) => self.auto_coerces(b1, b2),
                 (RingKind::MPoly { base: b1, rank: r1, .. }, RingKind::MPoly { base: b2, rank: r2, .. }) => r1 <= r2 && self.auto_coerces(b1, b2),
-                (_, RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. }) => self.auto_coerces(from, base),
+                (_, RingKind::UPoly { base, .. } | RingKind::MPoly { base, .. } | RingKind::UPolyRes { base, .. }) => self.auto_coerces(from, base),
                 _ => false,
             },
             _ => false,
@@ -87,8 +87,9 @@ impl Interp {
     }
 
     /// A ring containing both structures `a` and `b`, for arithmetic
-    /// between their elements. Polynomial rings over a common coefficient
-    /// ring are created when needed.
+    /// between their elements. As in Magma, a polynomial ring and a real or
+    /// complex field meet in the polynomial ring over that field (created
+    /// when needed); no other rings are made.
     pub fn common_ring(&mut self, a: &Value, b: &Value) -> RResult<Option<Value>> {
         if self.auto_coerces(b, a) {
             return Ok(Some(a.clone()));
@@ -96,20 +97,23 @@ impl Interp {
         if self.auto_coerces(a, b) {
             return Ok(Some(b.clone()));
         }
-        // A polynomial ring over a common coefficient ring.
         let base_of = |v: &Value| ring_of(v).and_then(|(_, r)| match &r.kind {
             RingKind::UPoly { base, .. } => Some(base.clone()),
             _ => None,
         });
         let (ba, bb) = (base_of(a), base_of(b));
         let (x, y) = match (&ba, &bb) {
-            (Some(p), Some(q)) => (p.clone(), q.clone()),
             (Some(p), None) => (p.clone(), b.clone()),
             (None, Some(q)) => (a.clone(), q.clone()),
-            (None, None) => return Ok(None),
+            _ => return Ok(None),
+        };
+        let real = |v: &Value| match v.as_struct() {
+            Some(StructKind::Reals(_)) => true,
+            Some(StructKind::Ring(r)) => matches!(r.kind, RingKind::Complex(_)),
+            _ => false,
         };
         match self.common_ring(&x, &y)? {
-            Some(c) if c.as_struct().is_some() => Ok(Some(self.poly_ring(&c, true)?)),
+            Some(c) if real(&c) => Ok(Some(self.poly_ring(&c, true)?)),
             _ => Ok(None),
         }
     }
@@ -179,6 +183,18 @@ impl Interp {
             x
         };
         let ctx = r.ctx.clone();
+        // A constant polynomial coerces by force like its constant term.
+        if forced && !matches!(r.kind, RingKind::UPoly { .. }) {
+            if let Value::Elt(e) = x {
+                if let RingKind::UPoly { base, .. } | RingKind::UPolyRes { base, .. } = &e.ring().kind {
+                    if e.x.poly_len() <= 1 {
+                        let c = if e.x.poly_len() == 0 { Elem::zero(e.x.ctx().base().expect("a polynomial")) } else { e.x.poly_coeff(0) };
+                        let v = self.elem_to_value(&base.clone(), c);
+                        return self.to_ring_elem(st, &v, true);
+                    }
+                }
+            }
+        }
         match &r.kind {
             RingKind::Residue(m) => Ok(match x {
                 Value::Int(i) => Elem::from_integer(&ctx, i).ok(),
@@ -193,29 +209,39 @@ impl Interp {
             RingKind::Finite(f) => self.to_field_elem(r, f, x, forced),
             RingKind::UPoly { base, .. } => {
                 let base = base.clone();
-                // A polynomial over another coefficient ring.
-                if let Value::Elt(e) = x {
-                    if let RingKind::UPoly { base: b2, .. } = &e.ring().kind {
-                        if !forced && !self.auto_coerces(b2, &base) {
-                            return Ok(None);
-                        }
-                        let b2 = b2.clone();
-                        let mut coeffs = Vec::with_capacity(e.x.poly_len());
-                        for i in 0..e.x.poly_len() {
-                            let c = self.elem_to_value(&b2, e.x.poly_coeff(i));
-                            match self.to_structure_elem(&base, &c, forced)? {
-                                Some(c) => coeffs.push(c),
-                                None => return Ok(None),
+                // Elements of the coefficient ring (and of rings embedding in
+                // it) are constants; otherwise a polynomial over another
+                // coefficient ring maps coefficient by coefficient, and a
+                // sequence (a tuple from `elt< P | a0, ..., ad >`) gives the
+                // coefficients.
+                let px = self.parent_of(x)?;
+                if !self.auto_coerces(&px, &base) {
+                    if let Value::Elt(e) = x {
+                        // Elements of a quotient by force as their representatives.
+                        if let RingKind::UPoly { base: b2, .. } | RingKind::UPolyRes { base: b2, .. } = &e.ring().kind {
+                            if !forced && (!self.auto_coerces(b2, &base) || matches!(e.ring().kind, RingKind::UPolyRes { .. })) {
+                                return Ok(None);
                             }
+                            let b2 = b2.clone();
+                            let mut coeffs = Vec::with_capacity(e.x.poly_len());
+                            for i in 0..e.x.poly_len() {
+                                let c = self.elem_to_value(&b2, e.x.poly_coeff(i));
+                                match self.to_structure_elem(&base, &c, forced)? {
+                                    Some(c) => coeffs.push(c),
+                                    None => return Ok(None),
+                                }
+                            }
+                            return Ok(Elem::poly_from_coeffs(&ctx, &coeffs).ok());
                         }
-                        return Ok(Elem::poly_from_coeffs(&ctx, &coeffs).ok());
                     }
-                }
-                // A sequence of coefficients.
-                if forced {
-                    if let Value::Seq(s) = x {
-                        let mut coeffs = Vec::with_capacity(s.elems.len());
-                        for v in &s.elems {
+                    let elems = match x {
+                        Value::Seq(s) if forced => Some(&s.elems),
+                        Value::Tuple(t) if forced => Some(&t.elems),
+                        _ => None,
+                    };
+                    if let Some(elems) = elems {
+                        let mut coeffs = Vec::with_capacity(elems.len());
+                        for v in elems {
                             match self.to_structure_elem(&base, v, true)? {
                                 Some(c) => coeffs.push(c),
                                 None => return Ok(None),
@@ -229,6 +255,27 @@ impl Interp {
                     Some(c) => Elem::poly_from_coeffs(&ctx, &[c]).ok(),
                     None => None,
                 })
+            }
+            RingKind::UPolyRes { base, preimage, modulus } => {
+                // Elements of the coefficient ring are constants; by force,
+                // elements of the preimage ring (and coefficient sequences)
+                // are reduced modulo the modulus.
+                let (base, preimage, modulus) = (base.clone(), preimage.clone(), modulus.clone());
+                let px = self.parent_of(x)?;
+                let y = if !forced || self.auto_coerces(&px, &base) {
+                    match self.to_structure_elem(&base, x, forced)? {
+                        Some(c) => Elem::poly_from_coeffs(&ctx, &[c])?,
+                        None => return Ok(None),
+                    }
+                } else if matches!(x, Value::Seq(_) | Value::Tuple(_)) || self.auto_coerces(&px, &Value::Struct(preimage.clone())) {
+                    match self.to_ring_elem(&preimage, x, true)? {
+                        Some(y) => y,
+                        None => return Ok(None),
+                    }
+                } else {
+                    return Ok(None);
+                };
+                Ok(Some(crate::intrinsics::upoly::res_reduce(&modulus, y)?))
             }
             RingKind::MPoly { base, .. } => {
                 let base = base.clone();
@@ -309,6 +356,18 @@ impl Interp {
         match self.to_ring_elem(st, x, true)? {
             Some(e) => Ok(Ok(make_elt(st, e))),
             None => {
+                // Name the coefficient that fails to coerce into a
+                // polynomial ring.
+                if let (Value::Seq(s), StructKind::Ring(r)) = (x, &st.kind) {
+                    if let RingKind::UPoly { base, .. } = &r.kind {
+                        let base = base.clone();
+                        for (i, v) in s.elems.iter().enumerate() {
+                            if self.to_structure_elem(&base, v, true)?.is_none() {
+                                return Ok(Err(Some(format!("Cannot coerce sequence element {} into the coefficient ring", i + 1))));
+                            }
+                        }
+                    }
+                }
                 // Explain failed coercions of rationals.
                 if let (Value::Rat(q), StructKind::Ring(r)) = (x, &st.kind) {
                     let den = q.denominator();
@@ -326,7 +385,7 @@ impl Interp {
     /// Coerce a ring element into the integers, rationals or reals (`Z ! x`).
     pub fn coerce_ring_elt_down(&mut self, target: &StructKind, e: &super::Elt) -> Option<Value> {
         // Constant polynomials behave like their coefficient.
-        if let RingKind::UPoly { base, .. } = &e.ring().kind {
+        if let RingKind::UPoly { base, .. } | RingKind::UPolyRes { base, .. } = &e.ring().kind {
             if e.x.poly_len() <= 1 {
                 let base = base.clone();
                 let c = if e.x.poly_len() == 0 { Elem::zero(e.x.ctx().base().unwrap()) } else { e.x.poly_coeff(0) };
@@ -339,6 +398,8 @@ impl Interp {
         match target {
             StructKind::Integers | StructKind::Rationals => {
                 let i = match &e.ring().kind {
+                    // Residues lift to Z, but not to Q.
+                    RingKind::Residue(_) | RingKind::Finite(_) if matches!(target, StructKind::Rationals) => return None,
                     RingKind::Residue(_) => e.residue()?,
                     RingKind::Finite(_) => e.residue()?,
                     RingKind::Complex(_) => {
