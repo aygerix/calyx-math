@@ -38,6 +38,7 @@ AbsoluteValue(<FldRatElt> x) -> FldRatElt
 Ceiling(<FldRatElt> x) -> RngIntElt
 Denominator(<FldRatElt> x) -> RngIntElt
 DickmanRho(<FldRatElt> u) -> FldReElt
+Evaluate(<RngUPolElt> f, <RngElt> r) -> RngElt
 Floor(<FldRatElt> x) -> RngIntElt
 GCD(<FldRatElt> x, <FldRatElt> y) -> FldRatElt
 GCD(<RngIntElt> x, <FldRatElt> y) -> FldRatElt
