@@ -12,10 +12,10 @@ use std::cmp::Ordering;
 use std::rc::Rc;
 
 use calyx_flint::{Integer, Real, bits_for_digits};
-use calyx_syntax::ast::BinOp;
+use calyx_syntax::ast::{AggKind, BinOp};
 use rustc_hash::FxHashMap;
 
-use super::one;
+use super::{hidden, hidden_inner, one};
 use crate::error::{ErrKind, ErrStyle, ErrorInfo, RResult, RuntimeError};
 use crate::interp::{CallArgs, Interp};
 use crate::ops::div_by_zero;
@@ -1215,7 +1215,7 @@ fn interpolation(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
         return Err(super::require(RuntimeError::runtime("Arguments 1 and 2 should have the same length")));
     }
     if p.elems.is_empty() {
-        return Err(RuntimeError::runtime("Argument 1 is not non-empty").in_context("Minimum"));
+        return Err(hidden_inner(RuntimeError::runtime("Argument 1 is not non-empty").in_context("Minimum")));
     }
     let xa: Vec<Real> = p.elems.iter().map(|x| real_arg(x).unwrap()).collect();
     let ya: Vec<Real> = v.elems.iter().map(|y| real_arg(y).unwrap()).collect();
@@ -1232,31 +1232,55 @@ fn interpolation(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 // `&+`, which adds the first half (rounded down) of a sequence to the rest,
 // recursively. As in Magma's package code, failed requirements name the
 // intrinsic unless the call is a statement of its own (`require`), and
-// failed operations do not name the operator.
+// failed operations do not name the operator and hide Magma's package
+// traceback: `hidden_inner` for errors in the intrinsic's own code, and
+// `hidden` for those in RombergQuadrature's trapezoidal refinement, a
+// function of its own in Magma, whose report shows the intrinsic's frame.
+
+/// How an error of Magma's package code is reported: `hidden` or
+/// `hidden_inner`.
+type Hide = fn(RuntimeError) -> RuntimeError;
 
 /// The sum of `value(lo), ..., value(hi - 1)`, evaluated in order, as by
 /// Magma's `&+`.
-fn tree_sum(it: &mut Interp, lo: u64, hi: u64, value: &mut dyn FnMut(&mut Interp, u64) -> RResult<Value>) -> RResult<Value> {
+fn tree_sum(it: &mut Interp, lo: u64, hi: u64, hide: Hide, value: &mut dyn FnMut(&mut Interp, u64) -> RResult<Value>) -> RResult<Value> {
     if hi - lo == 1 {
         return value(it, lo);
     }
     let mid = lo + (hi - lo) / 2;
-    let x = tree_sum(it, lo, mid, value)?;
-    let y = tree_sum(it, mid, hi, value)?;
-    arith(it, BinOp::Add, x, y)
+    let x = tree_sum(it, lo, mid, hide, value)?;
+    let y = tree_sum(it, mid, hi, hide, value)?;
+    arith(it, BinOp::Add, x, y, hide)
 }
 
 /// `x op y` in Magma's arithmetic, failing as its package code does
 /// (without naming the operator).
-fn arith(it: &mut Interp, op: BinOp, x: Value, y: Value) -> RResult<Value> {
+fn arith(it: &mut Interp, op: BinOp, x: Value, y: Value, hide: Hide) -> RResult<Value> {
     it.binop(op, x, y).map_err(|mut e| {
         e.context = Some(String::new());
-        e
+        hide(e)
     })
 }
 
 fn integrand(it: &mut Interp, f: &Value, x: Real) -> RResult<Value> {
     it.call_function(f, vec![Value::real(x)])
+}
+
+/// `&+[f(x0 + k del) : k in [0..m-1]]` in RombergQuadrature's trapezoidal
+/// refinement: the values form a sequence, which fails unless they have a
+/// common universe, before they are added.
+fn midpoint_sum(it: &mut Interp, f: &Value, x0: &Real, del: &Real, m: u64) -> RResult<Value> {
+    let mut vals = Vec::new();
+    for k in 0..m {
+        vals.push(integrand(it, f, x0.add(&del.mul_i64(k as i64)))?);
+    }
+    let seq = it.build_aggregate(AggKind::Seq, None, vals, false).map_err(|mut e| {
+        e.message = "No valid universe containing all elements".into();
+        e.context = Some("sequence construction".into());
+        hidden(e)
+    })?;
+    let Value::Seq(seq) = seq else { unreachable!("a sequence") };
+    tree_sum(it, 0, m, hidden, &mut |_, k| Ok(seq.elems[k as usize].clone()))
 }
 
 /// `&+[RealField() | f(x + k h) : k in ks]`: the values of f at those
@@ -1272,7 +1296,7 @@ fn default_field_sum(it: &mut Interp, f: &Value, x: &Real, h: &Real, ks: impl It
     for v in &vals {
         match it.coerce(&field, v) {
             Ok(Value::Real(r)) => xs.push(r.x.clone()),
-            _ => return Err(RuntimeError::runtime("Cannot coerce element into the universe").in_context("sequence construction")),
+            _ => return Err(hidden_inner(RuntimeError::runtime("Cannot coerce element into the universe").in_context("sequence construction"))),
         }
     }
     fn sum(xs: &[Real]) -> Real {
@@ -1312,11 +1336,11 @@ fn trapezoidal_quadrature(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (x, h) = interval_width(a, n);
     let fa = it.call_function(&f, vec![a.args[1].clone()])?;
     let fb = it.call_function(&f, vec![a.args[2].clone()])?;
-    let ends = arith(it, BinOp::Add, fa, fb)?;
-    let ends = arith(it, BinOp::Div, ends, Value::int(2))?;
+    let ends = arith(it, BinOp::Add, fa, fb, hidden_inner)?;
+    let ends = arith(it, BinOp::Div, ends, Value::int(2), hidden_inner)?;
     let inner = default_field_sum(it, &f, &x, &h, 1..n)?;
-    let s = arith(it, BinOp::Add, ends, inner)?;
-    one(arith(it, BinOp::Mul, Value::real(h), s)?)
+    let s = arith(it, BinOp::Add, ends, inner, hidden_inner)?;
+    one(arith(it, BinOp::Mul, Value::real(h), s, hidden_inner)?)
 }
 
 /// `SimpsonQuadrature(f, a, b, n)`: Simpson's rule on an even number n of
@@ -1331,15 +1355,15 @@ fn simpson_quadrature(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (x, h) = interval_width(a, n);
     let fa = it.call_function(&f, vec![a.args[1].clone()])?;
     let fb = it.call_function(&f, vec![a.args[2].clone()])?;
-    let s = arith(it, BinOp::Add, fa, fb)?;
+    let s = arith(it, BinOp::Add, fa, fb, hidden_inner)?;
     let odd = default_field_sum(it, &f, &x, &h, (1..n).step_by(2))?;
-    let odd = arith(it, BinOp::Mul, Value::int(4), odd)?;
-    let s = arith(it, BinOp::Add, s, odd)?;
+    let odd = arith(it, BinOp::Mul, Value::int(4), odd, hidden_inner)?;
+    let s = arith(it, BinOp::Add, s, odd, hidden_inner)?;
     let even = default_field_sum(it, &f, &x, &h, (2..n).step_by(2))?;
-    let even = arith(it, BinOp::Mul, Value::int(2), even)?;
-    let s = arith(it, BinOp::Add, s, even)?;
-    let h3 = arith(it, BinOp::Div, Value::real(h), Value::int(3))?;
-    one(arith(it, BinOp::Mul, h3, s)?)
+    let even = arith(it, BinOp::Mul, Value::int(2), even, hidden_inner)?;
+    let s = arith(it, BinOp::Add, s, even, hidden_inner)?;
+    let h3 = arith(it, BinOp::Div, Value::real(h), Value::int(3), hidden_inner)?;
+    one(arith(it, BinOp::Mul, h3, s, hidden_inner)?)
 }
 
 /// The number of trapezoidal sums RombergQuadrature extrapolates from:
@@ -1365,16 +1389,16 @@ fn romberg_quadrature(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
         Some(Value::Undef) | None => Value::real(Real::parse("1.0e-6", d).unwrap()),
         Some(p) => p.clone(),
     };
-    let eps = it.call_intrinsic_named(crate::sym::Sym::new("Abs"), vec![eps])?;
+    let eps = it.call_intrinsic_named(crate::sym::Sym::new("Abs"), vec![eps]).map_err(hidden_inner)?;
     // Magma prints false for K < 2, and otherwise ignores K.
     let k = a.param("K").cloned().unwrap_or(Value::int(5));
-    if matches!(arith(it, BinOp::Lt, k, Value::int(2))?, Value::Bool(true)) {
+    if matches!(arith(it, BinOp::Lt, k, Value::int(2), hidden_inner)?, Value::Bool(true)) {
         it.out.write("false\n");
     }
     let steps = match a.param("MaxSteps") {
         Some(Value::Int(n)) => n.to_i64().unwrap_or(i64::MAX),
         None => 20,
-        Some(_) => return Err(RuntimeError::runtime("Sequence range does not consist of integers").in_context("[ ... ]")),
+        Some(_) => return Err(hidden_inner(RuntimeError::runtime("Sequence range does not consist of integers").in_context("[ ... ]"))),
     };
     let f = a.args[0].clone();
     let (x, y) = (real_at(a, 1), real_at(a, 2));
@@ -1386,25 +1410,25 @@ fn romberg_quadrature(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
             None => {
                 let fa = it.call_function(&f, vec![a.args[1].clone()])?;
                 let fb = it.call_function(&f, vec![a.args[2].clone()])?;
-                let ends = arith(it, BinOp::Add, fa, fb)?;
-                let s = arith(it, BinOp::Mul, Value::real(span.clone()), ends)?;
-                arith(it, BinOp::Div, s, Value::int(2))?
+                let ends = arith(it, BinOp::Add, fa, fb, hidden)?;
+                let s = arith(it, BinOp::Mul, Value::real(span.clone()), ends, hidden)?;
+                arith(it, BinOp::Div, s, Value::int(2), hidden)?
             }
             Some(last) => {
                 let last = Value::real(last.clone());
                 let m = 1u64.checked_shl(j as u32 - 2).filter(|&m| m < 1 << 62).ok_or_else(exceeded_steps)?;
                 let del = span.mul_2exp(2 - j);
                 let x0 = x.add(&del.mul_2exp(-1));
-                let sum = tree_sum(it, 0, m, &mut |it, k| integrand(it, &f, x0.add(&del.mul_i64(k as i64))))?;
-                let t = arith(it, BinOp::Mul, Value::real(span.clone()), sum)?;
-                let t = arith(it, BinOp::Div, t, Value::Int(Integer::from_u64(m)))?;
-                let s = arith(it, BinOp::Add, last, t)?;
-                arith(it, BinOp::Div, s, Value::int(2))?
+                let sum = midpoint_sum(it, &f, &x0, &del, m)?;
+                let t = arith(it, BinOp::Mul, Value::real(span.clone()), sum, hidden)?;
+                let t = arith(it, BinOp::Div, t, Value::Int(Integer::from_u64(m)), hidden)?;
+                let s = arith(it, BinOp::Add, last, t, hidden)?;
+                arith(it, BinOp::Div, s, Value::int(2), hidden)?
             }
         };
         let s = match &s {
             Value::Complex(c) if c.im.is_zero() => c.re.round_to(d),
-            _ => to_real(&s, d).ok_or_else(|| RuntimeError::runtime("Sequence mutation failed").in_context("[]:="))?,
+            _ => to_real(&s, d).ok_or_else(|| hidden_inner(RuntimeError::runtime("Sequence mutation failed").in_context("[]:=")))?,
         };
         if ss.len() == ROMBERG_POINTS {
             hs.remove(0);
@@ -1415,8 +1439,8 @@ fn romberg_quadrature(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
         h = h.mul_2exp(-2);
         if j > ROMBERG_POINTS as i64 {
             let (v, dv) = neville(&hs, &ss, &Real::zero(d), d).expect("distinct points");
-            let tol = arith(it, BinOp::Mul, eps.clone(), Value::real(v.abs()))?;
-            if matches!(arith(it, BinOp::Lt, Value::real(dv.abs()), tol)?, Value::Bool(true)) {
+            let tol = arith(it, BinOp::Mul, eps.clone(), Value::real(v.abs()), hidden_inner)?;
+            if matches!(arith(it, BinOp::Lt, Value::real(dv.abs()), tol, hidden_inner)?, Value::Bool(true)) {
                 return one(Value::real(v));
             }
         }
@@ -1455,14 +1479,14 @@ fn numerical_derivative(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
             _ => Value::real(real_at(a, 2).round_to(bits).sub(&h).add(&step.mul_i64(k))),
         };
         let n = n as u64;
-        let sum = tree_sum(it, 0, n + 1, &mut |it, k| {
+        let sum = tree_sum(it, 0, n + 1, hidden_inner, &mut |it, k| {
             let v = it.call_function(&f, vec![point(k as i64)])?;
             let c = Integer::binomial_u64(n, k);
-            arith(it, BinOp::Mul, v, Value::Int(if k % 2 == 1 { -c } else { c }))
+            arith(it, BinOp::Mul, v, Value::Int(if k % 2 == 1 { -c } else { c }), hidden_inner)
         })?;
-        arith(it, BinOp::Div, sum, Value::real(step.neg().pow_i64(n as i64)))?
+        arith(it, BinOp::Div, sum, Value::real(step.neg().pow_i64(n as i64)), hidden_inner)?
     };
-    one(it.coerce(&parent, &r).map_err(|e| e.in_context("!"))?)
+    one(it.coerce(&parent, &r).map_err(|e| hidden_inner(e.in_context("!")))?)
 }
 
 /// `DiscreteFourierTransform(E)`: `F[k] = Σ_j E[j] e^(-2πi(j-1)(k-1)/n)`.

@@ -192,3 +192,34 @@ NumericalDerivative(Exp, 1, C!1);
 NumericalDerivative(func< x | Exp(x) >, R!1, C!1);
 try x := NumericalDerivative(func< x | "a" >, 1, C!1); x; catch e print e`Object; end try;
 try x := NumericalDerivative(func< x | "a" >, 0, C!1); x; catch e print e`Object; end try;
+
+// Errors in the package code of these intrinsics, reported with Magma's
+// traceback hidden: with the intrinsic's frame for errors in Romberg's
+// trapezoidal refinement, without it for errors in the intrinsic's own
+// code, and after the frames of user functions.
+RombergQuadrature(func< x | "a" >, R!0, R!1);
+x := RombergQuadrature(func< x | x gt 0 and x lt 1 select "a" else x >, R!0, R!1);
+RombergQuadrature(func< x | x gt 0 and x lt 1/2 select "a" else x >, R!0, R!1);
+RombergQuadrature(func< x | x gt 0 and x lt 1 select [x] else x >, R!0, R!1);
+RombergQuadrature(func< x | C![x, 1] >, R!0, R!1);
+RombergQuadrature(func< x | x^2 >, R!0, R!1 : K := "a");
+RombergQuadrature(func< x | x^2 >, R!0, R!1 : MaxSteps := 1/2);
+RombergQuadrature(func< x | x^2 >, R!0, R!1 : Precision := [1]);
+RombergQuadrature(func< x | x^2 >, R!0, R!1 : MaxSteps := 1);
+h := function(y) return RombergQuadrature(func< x | "a" >, R!0, R!1); end function;
+h(1);
+try x := RombergQuadrature(func< x | "a" >, R!0, R!1); catch e print e; end try;
+try x := RombergQuadrature(func< x | x^2 >, R!0, R!1 : K := "a"); catch e print e; end try;
+TrapezoidalQuadrature(func< x | "a" >, R!0, R!1, 2);
+TrapezoidalQuadrature(func< x | x gt 0 select "a" else x >, R!0, R!1, 2);
+TrapezoidalQuadrature(func< x | C![x, 1] >, R!0, R!1, 2);
+h := function(y) return TrapezoidalQuadrature(func< x | "a" >, R!0, R!1, 2); end function;
+h(1);
+SimpsonQuadrature(func< x | "a" >, R!0, R!1, 2);
+SimpsonQuadrature(func< x | x gt 0 and x lt 1 select C![x, 1] else x >, R!0, R!1, 2);
+NumericalDerivative(func< x | "a" >, 1, C!1);
+NumericalDerivative(func< x | "a" >, 0, C!1);
+NumericalDerivative(func< x | x gt 1 select "a" else x >, 2, R!1);
+NumericalDerivative(func< x | [x] >, 1, R!1);
+Interpolation([R | ], [R | ], R!2);
+try Interpolation([R | ], [R | ], R!2); catch e print e; end try;
