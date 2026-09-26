@@ -54,8 +54,7 @@ pub struct Printer {
     /// Byte offset in `buf` where the text of the current line starts
     /// (after its indentation); spaces before it are not break points.
     line_start: usize,
-    /// Set once a quoted string has been written: Magma does not wrap such
-    /// output.
+    /// No line breaking (`Sprint`, and inside quoted strings).
     pub no_wrap: bool,
     /// Lines start without indentation, as in `Sprint` and `Sprintf`.
     pub bare: bool,
@@ -133,23 +132,83 @@ impl Printer {
         self.line_start = self.buf.len();
     }
 
-    /// Write an atomic piece of text. One too long for any line is broken
-    /// where it stands (with backslashes) rather than moved to a new line.
+    /// Write an atomic piece of text, such as an integer. The word it ends
+    /// (after the last space on the line) may end in the last column if it
+    /// starts in the second half of the line, and otherwise must end before
+    /// it. One that does not fit moves to the next line if it starts in the
+    /// second half; otherwise it is broken where it stands (with backslashes).
     pub fn atom(&mut self, s: &str, _breakable: bool) {
-        if s.chars().count() + self.cont > self.width {
-            self.line_start = self.buf.len();
+        let n = s.chars().count();
+        if self.no_wrap || n == 0 {
+            self.write(s);
+            return;
         }
-        self.write(s);
+        let space = self.buf[self.line_start..].rfind(' ').map(|j| self.line_start + j + 1);
+        let late = self.col.saturating_sub(self.buf[space.unwrap_or(self.line_start)..].chars().count()) > self.width / 2;
+        if self.col + n < self.width + late as usize {
+            self.write(s);
+            return;
+        }
+        if let (true, Some(from)) = (late, space) {
+            let tail = self.buf.split_off(from);
+            self.break_line();
+            self.write(&tail);
+            if self.col + n < self.width {
+                self.write(s);
+                return;
+            }
+        }
+        // Each line holds all it can but the backslash.
+        self.line_start = self.buf.len();
+        for c in s.chars() {
+            if self.col + 1 >= self.width {
+                self.buf.push('\\');
+                self.break_line();
+            }
+            self.buf.push(c);
+            self.col += 1;
+        }
     }
 
-    /// Write text that breaks at spaces, each word an atom (a string's
-    /// contents, `printf` output).
+    /// Write a quoted string. Magma never breaks one, and the line counts as
+    /// empty after it.
+    pub fn quoted(&mut self, s: &str) {
+        let saved = self.no_wrap;
+        self.no_wrap = true;
+        self.write(s);
+        self.no_wrap = saved;
+        self.col = 0;
+        self.line_start = self.buf.len();
+    }
+
+    /// Write a string's contents: they break at spaces, each word placed as
+    /// an atom.
     pub fn text(&mut self, s: &str) {
+        for (k, line) in s.split('\n').enumerate() {
+            if k > 0 {
+                self.put('\n');
+            }
+            for (i, w) in line.split(' ').enumerate() {
+                if i > 0 {
+                    self.put(' ');
+                }
+                self.atom(w, true);
+            }
+        }
+    }
+
+    /// Write text that fills each line and breaks at spaces (error messages,
+    /// `printf` output). A word too long for any line is broken where it
+    /// stands.
+    pub fn words(&mut self, s: &str) {
         for (i, w) in s.split(' ').enumerate() {
             if i > 0 {
                 self.put(' ');
             }
-            self.atom(w, true);
+            if w.chars().count() + self.cont > self.width {
+                self.line_start = self.buf.len();
+            }
+            self.write(w);
         }
     }
 }
@@ -353,8 +412,7 @@ impl Interp {
             }
             Value::Str(s) => {
                 if p.level == Level::Magma {
-                    p.no_wrap = true;
-                    p.write(&quote_string(s));
+                    p.quoted(&quote_string(s));
                 } else {
                     p.text(s);
                 }
@@ -490,10 +548,7 @@ impl Interp {
                     }
                     // Strings in tuples print with quotes.
                     match e {
-                        Value::Str(s) => {
-                            p.no_wrap = true;
-                            p.write(&quote_string(s));
-                        }
+                        Value::Str(s) => p.quoted(&quote_string(s)),
                         _ => self.fmt(p, e, indent)?,
                     }
                 }
@@ -1115,7 +1170,7 @@ impl Interp {
 /// Wrap text at `width` columns with the same rules as the printer.
 pub fn wrap_text_output(text: &str, start_col: usize, width: usize) -> String {
     let mut p = Printer::new(start_col, width, Level::Default);
-    p.text(text);
+    p.words(text);
     p.buf
 }
 
