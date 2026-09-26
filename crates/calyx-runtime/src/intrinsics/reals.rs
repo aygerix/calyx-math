@@ -1212,7 +1212,7 @@ fn neville(xa: &[Real], ya: &[Real], x: &Real, bits: u64) -> Option<(Real, Real)
 fn interpolation(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (Value::Seq(p), Value::Seq(v)) = (&a.args[0], &a.args[1]) else { unreachable!() };
     if p.elems.len() != v.elems.len() {
-        return Err(super::bare(RuntimeError::runtime("Arguments 1 and 2 should have the same length")));
+        return Err(super::require(RuntimeError::runtime("Arguments 1 and 2 should have the same length")));
     }
     if p.elems.is_empty() {
         return Err(RuntimeError::runtime("Argument 1 is not non-empty").in_context("Minimum"));
@@ -1220,7 +1220,7 @@ fn interpolation(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let xa: Vec<Real> = p.elems.iter().map(|x| real_arg(x).unwrap()).collect();
     let ya: Vec<Real> = v.elems.iter().map(|y| real_arg(y).unwrap()).collect();
     let bits = v.universe.as_ref().and_then(bits_of).unwrap_or_else(|| ya[0].prec());
-    let (y, dy) = neville(&xa, &ya, &real_at(a, 2), bits).ok_or_else(|| super::bare(RuntimeError::runtime("Two of the x input values are identical (within precision)")))?;
+    let (y, dy) = neville(&xa, &ya, &real_at(a, 2), bits).ok_or_else(|| super::require(RuntimeError::runtime("Two of the x input values are identical (within precision)")))?;
     Ok(vals![Value::real(y), Value::real(dy)])
 }
 
@@ -1230,8 +1230,9 @@ fn interpolation(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 // precision of its operands) on the values of the integrand, which may be
 // integers, rationals, reals or complex numbers. Sums of values are as by
 // `&+`, which adds the first half (rounded down) of a sequence to the rest,
-// recursively. As in Magma's package code, failed requirements do not name
-// the intrinsic and failed operations do not name the operator.
+// recursively. As in Magma's package code, failed requirements name the
+// intrinsic unless the call is a statement of its own (`require`), and
+// failed operations do not name the operator.
 
 /// The sum of `value(lo), ..., value(hi - 1)`, evaluated in order, as by
 /// Magma's `&+`.
@@ -1289,7 +1290,7 @@ fn default_field_sum(it: &mut Interp, f: &Value, x: &Real, h: &Real, ks: impl It
 fn intervals(a: &CallArgs, min: i64) -> RResult<i64> {
     let n = a.int(3)?;
     if n.sign() < 0 || n.to_i64().is_some_and(|n| n < min) {
-        return Err(super::bare(RuntimeError::runtime(format!("Argument 4 ({n}) should be >= {min}"))));
+        return Err(super::require(RuntimeError::runtime(format!("Argument 4 ({n}) should be >= {min}"))));
     }
     n.to_i64().ok_or_else(|| RuntimeError::runtime("Argument 4 is too large"))
 }
@@ -1324,7 +1325,7 @@ fn trapezoidal_quadrature(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 fn simpson_quadrature(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = intervals(a, 2)?;
     if n % 2 == 1 {
-        return Err(super::bare(RuntimeError::runtime("Argument 4 must be even")));
+        return Err(super::require(RuntimeError::runtime("Argument 4 must be even")));
     }
     let f = a.args[0].clone();
     let (x, h) = interval_width(a, n);
@@ -1431,7 +1432,7 @@ fn romberg_quadrature(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 fn numerical_derivative(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int(1)?;
     if n.sign() < 0 {
-        return Err(super::bare(RuntimeError::runtime("Derivative must be at least 0")));
+        return Err(super::require(RuntimeError::runtime("Derivative must be at least 0")));
     }
     let n = n.to_i64().filter(|&n| n < 1 << 20).ok_or_else(|| RuntimeError::runtime("Argument 2 is too large"))?;
     let (f, z) = (a.args[0].clone(), a.args[2].clone());
