@@ -106,6 +106,7 @@ Argument types given: RngIntElt, RngIntElt, RngIntElt
 Runtime error in 'pMinus1': Argument 1 should be greater than 1
 
 0
+1000033 4
 [ <1000003, 1>, <1000033, 1> ]
 []
 [ <2, 3>, <3, 2>, <5, 1> ]

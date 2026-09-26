@@ -22,6 +22,7 @@ pub mod mat;
 mod packed;
 pub mod polroots;
 mod modular;
+pub mod modn;
 pub mod mpfr;
 mod nmod;
 pub mod nmod_poly;
