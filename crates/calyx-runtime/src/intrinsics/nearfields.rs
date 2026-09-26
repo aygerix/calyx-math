@@ -1056,6 +1056,71 @@ fn kernel(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     one(Value::Struct(it.default_field(&p, h)?))
 }
 
+// ----- isomorphisms ----------------------------------------------------------------------------
+
+/// The isomorphism x -> x^(p^j) from one Dickson nearfield to another.
+struct NfdIso {
+    from: Rc<Struct>,
+    to: Rc<Struct>,
+    /// The power j of the Frobenius, and the degree d of the field over
+    /// its prime field.
+    j: u64,
+    d: u64,
+}
+
+impl NativeMap for NfdIso {
+    fn apply(&self, it: &mut Interp, _m: &MapObj, x: &Value) -> RResult<Value> {
+        let Ok(Value::Nfd(x)) = it.coerce_into_nearfield(&self.from, x, false)? else {
+            return Err(RuntimeError::runtime("Element is not in the domain of the map").in_context("map application"));
+        };
+        Ok(elt(&self.to, x.x.fq_frobenius(self.j as i64)?))
+    }
+
+    fn preimage(&self, it: &mut Interp, _m: &MapObj, y: &Value) -> RResult<Value> {
+        let Ok(Value::Nfd(y)) = it.coerce_into_nearfield(&self.to, y, false)? else {
+            return Err(RuntimeError::runtime("Element is not in the codomain of the map").in_context("@@"));
+        };
+        Ok(elt(&self.from, y.x.fq_frobenius(((self.d - self.j) % self.d) as i64)?))
+    }
+
+    fn rule_with_inverse(&self) -> bool {
+        true
+    }
+
+    fn image(&self, _it: &mut Interp, _m: &MapObj) -> Option<RResult<Value>> {
+        Some(Err(RuntimeError::runtime("Image is not computable or representable")))
+    }
+}
+
+/// `IsIsomorphic(N1, N2)` for Dickson nearfields. The field automorphism
+/// x -> x^(p^j) takes the variant s of a pair to the variant s p^j modulo
+/// v, so N1 and N2 are isomorphic when they have the same pair and their
+/// variants are in one class; the isomorphism is that for the least j.
+/// (Magma 2.22 raises x to the power p^j modulo v instead, which is no
+/// isomorphism when p^j > v.)
+fn is_isomorphic(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+    let (m, n) = (nfd_arg(a, 0)?, nfd_arg(a, 1)?);
+    let (NfdKind::Dickson { p, h, q, v, s, .. }, NfdKind::Dickson { q: q2, v: v2, s: t, .. }) = (&nfd(&m).kind, &nfd(&n).kind) else {
+        return Err(RuntimeError::runtime("Bad argument types"));
+    };
+    let (v, not_iso) = (*v, Ok(vals![Value::Bool(false), Value::Undef]));
+    if q != q2 || v != *v2 {
+        return not_iso;
+    }
+    let pm = p.mod_u64(v);
+    let (mut x, mut j) = (*s, 0);
+    while x != *t {
+        x = (x as u128 * pm as u128 % v as u128) as u64;
+        j += 1;
+        if x == *s {
+            return not_iso;
+        }
+    }
+    let imp = NfdIso { from: m.clone(), to: n.clone(), j, d: h * v };
+    let map = MapObj { kind: MapKind::Map, domain: Value::Struct(m), codomain: Value::Struct(n), imp: MapImpl::Native(Rc::new(imp)) };
+    Ok(vals![Value::Bool(true), Value::Map(Rc::new(map))])
+}
+
 pub fn register(it: &mut Interp) {
     // Magma's attributes of nearfields and their elements.
     let dickson = ["gf", "h", "matgrp", "p", "phi", "prim", "psi", "q", "rho", "sz", "twist", "v"];
@@ -1101,6 +1166,8 @@ pub fn register(it: &mut Interp) {
     it.def("Random", "N::Nfd -> NfdElt", "A random element of N.", random);
     it.def("PrimeField", "N::Nfd -> FldFin", "The prime field of N.", prime_field);
     it.def("Kernel", "N::Nfd -> FldFin", "The kernel of N, as a finite field.", kernel);
+
+    it.def("IsIsomorphic", "N1::NfdDck, N2::NfdDck -> BoolElt, Map", "Whether N1 and N2 are isomorphic, and an isomorphism if they are.", is_isomorphic);
 }
 
 #[cfg(test)]

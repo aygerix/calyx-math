@@ -433,6 +433,11 @@ pub trait NativeMap {
         false
     }
 
+    /// Whether the map prints as given by a rule that has an inverse.
+    fn rule_with_inverse(&self) -> bool {
+        false
+    }
+
     /// Whether `Inverse` applies (Magma refuses it for maps with no inverse).
     fn has_inverse(&self) -> bool {
         true
