@@ -524,8 +524,7 @@ impl Interp {
                             let mut e = not_same(y, x, op);
                             if nfd(&x.parent).type_id() != nfd(&y.parent).type_id() {
                                 // Magma's report shows the frame of its `^`, as for an intrinsic.
-                                let arg = |it: &mut Interp, v: &Value| it.format_flat(v, crate::print::Level::Default).unwrap_or_default();
-                                let args = vec![("x".to_string(), arg(self, a)), ("y".to_string(), arg(self, b))];
+                                let args = vec![("x".to_string(), self.frame_arg(a)), ("y".to_string(), self.frame_arg(b))];
                                 e.trace.push(crate::error::TraceFrame { name: Sym::from("^"), span: None, args });
                             }
                             e
