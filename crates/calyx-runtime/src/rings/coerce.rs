@@ -121,6 +121,14 @@ impl Interp {
         if self.auto_coerces(a, b) {
             return Ok(Some(b.clone()));
         }
+        self.real_poly_cover(a, b)
+    }
+
+    /// The polynomial ring over a real or complex field containing the
+    /// univariate polynomial ring `a` and the structure `b` (or the other way
+    /// round), made when needed: Magma's one cover of structures that makes
+    /// a ring, for arithmetic and aggregates alike.
+    pub fn real_poly_cover(&mut self, a: &Value, b: &Value) -> RResult<Option<Value>> {
         let base_of = |v: &Value| ring_of(v).and_then(|(_, r)| match &r.kind {
             RingKind::UPoly { base, .. } => Some(base.clone()),
             _ => None,

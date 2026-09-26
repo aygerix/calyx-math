@@ -311,7 +311,7 @@ impl Interp {
                 (Seq(x), Seq(y)) => {
                     let u = match (&x.universe, &y.universe) {
                         (None, u) | (u, None) => u.clone(),
-                        (Some(p), Some(q)) => Some(self.common_universe(p, q).ok_or_else(|| RuntimeError::runtime("Incompatible sequences").in_context("cat"))?),
+                        (Some(p), Some(q)) => Some(self.covering_universe(p, q)?.ok_or_else(|| RuntimeError::runtime("Incompatible sequences").in_context("cat"))?),
                     };
                     let mut elems = Vec::with_capacity(x.elems.len() + y.elems.len());
                     elems.extend(x.elems.iter().cloned());
@@ -624,7 +624,7 @@ impl Interp {
             _ if is_num(a) && is_num(b) => rat_of(a) == rat_of(b),
             (Seq(x), Seq(y)) => {
                 if let (Some(u), Some(v)) = (&x.universe, &y.universe) {
-                    if self.common_universe(u, v).is_none() {
+                    if self.covering_universe(u, v)?.is_none() {
                         return incompatible("Incompatible sequences");
                     }
                 }
@@ -648,7 +648,7 @@ impl Interp {
             }
             (Set(_), Set(_)) | (ISet(_), ISet(_)) | (MSet(_), MSet(_)) => {
                 if let (Some(u), Some(v)) = (agg_universe(a), agg_universe(b)) {
-                    if self.common_universe(&u, &v).is_none() {
+                    if self.covering_universe(&u, &v)?.is_none() {
                         return incompatible("Incompatible sets");
                     }
                 }
@@ -786,10 +786,10 @@ impl Interp {
 
     fn set_op(&mut self, op: BinOp, a: &Value, b: &Value) -> RResult<Option<Value>> {
         let name = op.intrinsic_name();
-        let univ = |me: &Interp, x: &Option<Value>, y: &Option<Value>| -> RResult<Option<Value>> {
+        let univ = |me: &mut Interp, x: &Option<Value>, y: &Option<Value>| -> RResult<Option<Value>> {
             Ok(match (x, y) {
                 (None, u) | (u, None) => u.clone(),
-                (Some(p), Some(q)) => Some(me.common_universe(p, q).ok_or_else(|| RuntimeError::runtime("Incompatible sets").in_context(name))?),
+                (Some(p), Some(q)) => Some(me.covering_universe(p, q)?.ok_or_else(|| RuntimeError::runtime("Incompatible sets").in_context(name))?),
             })
         };
         match (a, b) {
