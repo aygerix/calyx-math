@@ -30,7 +30,7 @@ pub enum GrError {
 
 pub type GrResult<T> = Result<T, GrError>;
 
-fn check(status: c_int) -> GrResult<()> {
+pub(crate) fn check(status: c_int) -> GrResult<()> {
     if status == 0 {
         Ok(())
     } else if status & 1 != 0 {
@@ -49,7 +49,7 @@ pub enum Truth {
 }
 
 impl Truth {
-    fn from_raw(t: sys::truth_t) -> Truth {
+    pub(crate) fn from_raw(t: sys::truth_t) -> Truth {
         match t {
             sys::truth_t_T_TRUE => Truth::True,
             sys::truth_t_T_FALSE => Truth::False,

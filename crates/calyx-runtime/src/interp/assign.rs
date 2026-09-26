@@ -305,9 +305,11 @@ impl Interp {
                 Rc::make_mut(s).fact = false;
             }
         }
+        let matrix = matches!(cur, Value::Mat(_));
         let r = self.set_path(&mut cur, &path, v);
         self.put_place(root, cur, f);
-        r
+        // Magma reports errors of assignments into matrices at the index.
+        if matrix { r.map_err(|e| e.at(lv_root_span(lv))) } else { r }
     }
 
     /// Make the target of an assignment unassigned (for `_` results).
@@ -439,6 +441,17 @@ impl Interp {
                 let r = self.set_path(&mut inner, rest, v);
                 *a.map.get_mut(&key).unwrap() = inner;
                 r
+            }
+            // A[i, j] := x (or A[i][j] := x) sets an entry of a matrix.
+            Value::Mat(_) => {
+                let mut ids = vec![i.clone()];
+                for step in rest {
+                    match step {
+                        PathElem::Index(j) => ids.push(j.clone()),
+                        PathElem::Attr(_) => return Err(RuntimeError::statement(":=", "Bad argument types")),
+                    }
+                }
+                crate::intrinsics::matrices::set_index(self, cur, &ids, v)
             }
             Value::ISet(_) => Err(RuntimeError::runtime("Indexed sets cannot be modified by indexing").in_context("[]:=")),
             Value::Str(_) => Err(RuntimeError::runtime("Strings cannot be modified by indexing").in_context("[]:=")),
@@ -808,6 +821,10 @@ impl Interp {
     // ----- reading by index -----------------------------------------------
 
     pub fn index_multi(&mut self, mut base: Value, ids: &[Value]) -> RResult<Value> {
+        // A[i, j] is an entry of a matrix, not a row indexed again.
+        if let Value::Mat(m) = &base {
+            return crate::intrinsics::matrices::index(self, m, ids);
+        }
         for i in ids {
             base = self.index_one(base, i)?;
         }
@@ -911,6 +928,7 @@ impl Interp {
                     None => Err(RuntimeError::runtime(format!("Extended type index {k} is out of range")).in_context(ctx)),
                 }
             }
+            Value::Mat(m) => crate::intrinsics::matrices::index(self, m, std::slice::from_ref(i)),
             Value::Rec(_) => Err(RuntimeError::runtime("Records are accessed with ` not []").in_context(ctx)),
             Value::Struct(st) if matches!(st.kind, StructKind::Cartesian(_) | StructKind::Coproduct(_)) => {
                 let (StructKind::Cartesian(parts) | StructKind::Coproduct(parts)) = &st.kind else { unreachable!() };

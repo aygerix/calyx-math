@@ -35,6 +35,10 @@ true
 true
 Abs(<FldRatElt> x) -> FldRatElt
 AbsoluteValue(<FldRatElt> x) -> FldRatElt
+AddColumn(~<Mtrx> A, <RngElt> c, <RngIntElt> i, <RngIntElt> j)
+AddColumn(<Mtrx> A, <RngElt> c, <RngIntElt> i, <RngIntElt> j) -> Mtrx
+AddRow(~<Mtrx> A, <RngElt> c, <RngIntElt> i, <RngIntElt> j)
+AddRow(<Mtrx> A, <RngElt> c, <RngIntElt> i, <RngIntElt> j) -> Mtrx
 Arccos(<FldRatElt> x) -> FldReElt
 Arccosec(<FldRatElt> x) -> FldReElt
 Arccot(<FldRatElt> x) -> FldReElt
@@ -175,6 +179,10 @@ LogIntegral(<FldRatElt> x) -> FldReElt
 MinimalField(<FldRatElt> q) -> FldRat
 MinimalPolynomial(<FldRatElt> q) -> RngUPolElt
 Modulus(<FldRatElt> x) -> FldReElt
+MultiplyColumn(~<Mtrx> A, <RngElt> c, <RngIntElt> i)
+MultiplyColumn(<Mtrx> A, <RngElt> c, <RngIntElt> i) -> Mtrx
+MultiplyRow(~<Mtrx> A, <RngElt> c, <RngIntElt> i)
+MultiplyRow(<Mtrx> A, <RngElt> c, <RngIntElt> i) -> Mtrx
 Norm(<FldRatElt> q) -> FldRatElt
 Numerator(<FldRatElt> x) -> RngIntElt
 OrderOfRootOfUnity(<RngElt> r, <RngIntElt> n) -> RngIntElt
@@ -193,6 +201,8 @@ Re(<FldRatElt> x) -> FldReElt
 Real(<FldRatElt> x) -> FldReElt
 Root(<FldRatElt> x, <RngIntElt> n) -> FldReElt
 Round(<FldRatElt> x) -> RngIntElt
+ScalarMatrix(<RngIntElt> n, <RngElt> s) -> Mtrx
+ScalarMatrix(<Rng> R, <RngIntElt> n, <RngElt> s) -> Mtrx
 Sec(<FldRatElt> x) -> FldReElt
 Sech(<FldRatElt> x) -> FldReElt
 Sign(<FldRatElt> x) -> RngIntElt

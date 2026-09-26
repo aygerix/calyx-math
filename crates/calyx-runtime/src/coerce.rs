@@ -48,6 +48,7 @@ impl Interp {
             Value::AbElt(e) => Value::Struct(e.group.clone()),
             Value::Nfd(e) => Value::Struct(e.parent.clone()),
             Value::Drch(e) => Value::Struct(e.group.clone()),
+            Value::Mat(m) => Value::Struct(m.parent.clone()),
             Value::Obj(o) => {
                 let sym = Sym::new("Parent");
                 if self.select_signature(sym, std::slice::from_ref(v), &[false], false).is_some_and(|s| !s.generic) {
@@ -205,6 +206,7 @@ impl Interp {
                 StructKind::AbGroup(_) => self.coerce_into_abgroup(st, x, false),
                 StructKind::Nearfield(_) => self.coerce_into_nearfield(st, x, false),
                 StructKind::DrchGroup(_) => crate::intrinsics::residue::dirichlet::coerce(self, st, x),
+                StructKind::Matrices(_) => crate::intrinsics::matrices::coerce(self, st, x),
                 StructKind::IntIdeal(n) => match x {
                     Value::Int(_) | Value::Rat(_) => {
                         let v = match self.try_coerce(&Value::integers(), x)? {
@@ -995,6 +997,7 @@ impl Interp {
                 StructKind::Nearfield(_) => TypeVal::Cat(t::NFD_ELT),
                 StructKind::Automorphisms(_) => TypeVal::Cat(t::MAP),
                 StructKind::DrchGroup(_) => TypeVal::Cat(t::GRP_DRCH_ELT),
+                StructKind::Matrices(m) => TypeVal::Ext(m.elt_type(), Rc::from(vec![TypeArg::Type(TypeVal::Cat(m.ring.type_id()))])),
             },
             Value::Seq(s) => match s.universe.clone() {
                 Some(u) => self.element_type_of(&u),
@@ -1044,7 +1047,10 @@ impl Interp {
                 (crate::rings::RingKind::UPoly { .. } | crate::rings::RingKind::UPolyRes { .. }, Some(b)) => TypeVal::Ext(v.type_id(), Rc::from(vec![TypeArg::Type(TypeVal::Cat(b.type_id()))])),
                 _ => TypeVal::Cat(v.type_id()),
             },
+            // Matrices show their coefficient ring.
+            Value::Mat(m) => TypeVal::Ext(v.type_id(), Rc::from(vec![TypeArg::Type(TypeVal::Cat(m.ring().type_id()))])),
             Value::Struct(s) => match &s.kind {
+                StructKind::Matrices(m) => TypeVal::Ext(v.type_id(), Rc::from(vec![TypeArg::Type(TypeVal::Cat(m.ring.type_id()))])),
                 StructKind::PowerSeq(u) => tmp(u, t::POW_SEQ_ENUM),
                 StructKind::PowerSet(u) => tmp(u, t::POW_SET_ENUM),
                 StructKind::Ring(r) if matches!(r.kind, crate::rings::RingKind::UPoly { .. } | crate::rings::RingKind::UPolyRes { .. }) => TypeVal::Ext(v.type_id(), Rc::from(vec![TypeArg::Type(TypeVal::Cat(r.base().unwrap().type_id()))])),
@@ -1110,6 +1116,7 @@ impl Interp {
                 StructKind::Nearfield(_) => TypeVal::Cat(t::NFD_ELT),
                 StructKind::Automorphisms(_) => TypeVal::Cat(t::MAP),
                 StructKind::DrchGroup(_) => TypeVal::Cat(t::GRP_DRCH_ELT),
+                StructKind::Matrices(m) => TypeVal::Ext(m.elt_type(), Rc::from(vec![TypeArg::Type(TypeVal::Cat(m.ring.type_id()))])),
             },
             Value::Seq(s) => s.universe.as_ref().map(|u| self.static_element_type(u)).unwrap_or(TypeVal::Cat(t::ANY)),
             Value::Set(s) => s.universe.as_ref().map(|u| self.static_element_type(u)).unwrap_or(TypeVal::Cat(t::ANY)),
