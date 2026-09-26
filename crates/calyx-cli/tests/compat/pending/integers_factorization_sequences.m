@@ -74,3 +74,18 @@ FactoredCarmichaelLambda([<2, 1>, <2, 1>]);
 SeqFact([<2, 2^30 - 1>]);
 SeqFact([<2, 2^30>]);
 Factorization(2)^(2^40);
+
+// Assigning an entry of a shared factorization sequence (another variable,
+// or $1, holds it) copies it as a plain sequence (#63).
+F := Factorization(12); G := F; F[1] := <2, 3>; Type(F); Type(G);
+F := Factorization(12); G := F; G[1] := <2, 3>; Type(F); Type(G);
+F := Factorization(12); F[1] := <2, 3>; Type(F);
+F := Factorization(12); G := F; delete F; G[1] := <2, 3>; Type(G);
+F := Factorization(12); G := F; Append(~G, <5, 1>); Type(F); Type(G);
+F := Factorization(12); Append(~F, <5, 1>); Type(F);
+F := Factorization(12); G := F; G[1,2] := 3; Type(G);
+F := Factorization(12); G := F; F := 0; G[1] := <2, 3>; Type(G);
+F := Factorization(12); H := [F]; H[1][1] := <2, 3>; Type(H[1]); Type(F);
+F := Factorization(12); F; F[1] := <2, 3>; Type(F);
+F := Factorization(12); print F; F[1] := <2, 3>; Type(F);
+F := Factorization(12); x := F; x := 0; F[1] := <2, 3>; Type(F);

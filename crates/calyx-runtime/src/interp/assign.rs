@@ -291,6 +291,13 @@ impl Interp {
             };
             return Err(e.at(lv_root_span(lv)));
         }
+        // Magma copies a shared factorization sequence (another variable,
+        // or $1, holds it) as a plain sequence when an entry is assigned.
+        if let (Value::Seq(s), Some(PathElem::Index(_))) = (&mut cur, path.first()) {
+            if s.fact && Rc::strong_count(s) > 1 {
+                Rc::make_mut(s).fact = false;
+            }
+        }
         let r = self.set_path(&mut cur, &path, v);
         self.put_place(root, cur, f);
         r
