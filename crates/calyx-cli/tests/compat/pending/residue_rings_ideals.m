@@ -39,3 +39,7 @@ K, f := I / J; K; f;
 f(3); f(6); 3 @@ f;
 Domain(f); Codomain(f);
 K2, g := ideal<Z | 5> / ideal<Z | 10>;
+Z := Integers(); I := ideal<Z | 12>; J := ideal<Z | 4>;
+I / J;
+Z / I;
+K, f := Z / I;

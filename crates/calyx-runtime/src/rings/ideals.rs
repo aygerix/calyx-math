@@ -145,7 +145,7 @@ impl Interp {
             // its second value).
             BinOp::Div if n.is_zero() => return Err(RuntimeError::runtime("Division by zero").in_context("mod")),
             BinOp::Div if contained(&m, &n) => self.int_ideal(&m.divexact(&n).abs()),
-            BinOp::Div => return Err(RuntimeError::runtime("Argument 2 must divide argument 1.").in_context("/")),
+            BinOp::Div => return Err(RuntimeError::runtime("Argument 2 must divide argument 1.")),
             _ => return Ok(None),
         }))
     }
