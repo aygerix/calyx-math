@@ -122,8 +122,7 @@ true
 
 >> Z`Unknown := 1;
     ^
-Runtime error: 'Unknown' is not a valid attribute of objects of type RngInt
-
+Runtime error in :=: Invalid attribute 'Unknown' for this structure
 2
 level one
 value 42

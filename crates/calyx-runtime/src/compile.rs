@@ -760,8 +760,9 @@ impl<'a> Compiler<'a> {
             ExprKind::Assigned(a) => {
                 let target = match &a.kind {
                     ExprKind::Ident(_) | ExprKind::Paren(_) => AssignedEx::Var(self.expr(a)?),
-                    ExprKind::Attr(b, n) => AssignedEx::Attr(self.expr(b)?, Sym::new(n)),
-                    ExprKind::AttrDyn(b, n) => AssignedEx::AttrDyn(self.expr(b)?, self.expr(n)?),
+                    // Errors point at the backtick.
+                    ExprKind::Attr(b, n) => AssignedEx::Attr(self.expr(b)?, Sym::new(n), Span { lo: b.span.hi, ..a.span }),
+                    ExprKind::AttrDyn(b, n) => AssignedEx::AttrDyn(self.expr(b)?, self.expr(n)?, Span { lo: b.span.hi, ..a.span }),
                     ExprKind::Index(b, idx) => AssignedEx::Index(self.expr(b)?, self.expr_list(idx)?),
                     _ => return cerr(span, "bad syntax: 'assigned' needs an identifier or attribute"),
                 };

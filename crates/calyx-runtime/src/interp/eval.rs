@@ -435,16 +435,16 @@ impl Interp {
                 Ex::SelfFn => true,
                 _ => true,
             },
-            AssignedEx::Attr(b, name) => {
+            AssignedEx::Attr(b, name, span) => {
                 let v = self.eval(b, f)?;
-                self.attr_assigned(&v, *name)?
+                self.attr_assigned(&v, *name).map_err(|e| e.at(*span))?
             }
-            AssignedEx::AttrDyn(b, n) => {
+            AssignedEx::AttrDyn(b, n, span) => {
                 let v = self.eval(b, f)?;
                 let Value::Str(name) = self.eval(n, f)? else {
                     return Err(RuntimeError::runtime("Attribute name must be a string"));
                 };
-                self.attr_assigned(&v, Sym::new(&name))?
+                self.attr_assigned(&v, Sym::new(&name)).map_err(|e| e.at(*span))?
             }
             AssignedEx::Index(b, idx) => {
                 let v = self.eval(b, f)?;

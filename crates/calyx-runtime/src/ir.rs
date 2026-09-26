@@ -105,8 +105,9 @@ impl Place {
 
 pub enum AssignedEx {
     Var(E),
-    Attr(E, Sym),
-    AttrDyn(E, E),
+    /// With the span from the backtick on, where errors point.
+    Attr(E, Sym, Span),
+    AttrDyn(E, E, Span),
     Index(E, Vec<E>),
 }
 

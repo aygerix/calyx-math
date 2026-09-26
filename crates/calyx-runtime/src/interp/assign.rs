@@ -455,7 +455,7 @@ impl Interp {
                 let fmt = r.format.clone();
                 let StructKind::RecFormat(rf) = &fmt.kind else { unreachable!() };
                 let Some(k) = rf.names.iter().position(|n| *n == name) else {
-                    return Err(RuntimeError::runtime(format!("Field '{name}' does not exist in this record")).in_context("`"));
+                    return Err(RuntimeError::statement(":=", format!("Field '{name}' is not in the record")));
                 };
                 let r = Rc::make_mut(r);
                 if rest.is_empty() {
@@ -475,7 +475,7 @@ impl Interp {
                 res
             }
             Value::Struct(_) | Value::Obj(_) => {
-                self.check_attr_valid(cur, name)?;
+                self.check_attr_valid(cur, name).map_err(|e| RuntimeError::statement(":=", e.message.clone()))?;
                 let attrs = match cur {
                     Value::Struct(s) => &s.attrs,
                     Value::Obj(o) => &o.attrs,
@@ -500,20 +500,21 @@ impl Interp {
                     "Position" => e.position = Some(Rc::from(self.to_string_default(&v)?.as_str())),
                     "Traceback" => e.traceback = Some(Rc::from(self.to_string_default(&v)?.as_str())),
                     "Type" => e.kind = Rc::from(self.to_string_default(&v)?.as_str()),
-                    _ => return Err(RuntimeError::runtime(format!("'{name}' is not an attribute of error objects"))),
+                    _ => return Err(RuntimeError::statement(":=", format!("Invalid attribute '{name}' for this object"))),
                 }
                 Ok(())
             }
-            other => Err(RuntimeError::runtime(format!("Objects of type {} do not have attributes", self.type_name(other)))),
+            Value::Seq(_) => Err(RuntimeError::statement(":=", "Sequence mutation failed")),
+            other if attr_owner(other) == "structure" => Err(RuntimeError::statement(":=", invalid_attr(other, name))),
+            _ => Err(RuntimeError::statement(":=", "Bad LHS for indexed assign")),
         }
     }
 
     fn check_attr_valid(&self, v: &Value, name: Sym) -> RResult<()> {
-        let t = v.type_id();
-        if self.types.has_attribute(t, name) {
+        if self.types.has_attribute(v.type_id(), name) {
             return Ok(());
         }
-        Err(RuntimeError::runtime(format!("'{name}' is not a valid attribute of objects of type {}", self.types.name(t))))
+        Err(RuntimeError::runtime(invalid_attr(v, name)))
     }
 
     pub fn get_attr(&mut self, v: &Value, name: Sym) -> RResult<Value> {
@@ -534,27 +535,25 @@ impl Interp {
                 "Type" => Ok(Value::str(&e.kind)),
                 "Position" => e.position.as_deref().map(Value::str).ok_or_else(|| RuntimeError::runtime("Attribute 'Position' is not assigned")),
                 "Traceback" => e.traceback.as_deref().map(Value::str).ok_or_else(|| RuntimeError::runtime("Attribute 'Traceback' is not assigned")),
-                _ => Err(RuntimeError::runtime(format!("'{name}' is not an attribute of error objects"))),
+                _ => Err(RuntimeError::runtime(invalid_attr(v, name)).in_context("`")),
             },
-            Value::Struct(s) => {
-                if let Some(x) = s.attrs.borrow().get(&name) {
+            Value::Struct(_) | Value::Obj(_) => {
+                let attrs = match v {
+                    Value::Struct(s) => &s.attrs,
+                    Value::Obj(o) => &o.attrs,
+                    _ => unreachable!(),
+                };
+                if let Some(x) = attrs.borrow().get(&name) {
                     return Ok(x.clone());
                 }
-                self.check_attr_valid(v, name)?;
-                Err(RuntimeError::runtime(format!("Attribute '{name}' for this structure is valid but not assigned")))
-            }
-            Value::Obj(o) => {
-                if let Some(x) = o.attrs.borrow().get(&name) {
-                    return Ok(x.clone());
-                }
-                self.check_attr_valid(v, name)?;
-                Err(RuntimeError::runtime(format!("Attribute '{name}' for this object is valid but not assigned")))
+                self.check_attr_valid(v, name).map_err(|e| e.in_context("`"))?;
+                Err(RuntimeError::runtime(format!("Attribute '{name}' for this {} is valid but not assigned", attr_owner(v))).in_context("`"))
             }
             Value::Cat(ty) => match self.category_attr(*ty, name) {
                 Some(x) => Ok(x),
                 None => Err(RuntimeError::runtime(format!("Invalid attribute '{name}' for this category")).in_context("`")),
             },
-            other => Err(RuntimeError::runtime(format!("Objects of type {} do not have attributes", self.type_name(other)))),
+            other => Err(RuntimeError::runtime(invalid_attr(other, name)).in_context("`")),
         }
     }
 
@@ -564,11 +563,12 @@ impl Interp {
     }
 
     pub fn attr_assigned(&mut self, v: &Value, name: Sym) -> RResult<bool> {
+        const CTX: &str = "assigned ... ` ...";
         match v {
             Value::Rec(r) => {
                 let StructKind::RecFormat(rf) = &r.format.kind else { unreachable!() };
                 let Some(k) = rf.names.iter().position(|n| *n == name) else {
-                    return Err(RuntimeError::runtime(format!("Field '{name}' does not exist in this record")).in_context("`"));
+                    return Err(RuntimeError::runtime(format!("Field '{name}' does not exist")).in_context(CTX));
                 };
                 Ok(!r.fields[k].is_undef())
             }
@@ -582,17 +582,17 @@ impl Interp {
                 if s.attrs.borrow().contains_key(&name) {
                     return Ok(true);
                 }
-                self.check_attr_valid(v, name)?;
+                self.check_attr_valid(v, name).map_err(|e| e.in_context(CTX))?;
                 Ok(false)
             }
             Value::Obj(o) => {
                 if o.attrs.borrow().contains_key(&name) {
                     return Ok(true);
                 }
-                self.check_attr_valid(v, name)?;
+                self.check_attr_valid(v, name).map_err(|e| e.in_context(CTX))?;
                 Ok(false)
             }
-            other => Err(RuntimeError::runtime(format!("Objects of type {} do not have attributes", self.type_name(other)))),
+            other => Err(RuntimeError::runtime(invalid_attr(other, name)).in_context(CTX)),
         }
     }
 
@@ -637,15 +637,17 @@ impl Interp {
                 Rc::make_mut(r).fields[k] = Value::Undef;
                 Ok(())
             }
-            Value::Struct(s) => {
-                s.attrs.borrow_mut().remove(&name);
+            Value::Struct(_) | Value::Obj(_) => {
+                self.check_attr_valid(cur, name).map_err(|e| RuntimeError::statement("delete", e.message.clone()))?;
+                match cur {
+                    Value::Struct(s) => s.attrs.borrow_mut().remove(&name),
+                    Value::Obj(o) => o.attrs.borrow_mut().remove(&name),
+                    _ => unreachable!(),
+                };
                 Ok(())
             }
-            Value::Obj(o) => {
-                o.attrs.borrow_mut().remove(&name);
-                Ok(())
-            }
-            other => Err(RuntimeError::runtime(format!("Objects of type {} do not have attributes", self.type_name(other)))),
+            other if attr_owner(other) == "structure" => Err(RuntimeError::statement("delete", invalid_attr(other, name))),
+            _ => Err(RuntimeError::statement("delete", "LHS is not a record or structure")),
         }
     }
 
@@ -672,7 +674,7 @@ impl Interp {
                 for step in &path {
                     cur = match step {
                         PathElem::Index(i) => self.index_one(cur, i)?,
-                        PathElem::Attr(n) => self.get_attr(&cur, *n)?,
+                        PathElem::Attr(n) => self.get_attr(&cur, *n).map_err(|e| e.at(lv_root_span(lv)))?,
                     };
                 }
                 let newv = self.binop(op, cur, rhs)?;
@@ -887,6 +889,20 @@ fn int_value(i: i64) -> Value {
 
 /// Where Magma reports an unassigned root of `x[i]`a := ...`: at the first
 /// operation applied to `x`.
+/// Magma's word for what has an attribute: structures, aggregates and maps
+/// are structures; elements and everything else are objects.
+fn attr_owner(v: &Value) -> &'static str {
+    match v {
+        Value::Struct(s) if !matches!(s.kind, StructKind::RecFormat(_)) => "structure",
+        Value::Seq(_) | Value::Set(_) | Value::ISet(_) | Value::MSet(_) | Value::Map(_) | Value::Assoc(_) => "structure",
+        _ => "object",
+    }
+}
+
+fn invalid_attr(v: &Value, name: Sym) -> String {
+    format!("Invalid attribute '{name}' for this {}", attr_owner(v))
+}
+
 fn lv_root_span(lv: &LV) -> calyx_syntax::Span {
     match lv {
         LV::Index(b, _, s) | LV::Attr(b, _, s) | LV::AttrDyn(b, _, s) => match &**b {

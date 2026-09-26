@@ -205,6 +205,7 @@ pub fn context_style(ctx: &str) -> (&str, bool, bool) {
         "map< >" => ("map< ... >", false, true),
         "rec< >" => ("rec< ... >", false, true),
         "`" => ("`", false, true),
+        "assigned ... ` ..." => (ctx, false, true),
         "{ }" | "{ ... }" => ("{ ... }", false, true),
         "[ ]" | "[ ... ]" => ("[ ... ]", false, true),
         "{@ @}" => ("{@ ... @}", false, true),
