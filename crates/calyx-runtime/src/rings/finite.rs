@@ -732,6 +732,9 @@ fn product(xs: &[Integer]) -> Integer {
 /// product of one half of the primes gives the power for the other half),
 /// which takes about log P log k squarings rather than k log P.
 fn no_power_one(y: &Elem, rs: &[Integer]) -> bool {
+    if rs.is_empty() {
+        return true;
+    }
     if y.is_one() == Truth::True {
         return false;
     }
@@ -746,8 +749,8 @@ fn no_power_one(y: &Elem, rs: &[Integer]) -> bool {
 /// The powers y^(P/m) for the pairwise coprime m of `ms`, P their product,
 /// by the same product tree.
 fn cofactor_powers(y: &Elem, ms: &[Integer], out: &mut Vec<Elem>) {
-    if ms.len() == 1 {
-        out.push(y.clone());
+    if ms.len() <= 1 {
+        out.extend(ms.iter().map(|_| y.clone()));
         return;
     }
     let (l, r) = ms.split_at(ms.len() / 2);
