@@ -25,7 +25,7 @@ work" at the end.
 | --- | --- |
 | Introduction to aggregates | Done: universes, automatic coercion to a common overstructure, power structures, nested aggregates, multi-indexing, sequences used as universes. |
 | Sets | Done: enumerated sets (with lazy arithmetic progressions), indexed sets, multisets, formal sets, all constructors, power sets, `Include`/`Exclude`/`ChangeUniverse`/..., set operators, `Subsets`, `Multisets`, `Permutations`, quantifiers `exists`/`forall`/`rep`/`random`, reductions, iteration. |
-| Sequences | Done, including indexing by ranges (`s[i..j]`, `s[i..j by k]`). `Sort` gives its sorting permutation as an element of `Sym(n)`; the symmetric groups and their elements have what Part II needs (products, powers, inverses, the action `i^p`, conjugation, `Order`, `Eltseq`, `Sign`, `CycleStructure`, `Cycle`, generators, coercion from image sequences), and the rest of permutation groups comes in Part V. |
+| Sequences | Done, including indexing by ranges (`s[i..j]`, `s[i..j by k]`). `Sort` gives its sorting permutation as an element of `Sym(n)`; the symmetric groups and their elements have what Part II needs (products, powers, inverses, the action `i^p`, conjugation, `Order`, `Eltseq`, `Sign`, `CycleStructure`, `Cycle`, generators, coercion from image sequences), and the rest of permutation groups comes in Part IX. |
 | Tuples and Cartesian products | Done. |
 | Lists | Done. |
 | Associative arrays | Done, including `Default` values and widening of the index universe. |
@@ -96,7 +96,7 @@ caching (one `Integers(n)` per modulus, one default `GF(q)`, one global
 | Residue class rings | Done, pending validation against 2.29 ([#24](https://github.com/aygerix/calyx-math/issues/24)): creation (`Integers(m)`, `IntegerRing(m)` and `ResidueClassRing(m)` of an integer or a factorization, `quo< >`), `Modulus`/`FactoredModulus`, square roots (`IsSquare`, `Sqrt`, `AllSquareRoots`, with Magma's choice of root), `Solution`, gcds and lcms of elements, `Normalize`, ideals (`ideal< >`, `sub< >`, sums, products, intersections, membership, `Generator`), the unit group (`UnitGroup`/`MultiplicativeGroup` with Magma's generators, discrete logarithms by Pohlig–Hellman with baby-step giant-step or Pollard's rho, `IsPrimitive`, `PrimitiveElement`, `Order`), `AdditiveGroup`, the natural `hom< >` between residue class rings, and the abelian groups these return (`GrpAb`: elements and their arithmetic, `Invariants`, `Order`, `Exponent`, `IsCyclic`, `Generators`, maps and preimages). **Pending:** Dirichlet characters ([#48](https://github.com/aygerix/calyx-math/issues/48)). |
 | Rational field | Done, pending validation against 2.29 ([#24](https://github.com/aygerix/calyx-math/issues/24)): Q as a number field (`MaximalOrder`, the bases, `MinimalField`, `UnitGroup`, `ClassGroup`, `AutomorphismGroup`, `Decomposition`, the invariants, `DefiningPolynomial`, `Signature`), creation (`RootOfUnity`, `Random`, `Q.1`, `Q![n, d]`, `elt< >`, the natural `hom< >`), and elements: `Height`, `Qround`, regular and Hirzebruch-Jung continued fractions, `RationalReconstruction` of residues and prime field elements, `Valuation` at primes and prime ideals, `Eltseq`, `MinimalPolynomial`. Also Z as a number field order (`Decomposition`, `RamificationIndex`, `TwoElementNormal`, `ChineseRemainderTheorem` and `Valuation` at ideals). **Pending:** `Algebra`, `VectorSpace` and matrix `RationalReconstruction` ([#53](https://github.com/aygerix/calyx-math/issues/53)). |
 | Finite fields | In progress ([#39](https://github.com/aygerix/calyx-math/issues/39)): the lattice of finite fields, elements, structure operations, arithmetic, polynomials over finite fields, discrete logarithms, permutation polynomials, `hom< >` from a finite field by generator images or as the natural map from a prime field, and `ExtensionField< F, x \| P >`. |
-| Nearfields | In progress ([#43](https://github.com/aygerix/calyx-math/issues/43)): Dickson and Zassenhaus nearfields and their elements, and `IsIsomorphic` for Dickson nearfields. **Pending:** the unit, affine and automorphism groups (they need the groups of Part V, [#44](https://github.com/aygerix/calyx-math/issues/44)), and the projective planes. |
+| Nearfields | In progress ([#43](https://github.com/aygerix/calyx-math/issues/43)): Dickson and Zassenhaus nearfields and their elements, and `IsIsomorphic` for Dickson nearfields. **Pending:** the unit, affine and automorphism groups (they need the groups of Part IX, [#44](https://github.com/aygerix/calyx-math/issues/44)), and the projective planes. |
 | Univariate polynomial rings | Done, pending validation against 2.29 ([#24](https://github.com/aygerix/calyx-math/issues/24)): creation and print options, structure operations, coefficients and terms, roots (`Roots`, `HasRoot` and `Roots(f : Max := m)` with Magma's choice of roots), derivatives, evaluation and interpolation, division, `Modexp` and `CRT`, gcds, content, resultants and discriminants, integer polynomial norms and `DedekindTest`, polynomials over finite fields (`PrimePolynomials` in Magma's order, `JacobiSymbol`), factorization (irreducible, squarefree, distinct- and equal-degree, Hensel lifting, `IsIrreducible`, `IsPrime`), ideals and quotient rings (`ideal< >`, `quo< >`), the special families (Chebyshev, Legendre, Laguerre, Hermite, Bernoulli, Gegenbauer, Dickson, Swinnerton-Dyer) and Magma-level printing. **Pending:** roots over the reals and complexes, `Decomposition`, `SmallRoots`, the matrix functions, rational functions and the rest of [#57](https://github.com/aygerix/calyx-math/issues/57). |
 | Multivariate polynomial rings | In progress ([#41](https://github.com/aygerix/calyx-math/issues/41)): creation and coercion, every monomial order in the handbook and graded rings, elements and their arithmetic, `ChangeRing`, `hom< >` by generator images, gcds and factorization, and `IsIrreducible` and `IsPrime`. **Pending:** the functions that need matrices (`JacobianMatrix`, `SymmetricBilinearForm`, `DiagonalForm`, `IsAlgebraicallyDependent`), division by non-constant polynomials (rational functions), and gcds and factorization over composite residue rings, polynomial and real coefficient rings. |
 | Real and complex fields | In progress ([#42](https://github.com/aygerix/calyx-math/issues/42)): creation (including real literals with a precision, `1.2345p10`, and `elt< >`), structure, element operations, printing, the transcendental functions, the elliptic and modular functions (handbook sections 254 to 259), the Gamma, Bessel and hypergeometric U functions (sections 261 and 262), and the other special functions, infinite sums and numerical integration (sections 263 to 265) are done; roots, continued fractions and integer relations (section 257's remaining functions) are next. |
@@ -126,6 +126,15 @@ them as Magma does). The rest of
 [#35](https://github.com/aygerix/calyx-math/issues/35) waits for that
 part.
 
+## Part IV: Matrices and Linear Algebra (started)
+
+| Chapter | Status |
+| --- | --- |
+| Matrices | Started ([#76](https://github.com/aygerix/calyx-math/issues/76)). |
+| Sparse matrices | Not started ([#77](https://github.com/aygerix/calyx-math/issues/77)). |
+| Vector spaces | Not started ([#78](https://github.com/aygerix/calyx-math/issues/78)). |
+| Polar spaces | Not started ([#79](https://github.com/aygerix/calyx-math/issues/79)). The sections on isometry groups, classical groups and Lie algebras wait for Parts IX and XIII. |
+
 ## Open work
 
 Everything still to do is a GitHub issue, labelled by area (`area:
@@ -138,5 +147,5 @@ one milestone per handbook Part:
 - [Waiting on Magma 2.29](https://github.com/aygerix/calyx-math/issues?q=is%3Aopen+label%3Aneeds-2.29),
   including the pending compat scripts ([#24](https://github.com/aygerix/calyx-math/issues/24))
 
-After the rest of Part III come the generator-based constructors ([#33](https://github.com/aygerix/calyx-math/issues/33))
-and Part V ([#44](https://github.com/aygerix/calyx-math/issues/44)).
+Alongside the rest of Part III come Part IV and the generator-based
+constructors ([#33](https://github.com/aygerix/calyx-math/issues/33)); the groups of Part IX are planned in [#44](https://github.com/aygerix/calyx-math/issues/44).
