@@ -22,13 +22,13 @@ use crate::value::*;
 // ----- the engine ------------------------------------------------------------
 
 /// The terms of a polynomial, in any order.
-fn terms(f: &Elem) -> Terms {
+pub(super) fn terms(f: &Elem) -> Terms {
     (0..f.mpoly_len()).map(|i| f.mpoly_term(i)).collect()
 }
 
 /// The coefficient context, the rank and the monomial order of a
 /// multivariate polynomial ring.
-fn shape(r: &Ring) -> (&Rc<Ctx>, usize, &Order) {
+pub(super) fn shape(r: &Ring) -> (&Rc<Ctx>, usize, &Order) {
     match &r.kind {
         RingKind::MPoly { rank, order, .. } => (r.ctx.base().expect("a polynomial ring"), *rank, order),
         _ => unreachable!("a multivariate polynomial ring"),
@@ -61,7 +61,7 @@ fn inexact(r: &Ring) -> bool {
 
 /// A result of the engine, as Magma words its errors. Magma computes over
 /// Euclidean rings too, which the engine does not do yet.
-fn engine<T>(r: &Ring, x: Result<T, gb::Error>) -> RResult<T> {
+pub(super) fn engine<T>(r: &Ring, x: Result<T, gb::Error>) -> RResult<T> {
     x.map_err(|e| {
         RuntimeError::runtime(match e {
             gb::Error::Unsupported if inexact(r) => "Base ring must be an exact field or a Euclidean ring",
