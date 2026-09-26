@@ -92,12 +92,6 @@ impl Interp {
             self.restore_refs(&mut refs, &mut args, f)?;
             return Err(RuntimeError::runtime("Reference arguments may only be used in procedure calls"));
         }
-        // Anonymous functions are named after the identifier they are called
-        // through (for error reports).
-        self.pending_call_name = match &c.func.kind {
-            Ex::Global(n) | Ex::Local(_, n) | Ex::Capture(_, n) => Some(*n),
-            _ => None,
-        };
         let result = self.call_value_full(&func, &mut args, refmask, params, nres, stmt, span, Some(&c.site));
         // Write back reference arguments, even if the call failed.
         let wb = self.restore_refs(&mut refs, &mut args, f);
@@ -137,7 +131,6 @@ impl Interp {
         site: Option<&SigCache>,
     ) -> RResult<Option<Vals>> {
         self.check_interrupt()?;
-        let call_name = self.pending_call_name.take();
         match func {
             Value::Func(clo) => {
                 if clo.code.is_procedure {
@@ -147,8 +140,7 @@ impl Interp {
                 } else if refmask.iter().any(|&b| b) {
                     return Err(RuntimeError::runtime("Functions cannot take reference arguments"));
                 }
-                let clo = clo.clone();
-                let r = self.call_closure(&clo, args, refmask, params, nres, stmt, span, call_name)?;
+                let r = self.call_closure(clo, args, refmask, params, nres, stmt, span, None)?;
                 Ok(if clo.code.is_procedure { None } else { Some(r) })
             }
             Value::Intr(name) => self.call_intrinsic(*name, args, refmask, params, nres, stmt, span, site),
@@ -205,7 +197,7 @@ impl Interp {
     ) -> RResult<Vals> {
         let code = &clo.code;
         let np = code.params.len();
-        let name = trace_name.or(code.name).unwrap_or(Sym::ANONYMOUS);
+        let name = trace_name.or(clo.name.get()).unwrap_or(Sym::ANONYMOUS);
         // A bad call is an error "in procedure call" only as a statement.
         let bad_call = |msg: String| if stmt { RuntimeError::statement("procedure call", msg) } else { RuntimeError::runtime(msg) };
         // The variadic parameter takes at least one argument.
@@ -303,6 +295,7 @@ impl Interp {
                         let text = if v.is_undef() { "<unassigned>".to_string() } else { self.frame_arg(&v) };
                         targs.push((p.name.to_string(), text));
                     }
+                    let name = if name == Sym::ANONYMOUS { self.anonymous_name(code) } else { name };
                     e.trace.push(TraceFrame { name, span: Some(span), args: targs });
                 }
                 self.trace.pop();
@@ -312,6 +305,17 @@ impl Interp {
         self.restore_args(code, &mut frame, args);
         self.recycle(frame.slots);
         result
+    }
+
+    /// The name of a function never assigned to an identifier in its call
+    /// frames: where it is defined, as in `[<main>:3]`. Magma counts only
+    /// the lines that are not blank.
+    fn anonymous_name(&self, code: &FuncCode) -> Sym {
+        let Some(src) = self.source(code.span.file) else { return Sym::ANONYMOUS };
+        let (l, _) = src.line_col(code.span.lo as usize);
+        let line = src.lines_before + (0..=l).filter(|&i| !src.line_text(i).trim().is_empty()).count();
+        let file = if src.name.is_empty() || src.name.starts_with('<') { "<main>" } else { &src.name };
+        Sym::new(&format!("[{file}:{line}]"))
     }
 
     /// Keep an emptied vector for a later call.
@@ -508,9 +512,9 @@ impl Interp {
                 *args = ca.args;
                 args.resize_with(n, Value::default);
                 r.map_err(|mut e| {
-                    if e.hidden == Some(true) {
+                    if e.frame {
                         // The intrinsic's call frame, as a user function's.
-                        e.hidden = Some(false);
+                        e.frame = false;
                         let targs = sig.args.iter().zip(args.iter()).map(|(a, v)| (a.name.to_string(), self.frame_arg(v))).collect();
                         e.trace.push(TraceFrame { name, span: None, args: targs });
                     }

@@ -412,7 +412,7 @@ impl Interp {
             return format!("{}\n", e.headline());
         }
         let mut out = String::new();
-        if e.hidden.is_some() {
+        if e.hidden {
             // An error in the code of a package intrinsic: the call frames,
             // and the package positions as the reference outputs hide them.
             out.push('\n');

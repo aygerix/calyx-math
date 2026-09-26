@@ -91,9 +91,11 @@ pub struct ErrorInfo {
     pub require: bool,
     /// Raised in the code of a package intrinsic, where Magma's report
     /// quotes its package sources, shown as "[Magma package traceback
-    /// hidden]" (see `intrinsics::hidden`); `Some(true)` until the
-    /// intrinsic's call frame is added.
-    pub hidden: Option<bool>,
+    /// hidden]" (see `intrinsics::hidden`).
+    pub hidden: bool,
+    /// The call frame of the intrinsic it leaves is still to be added (see
+    /// `intrinsics::hidden` and `intrinsics::package_frame`).
+    pub frame: bool,
 }
 
 impl ErrorInfo {
@@ -109,7 +111,8 @@ impl ErrorInfo {
             style: ErrStyle::Normal,
             eval_outer: None,
             require: false,
-            hidden: None,
+            hidden: false,
+            frame: false,
         }
     }
 

@@ -45,3 +45,43 @@ try {} ! 1; catch e print e; end try;
 x := [1, 2] ! 2; x;
 [1] ! 2;
 {1, 2} ! 3;
+
+// A function is named after the first identifier it is assigned to; one
+// never assigned shows where it is defined.
+m := map< Integers() -> Rationals() | n :-> 1/n >;
+try m(0); catch e print e; end try;
+try 0 @ m; catch e print e; end try;
+try (func< x | 1/x >)(0); catch e print e; end try;
+h := [func< x | 1/x >];
+try h[1](0); catch e print e; end try;
+k := function(f) return f(0); end function;
+try k(func< x | 1/x >); catch e print e; end try;
+try k(func< y |
+  1 div y >); catch e print e; end try;
+try [func< x | 1/x >(0)]; catch e print e; end try;
+g := func< a | 1 div a >;
+f := g;
+try f(0); catch e print e; end try;
+r := function(x) return 1 div x; end function;
+s := r;
+try s(0); catch e print e; end try;
+t := [g];
+try t[1](0); catch e print e; end try;
+l := func< x | func< y | 1 div y > >;
+try l(1)(0); catch e print e; end try;
+u := l(1);
+try u(0); catch e print e; end try;
+procedure pr(x) y := 1 div x; end procedure;
+try pr(0); catch e print e; end try;
+v := procedure(x) y := 1 div x; end procedure;
+try v(0); catch e print e; end try;
+w := function(x)
+  z := func< y |
+    1 div y >;
+  return z(x);
+end function;
+try w(0); catch e print e; end try;
+q := 1;
+q := func< a | 1 div a >;
+try q(0); catch e print e; end try;
+m(0);

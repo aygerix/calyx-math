@@ -404,7 +404,8 @@ pub fn bare(e: RuntimeError) -> RuntimeError {
 /// user functions calling it; the error is unnamed.
 pub fn hidden(e: RuntimeError) -> RuntimeError {
     let mut e = bare(e);
-    e.hidden = Some(true);
+    e.hidden = true;
+    e.frame = true;
     e
 }
 
@@ -413,7 +414,14 @@ pub fn hidden(e: RuntimeError) -> RuntimeError {
 /// called there keeps its name.
 pub fn hidden_inner(e: RuntimeError) -> RuntimeError {
     let mut e = bare(e);
-    e.hidden = Some(false);
+    e.hidden = true;
+    e
+}
+
+/// An error of a user function called back by a package intrinsic, whose
+/// report shows the intrinsic's call frame before the function's.
+pub fn package_frame(mut e: RuntimeError) -> RuntimeError {
+    e.frame = true;
     e
 }
 

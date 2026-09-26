@@ -277,6 +277,13 @@ impl Interp {
 
     pub fn assign(&mut self, lv: &LV, v: Value, f: &mut Frame) -> RResult<()> {
         if let LV::Var(p, _) = lv {
+            // A function takes the name of the first identifier it is
+            // assigned to.
+            if let Value::Func(c) = &v {
+                if c.name.get().is_none() {
+                    c.name.set(Some(p.name()));
+                }
+            }
             return self.assign_place(*p, v, f);
         }
         let mut path = Vec::new();

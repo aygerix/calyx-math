@@ -26,6 +26,9 @@ impl Span {
 pub struct SourceFile {
     pub name: String,
     pub text: String,
+    /// The lines of its input before the text, as Magma numbers lines: blank
+    /// ones are not counted.
+    pub lines_before: usize,
     line_starts: Vec<usize>,
 }
 
@@ -34,7 +37,7 @@ impl SourceFile {
         let text = text.into();
         let mut line_starts = vec![0];
         line_starts.extend(text.match_indices('\n').map(|(i, _)| i + 1));
-        SourceFile { name: name.into(), text, line_starts }
+        SourceFile { name: name.into(), text, lines_before: 0, line_starts }
     }
 
     /// Zero-based line index and zero-based column (in characters) of `offset`.

@@ -427,7 +427,7 @@ impl Interp {
             };
             vals.push(v);
         }
-        Ok(Value::Func(Rc::new(Closure { code: code.clone(), captures: vals.into() })))
+        Ok(Value::Func(Rc::new(Closure { code: code.clone(), captures: vals.into(), name: std::cell::Cell::new(code.name) })))
     }
 
     /// A user variable (not an intrinsic or type) visible at top level.

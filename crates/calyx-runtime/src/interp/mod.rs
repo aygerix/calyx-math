@@ -128,11 +128,12 @@ pub struct Interp {
     pub rings: crate::rings::RingCache,
     /// The symmetric groups, one per degree.
     pub groups: crate::perms::GroupCache,
-    /// The identifier a function is being called through.
-    pub pending_call_name: Option<Sym>,
     /// Emptied vectors of finished calls (arguments and frame slots), for
     /// reuse.
     pub spare_vecs: Vec<Vec<Value>>,
+    /// The lines of the main input before the statements being run, blank
+    /// ones not counted (see `SourceFile::lines_before`).
+    pub input_line: usize,
 }
 
 impl Interp {
@@ -182,8 +183,8 @@ impl Interp {
             read_line_hook: None,
             rings: Default::default(),
             groups: Default::default(),
-            pending_call_name: None,
             spare_vecs: Vec::new(),
+            input_line: 0,
         };
         crate::intrinsics::register_all(&mut it);
         it
@@ -192,7 +193,11 @@ impl Interp {
     /// Register a source text so spans into it can be reported.
     pub fn add_source(&mut self, name: &str, text: &str) -> FileId {
         let id = FileId(self.sources.len() as u32);
-        self.sources.push(Rc::new(SourceFile::new(name, text)));
+        let mut src = SourceFile::new(name, text);
+        if name.is_empty() {
+            src.lines_before = self.input_line;
+        }
+        self.sources.push(Rc::new(src));
         id
     }
 

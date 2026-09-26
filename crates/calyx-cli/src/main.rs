@@ -208,7 +208,13 @@ fn run_stdin(it: &mut Interp) -> i32 {
         return 1;
     }
     let mut buf = String::new();
+    // Lines read so far, as Magma numbers them (see `Interp::input_line`).
+    let mut counted = 0;
     for line in text.split_inclusive('\n') {
+        if buf.is_empty() {
+            it.input_line = counted;
+        }
+        counted += !line.trim().is_empty() as usize;
         if buf.is_empty() {
             if let Some(code) = special_line(it, line) {
                 if code >= 0 {

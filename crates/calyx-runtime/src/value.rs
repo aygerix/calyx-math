@@ -379,6 +379,9 @@ pub struct Assoc {
 pub struct Closure {
     pub code: Rc<FuncCode>,
     pub captures: Rc<[Value]>,
+    /// The name its call frames show: that of its definition, or else of
+    /// the first identifier it is assigned to.
+    pub name: Cell<Option<Sym>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
