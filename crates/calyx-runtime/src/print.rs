@@ -746,7 +746,11 @@ impl Interp {
                     }
                 }
                 if i + 1 < elems.len() {
+                    // The comma ends the element's line: one that does not
+                    // fit continues as the element does.
+                    p.cont = indent + 8;
                     p.write(",");
+                    p.cont = indent + 4;
                 }
             }
             p.cont = saved;

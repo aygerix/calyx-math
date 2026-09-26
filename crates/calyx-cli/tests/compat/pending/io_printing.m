@@ -152,3 +152,19 @@ printf "%o\n", 10^79;
 printf "%o %o\n", a cat a, 10^20;
 printf "%o %o %o\n", a cat a, "x", 10^16;
 printf "x%o\n", b cat b;
+
+// A comma that does not fit after an element continues as the element.
+P<a,b,c> := PolynomialRing(GF(2147483647), 3);
+f := a*c + 198276189*c^8 + 1475717140*c^6 + 2039024877*c^5 + 2147483646*c^3 + 4*c;
+[f, f];
+f;
+g := f + 1234567*b^3 + 7654321*a^5 + 1111111*a*b*c + 2222222*b^7 + 3333333*c^9 + 4444444*a^2*b^2;
+[g];
+[g, g];
+[[g]];
+<g, 1>;
+[* g *];
+Q<t> := PolynomialRing(Integers());
+h := &+[ (10^10 + i)*t^i : i in [0..8] ];
+[h];
+h;
