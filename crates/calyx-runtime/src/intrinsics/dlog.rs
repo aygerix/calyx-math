@@ -4,7 +4,15 @@
 //! prime order, solved by baby-step giant-step or, for primes too large
 //! for its table, Pollard's rho. The part of order a power of p modulo
 //! p^k is read off the p-adic logarithm instead.
+//!
+//! In groups whose elements are words (modulo a word-sized prime, and in
+//! GF(2^n) for n up to 64) the baby steps are kept between logarithms, and
+//! the table grows with the number of logarithms taken to the same base, so
+//! that many logarithms cost less each.
 
+use std::cell::RefCell;
+
+use calyx_flint::gf2x::Gf2Field;
 use calyx_flint::{Integer, Nmod};
 use rustc_hash::FxHashMap;
 
@@ -20,6 +28,14 @@ trait Units {
     fn one(&self) -> Self::E;
     /// A hash of the element for the baby-step table.
     fn key(&self, a: &Self::E) -> u64;
+    /// For groups of words: the group, as a key for the kept baby steps,
+    /// and the element as a word.
+    fn word_group(&self) -> Option<(u64, u64)> {
+        None
+    }
+    fn word(&self, _a: &Self::E) -> u64 {
+        unreachable!("an element of a group of words")
+    }
 }
 
 impl Units for Nmod {
@@ -37,6 +53,41 @@ impl Units for Nmod {
         self.reduce(1)
     }
     fn key(&self, a: &u64) -> u64 {
+        *a
+    }
+    fn word_group(&self) -> Option<(u64, u64)> {
+        Some((0, self.modulus()))
+    }
+    fn word(&self, a: &u64) -> u64 {
+        *a
+    }
+}
+
+/// GF(2^n) for n up to 64, in words.
+impl Units for Gf2Field {
+    type E = u64;
+    fn mul(&self, a: &u64, b: &u64) -> u64 {
+        Gf2Field::mul(self, *a, *b)
+    }
+    fn pow(&self, a: &u64, e: &Integer) -> u64 {
+        // Exponents modulo 2^n - 1, which the order of a unit divides.
+        let e = e.div_rem_euclid(&Integer::from_u64(u64::MAX >> (64 - self.degree()))).and_then(|(_, r)| r.to_u64()).unwrap_or(0);
+        Gf2Field::pow(self, *a, e)
+    }
+    fn inv(&self, a: &u64) -> u64 {
+        Gf2Field::inv(self, *a)
+    }
+    fn one(&self) -> u64 {
+        1
+    }
+    fn key(&self, a: &u64) -> u64 {
+        *a
+    }
+    fn word_group(&self) -> Option<(u64, u64)> {
+        // The modulus x^n + g (a modulus of words is at least 2).
+        Some((self.degree() as u64, self.modulus_low()))
+    }
+    fn word(&self, a: &u64) -> u64 {
         *a
     }
 }
@@ -98,6 +149,10 @@ impl Units for FieldUnits {
 /// characteristic, for g of order n with factorisation `nf`. `None` if y is
 /// not a power of g, or if n has a prime factor too large to handle.
 pub fn log_in_field(y: &calyx_flint::gr::Elem, g: &calyx_flint::gr::Elem, n: &Integer, nf: &[(Integer, u64)]) -> Option<Integer> {
+    if let (Some(k), Some(yw), Some(gw)) = (y.ctx().fq_gf2_field(), y.fq_gf2_bits(), g.fq_gf2_bits()) {
+        let x = pohlig_hellman(&k, &gw, &yw, n, nf)?;
+        return (Units::pow(&k, &gw, &x) == yw).then_some(x);
+    }
     let u = FieldUnits(y.ctx().clone());
     let x = pohlig_hellman(&u, &Fe(g.clone()), &Fe(y.clone()), n, nf)?;
     (u.pow(&Fe(g.clone()), &x) == Fe(y.clone())).then_some(x)
@@ -189,7 +244,122 @@ fn prime_order_log<U: Units>(u: &U, gamma: &U::E, h: &U::E, q: &Integer) -> Opti
     Some(Integer::from_u64(x))
 }
 
+/// Baby steps gamma^j (j < m) of a group of words, as a table from the
+/// word (hashed) to j: slots of a 32-bit fingerprint and j + 1 (0 when
+/// empty), at most half full. False matches are caught by the caller.
+struct Babies {
+    group: (u64, u64),
+    gamma: u64,
+    q: u64,
+    m: u64,
+    slots: Vec<u64>,
+    /// The logarithms taken with these baby steps.
+    uses: u64,
+}
+
+/// The most baby steps kept for one base (16 MB of table).
+const BABIES_MAX: u64 = 1 << 20;
+
+// Tables of baby steps for the last few bases.
+thread_local! {
+    static BABIES: RefCell<Vec<Babies>> = const { RefCell::new(Vec::new()) };
+}
+
+fn mix(w: u64) -> u64 {
+    let w = (w ^ (w >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    let w = (w ^ (w >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    w ^ (w >> 31)
+}
+
+impl Babies {
+    fn slot(&self, w: u64) -> (usize, u64) {
+        let h = mix(w);
+        ((h >> (64 - self.slots.len().trailing_zeros())) as usize, h & 0xffff_ffff)
+    }
+
+    /// Baby steps up to m.
+    fn build<U: Units>(&mut self, u: &U, gamma: &U::E, m: u64) {
+        self.m = m;
+        self.slots = vec![0; (2 * m).next_power_of_two().max(2) as usize];
+        let mask = self.slots.len() - 1;
+        let mut cur = u.one();
+        for j in 0..m {
+            let (mut i, f) = self.slot(u.word(&cur));
+            while self.slots[i] != 0 {
+                i = (i + 1) & mask;
+            }
+            self.slots[i] = f << 32 | (j + 1);
+            cur = u.mul(&cur, gamma);
+        }
+    }
+
+    /// The j with gamma^j = w, if w is a baby step (or matches one's
+    /// fingerprint).
+    fn find(&self, w: u64) -> impl Iterator<Item = u64> + '_ {
+        let (i, f) = self.slot(w);
+        let mask = self.slots.len() - 1;
+        (0..self.slots.len()).map(move |k| self.slots[(i + k) & mask]).take_while(|&s| s != 0).filter(move |&s| s >> 32 == f).map(|s| (s & 0xffff_ffff) - 1)
+    }
+}
+
+/// Baby-step giant-step with the baby steps kept between calls, for a
+/// group of words: the table grows as sqrt(q t) for the t-th logarithm to
+/// this base, up to `BABIES_MAX`.
+fn bsgs_kept<U: Units>(u: &U, group: (u64, u64), gamma: &U::E, h: &U::E, q: u64) -> Option<u64> {
+    let gw = u.word(gamma);
+    BABIES.with(|b| {
+        let mut b = b.borrow_mut();
+        let k = match b.iter().position(|t| (t.group, t.gamma, t.q) == (group, gw, q)) {
+            Some(k) => k,
+            None => {
+                if b.len() >= 4 {
+                    b.remove(0);
+                }
+                b.push(Babies { group, gamma: gw, q, m: 0, slots: Vec::new(), uses: 0 });
+                b.len() - 1
+            }
+        };
+        let t = &mut b[k];
+        t.uses += 1;
+        let want = (((q as f64) * t.uses as f64).sqrt().ceil() as u64).clamp(1, BABIES_MAX.min(q));
+        if want >= 2 * t.m || t.m == 0 {
+            t.build(u, gamma, want);
+        }
+        let m = t.m;
+        let giant = u.inv(&u.pow(gamma, &Integer::from_u64(m)));
+        let mut z = h.clone();
+        // Giant steps in blocks, whose first slots are read together, so
+        // that the table's cache misses overlap.
+        const B: u64 = 16;
+        let mut words = [0u64; B as usize];
+        let mut i0 = 0;
+        while i0 <= q / m {
+            for w in words.iter_mut() {
+                *w = u.word(&z);
+                z = u.mul(&z, &giant);
+            }
+            let firsts = words.map(|w| t.slots[t.slot(w).0]);
+            for (k, (&w, &f)) in words.iter().zip(&firsts).enumerate() {
+                if f == 0 {
+                    continue;
+                }
+                for j in t.find(w) {
+                    let x = (((i0 + k as u64) as u128 * m as u128 + j as u128) % q as u128) as u64;
+                    if u.pow(gamma, &Integer::from_u64(x)) == *h {
+                        return Some(x);
+                    }
+                }
+            }
+            i0 += B;
+        }
+        None
+    })
+}
+
 fn bsgs<U: Units>(u: &U, gamma: &U::E, h: &U::E, q: u64) -> Option<u64> {
+    if let Some(group) = u.word_group().filter(|_| q > 1 << 12) {
+        return bsgs_kept(u, group, gamma, h, q);
+    }
     let m = ((q as f64).sqrt().ceil() as u64).max(1);
     let mut table: FxHashMap<u64, u64> = FxHashMap::with_capacity_and_hasher(m as usize, Default::default());
     let mut cur = u.one();

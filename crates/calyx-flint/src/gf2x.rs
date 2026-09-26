@@ -416,6 +416,123 @@ pub fn least_low_term(n: usize) -> Option<u64> {
     dispatch!(least_low_term_with(n: usize) -> Option<u64>)
 }
 
+/// Whether the processor multiplies words without carries.
+fn has_clmul() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    return std::is_x86_feature_detected!("pclmulqdq");
+    #[cfg(target_arch = "aarch64")]
+    return std::arch::is_aarch64_feature_detected!("aes");
+    #[allow(unreachable_code)]
+    false
+}
+
+/// GF(2)[x]/(f) for f of degree n from 1 to 64 (GF(2^n) when f is
+/// irreducible): elements are the bits of their coordinates in the power
+/// basis. Products are reduced by Barrett's method, whose quotient is exact
+/// for polynomials: three carry-less products in all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Gf2Field {
+    n: u32,
+    /// f - x^n, and floor(x^(2n) / f) - x^n, both of degree below n.
+    g: u64,
+    mu: u64,
+    hw: bool,
+}
+
+/// `$k.$f::<Hw>(args)` compiled for carry-less multiplication when the
+/// field found the processor has it, else `$k.$f::<Soft>(args)`.
+macro_rules! field_dispatch {
+    ($k:ident.$f:ident($($a:ident: $t:ty),*) -> $r:ty) => {{
+        #[cfg(target_arch = "x86_64")]
+        if $k.hw {
+            #[target_feature(enable = "pclmulqdq")]
+            unsafe fn hw(k: &Gf2Field, $($a: $t),*) -> $r {
+                k.$f::<Hw>($($a),*)
+            }
+            return unsafe { hw($k, $($a),*) };
+        }
+        #[cfg(target_arch = "aarch64")]
+        if $k.hw {
+            #[target_feature(enable = "aes")]
+            unsafe fn hw(k: &Gf2Field, $($a: $t),*) -> $r {
+                k.$f::<Hw>($($a),*)
+            }
+            return unsafe { hw($k, $($a),*) };
+        }
+        $k.$f::<Soft>($($a),*)
+    }};
+}
+
+impl Gf2Field {
+    /// The ring for f = x^n + g (g as bits, of degree below n).
+    pub fn new(n: u32, g: u64) -> Gf2Field {
+        assert!((1..=64).contains(&n) && (n == 64 || g >> n == 0), "a modulus of degree 1 to 64");
+        // floor(x^(2n) / f) = x^n + floor(x^n g / f).
+        let f = 1u128 << n | g as u128;
+        let mut r = (g as u128) << n;
+        let mut mu = 0u64;
+        while r != 0 && 127 - r.leading_zeros() >= n {
+            let s = 127 - r.leading_zeros() - n;
+            r ^= f << s;
+            mu |= 1 << s;
+        }
+        Gf2Field { n, g, mu, hw: has_clmul() }
+    }
+
+    pub fn degree(&self) -> u32 {
+        self.n
+    }
+
+    /// The terms of the modulus below x^n, as bits.
+    pub fn modulus_low(&self) -> u64 {
+        self.g
+    }
+
+    /// p mod f, for p of degree below 2n - 1.
+    #[inline(always)]
+    fn reduce<C: Clmul>(&self, p: u128) -> u64 {
+        let a = (p >> self.n) as u64;
+        let (tl, th) = C::mul(a, self.mu);
+        let q = a ^ (((th as u128) << 64 | tl as u128) >> self.n) as u64;
+        let (rl, rh) = C::mul(q, self.g);
+        (p ^ (q as u128) << self.n ^ ((rh as u128) << 64 | rl as u128)) as u64
+    }
+
+    #[inline(always)]
+    fn mul_with<C: Clmul>(&self, a: u64, b: u64) -> u64 {
+        let (lo, hi) = C::mul(a, b);
+        self.reduce::<C>((hi as u128) << 64 | lo as u128)
+    }
+
+    #[inline(always)]
+    fn pow_with<C: Clmul>(&self, a: u64, e: u64) -> u64 {
+        let mut r = 1u64;
+        for i in (0..64 - e.leading_zeros()).rev() {
+            let (lo, hi) = C::sqr(r);
+            r = self.reduce::<C>((hi as u128) << 64 | lo as u128);
+            if e >> i & 1 == 1 {
+                r = self.mul_with::<C>(r, a);
+            }
+        }
+        r
+    }
+
+    /// a*b.
+    pub fn mul(&self, a: u64, b: u64) -> u64 {
+        field_dispatch!(self.mul_with(a: u64, b: u64) -> u64)
+    }
+
+    /// a^e.
+    pub fn pow(&self, a: u64, e: u64) -> u64 {
+        field_dispatch!(self.pow_with(a: u64, e: u64) -> u64)
+    }
+
+    /// The inverse of a non-zero element of a field: a^(2^n - 2).
+    pub fn inv(&self, a: u64) -> u64 {
+        self.pow(a, (u64::MAX >> (64 - self.n)) - 1)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -488,6 +605,52 @@ mod tests {
             }
             assert!(flint_irreducible(n, &bits(g0)));
         }
+    }
+
+    /// a*b mod f by shifts, for f = x^n + g.
+    fn mulmod_naive(a: u64, b: u64, n: u32, g: u64) -> u64 {
+        let mut p = 0u128;
+        for i in 0..64 {
+            if b >> i & 1 == 1 {
+                p ^= (a as u128) << i;
+            }
+        }
+        let f = 1u128 << n | g as u128;
+        for i in (n..128).rev() {
+            if p >> i & 1 == 1 {
+                p ^= f << (i - n);
+            }
+        }
+        p as u64
+    }
+
+    #[test]
+    fn field_products_agree() {
+        let mut seed = 0x0123_4567_89ab_cdefu64;
+        let mut next = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            seed
+        };
+        for n in 1..=64u32 {
+            let mask = u64::MAX >> (64 - n);
+            let g = next() & mask >> 1 | 1;
+            let k = Gf2Field::new(n, g);
+            let soft = Gf2Field { hw: false, ..k };
+            for _ in 0..200 {
+                let (a, b) = (next() & mask, next() & mask);
+                let want = mulmod_naive(a, b, n, g);
+                assert_eq!(k.mul(a, b), want, "{n} {g:x} {a:x} {b:x}");
+                assert_eq!(soft.mul(a, b), want);
+            }
+        }
+        // GF(2^64) with x^64 + x^4 + x^3 + x + 1: inverses and Fermat.
+        let k = Gf2Field::new(64, 0b11011);
+        for a in [1u64, 2, 3, 0xdead_beef, u64::MAX] {
+            assert_eq!(k.mul(a, k.inv(a)), 1);
+            assert_eq!(k.pow(a, u64::MAX), 1);
+        }
+        let k = Gf2Field::new(40, least_low_term(40).unwrap());
+        assert_eq!(k.pow(2, (1 << 40) - 1), 1);
     }
 
     #[test]
