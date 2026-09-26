@@ -51,6 +51,7 @@ ideal<P | a>;
 ideal<P | "a">;
 ideal<P | ideal<Q | a>>;
 
+
 // Ideal and IdealWithFixedBasis.
 Ideal([x, y]);
 Ideal({x});
@@ -154,3 +155,31 @@ P<x, y, z> := PolynomialRing(RationalField(), [1, 2, 4]);
 I := ideal<P | x^2*y + z, (x^4 + z)^2, y^2 + z>;
 IsHomogeneous(I);
 IsHomogeneous(ideal<P | >), IsHomogeneous(ideal<P | 0, 1>), IsHomogeneous(P);
+
+// Polynomials of another ring of the same rank coerce as by !, variable
+// to variable, but ideals of it do not.
+K := GF(32003);
+P3<x, y, z> := PolynomialRing(K, 3);
+Q3<a, b, c> := PolynomialRing(K, 3);
+ideal<Q3 | x^2 - y, y*z - 1>;
+I3 := ideal<P3 | x^2 - y, y*z - 1>;
+ideal<Q3 | I3>;
+ideal<Q3 | {x^2 - y}>;
+ideal<Q3 | [1, 2]>;
+ideal<Q3 | [[1, 2]]>;
+ideal<Q3 | x^2 - y> eq ideal<Q3 | a^2 - b>;
+x^2 - y in ideal<Q3 | a^2 - b>;
+R4<r, s, t, u> := PolynomialRing(K, 4);
+ideal<R4 | x^2 - y>;
+R2<v, w> := PolynomialRing(K, 2);
+ideal<P3 | v>;
+Z<p, q, e> := PolynomialRing(Integers(), 3);
+QQ<f, g, h> := PolynomialRing(RationalField(), 3);
+ideal<QQ | p^2 - 2*q>;
+ideal<Z | f^2 - 2*g>;
+ideal<Z | f^2 - g/2>;
+U<T> := PolynomialRing(K);
+ideal<Q3 | T^2 + 1>;
+Q1<m> := PolynomialRing(K, 1);
+ideal<Q1 | T^2 + 1>;
+ideal<Q3 | PolynomialRing(GF(7), 3).1>;
