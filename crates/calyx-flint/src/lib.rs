@@ -35,7 +35,7 @@ mod special;
 pub use complex::{Complex, Elementary, ModifiedPolylog};
 pub use crt::Crt;
 pub use integer::{Factorization, Integer};
-pub use lll::{lll, lll_with};
+pub use lll::{lll, lll_l2, lll_with};
 pub use modular::{Modular, ThetaCost};
 pub use nmod::{Nmod, gcd as gcd_u64};
 pub use rational::Rational;
