@@ -580,6 +580,9 @@ impl Elem {
     }
 
     pub fn pow(&self, e: &Integer) -> GrResult<Elem> {
+        if let Some(r) = crate::floatpoly::pow(self, e) {
+            return r;
+        }
         let mut r = Elem::new(&self.ctx);
         check(unsafe { sys::gr_pow_fmpz(r.as_mut_ptr(), self.as_ptr(), e.raw_ptr(), self.ctx.ptr()) })?;
         Ok(r)

@@ -8,6 +8,7 @@
 pub mod ball;
 mod complex;
 mod crt;
+mod floatpoly;
 pub mod fq;
 pub mod gf2x;
 pub mod gr;
