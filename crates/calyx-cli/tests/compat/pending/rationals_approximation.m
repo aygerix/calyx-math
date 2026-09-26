@@ -31,6 +31,19 @@ ContinuedFraction(0/1); ContinuedFraction(5/1); ContinuedFraction(-5/1); Continu
 ContinuedFraction(3); ContinuedFraction(-3); ContinuedFraction(0);
 ContinuedFraction(10^30/7);
 ContinuedFraction(Fibonacci(40)/Fibonacci(39));
+// Bound limits the quotients (to at least one); a negative small integer is
+// refused, and one of 2^30 or more leaves them unlimited.
+ContinuedFraction(355/113 : Bound := 2); ContinuedFraction(355/113 : Bound := 1); ContinuedFraction(355/113 : Bound := 0);
+ContinuedFraction(355/113 : Bound := 3); ContinuedFraction(355/113 : Bound := 100); ContinuedFraction(-355/113 : Bound := 2);
+ContinuedFraction(0/1 : Bound := 0); ContinuedFraction(3/4 : Bound := 1); ContinuedFraction(10^30/7 : Bound := 3);
+ContinuedFraction(Fibonacci(40)/Fibonacci(39) : Bound := 10);
+ContinuedFraction(355/113 : Bound := 2^70); ContinuedFraction(355/113 : Bound := -2^70); ContinuedFraction(355/113 : Bound := -2^30);
+ContinuedFraction(355/113 : Bound := -1);
+ContinuedFraction(355/113 : Bound := -(2^30 - 1));
+ContinuedFraction(355/113 : Bound := "x");
+ContinuedFraction(355/113 : Bound := 1/2);
+ContinuedFraction(355/113 : Numerators := [1, 1, 1]);
+ContinuedFraction(355/113 : Bound := -1, Numerators := [1]);
 ContinuedFractionValue([3, 7, 16]); ContinuedFractionValue([-4, 1, 6, 16]); ContinuedFractionValue([5]);
 ContinuedFractionValue([0, 3]); ContinuedFractionValue([1, 1, 1, 1, 2]); ContinuedFractionValue([-1, 2]);
 Parent(ContinuedFractionValue([2]));

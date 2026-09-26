@@ -14,8 +14,12 @@ use crate::interp::{CallArgs, Interp};
 use crate::random::Rng;
 use crate::value::*;
 
+mod arith;
 mod ecm;
+mod pm1;
 mod siqs;
+mod stage1;
+mod stage2;
 
 fn int(v: i64) -> Integer {
     Integer::from_i64(v)
@@ -581,195 +585,113 @@ fn squfof_fn(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     Ok(fact_and_rest(&f, r))
 }
 
-// ----- p - 1 and p + 1 ---------------------------------------------------------------------------
+// ----- p - 1, p + 1 and ECM ------------------------------------------------------------------------
 
-fn b1_primes(b1: u64) -> Vec<u64> {
-    primes_up_to(b1.min(1 << 32))
+/// The factors of B1^1.4248 that give the default B2 of each method, as
+/// measured in Magma.
+const PM1_B2: f64 = 0.14;
+const PP1_B2: f64 = 1.0;
+const ECM_B2: f64 = 3.3;
+
+/// The largest B1 and B2 taken: no run with larger ones would end.
+const MAX_B1: u64 = 1 << 52;
+const MAX_B2: u64 = 1 << 62;
+
+/// Magma's default B2 for B1, with the method's factor.
+fn default_b2(b1: u64, scale: f64) -> u64 {
+    (scale * (b1 as f64).powf(1.424828748)).min(MAX_B2 as f64) as u64
 }
 
-/// The outcome of a factoring attempt with a single base or curve.
-enum Attempt {
-    Found(Integer),
-    Failed,
+/// The arguments and parameters of pMinus1, pPlus1 and ECM.
+struct Stages2 {
+    n: Integer,
+    b1: u64,
+    /// B2 (by default Magma's, from the method's factor): below B1 it skips
+    /// stage 2.
+    b2: u64,
+    k: u64,
+    x0: Option<Integer>,
+    sigma: Option<Integer>,
 }
 
-/// A proper divisor of n from g = gcd(..., n), if g is one.
-fn proper(g: &Integer, n: &Integer) -> Option<Integer> {
-    (!g.is_one() && g != n && !g.is_zero()).then(|| g.clone())
-}
-
-/// Stage 1 of a power-based method: `step(x, q)` raises the element x to
-/// the q-th power, `test(x)` the value whose gcd with n reveals a factor.
-/// The gcd is taken after each prime, and when all of n appears the prime's
-/// powers are applied one at a time.
-fn stage1<T: Clone>(n: &Integer, b1: u64, x: &mut T, step: &dyn Fn(&T, u64) -> T, test: &dyn Fn(&T) -> Integer) -> Option<Attempt> {
-    for p in b1_primes(b1) {
-        let mut q = p;
-        while q <= b1 / p {
-            q *= p;
-        }
-        let saved = x.clone();
-        *x = step(x, q);
-        let g = test(x).gcd(n);
-        if let Some(d) = proper(&g, n) {
-            return Some(Attempt::Found(d));
-        }
-        if g == *n {
-            let mut y = saved;
-            let mut pk = 1;
-            while pk <= q / p {
-                y = step(&y, p);
-                pk *= p;
-                let g = test(&y).gcd(n);
-                if let Some(d) = proper(&g, n) {
-                    return Some(Attempt::Found(d));
-                }
-                if g == *n {
-                    return Some(Attempt::Failed);
-                }
-            }
-            return Some(Attempt::Failed);
-        }
+/// The arguments and parameters of pMinus1, pPlus1 and ECM, checked in
+/// Magma's order: the parameters' types, k, Sigma, then the arguments.
+fn stage_args(a: &CallArgs, scale: f64, ecm: bool) -> RResult<Stages2> {
+    let param = |p: &str| match a.param(p) {
+        None | Some(Value::Undef) => Ok(None),
+        Some(Value::Int(x)) => Ok(Some(x.clone())),
+        Some(_) => Err(RuntimeError::runtime(format!("Bad type for parameter '{p}'\nArgument types given: RngIntElt, RngIntElt"))),
+    };
+    let (x0, b2, k, sigma) = (param("x0")?, param("B2")?, param("k")?, param("Sigma")?);
+    let k = match k {
+        None => 2,
+        Some(k) if k.sign() > 0 => k.to_u64().unwrap_or(u64::MAX),
+        Some(_) => return Err(RuntimeError::runtime("Bad value for parameter 'k'")),
+    };
+    match &sigma {
+        Some(s) if s.sign() <= 0 => return Err(RuntimeError::runtime("Bad value for parameter 'Sigma'")),
+        Some(_) if !ecm => return Err(RuntimeError::runtime("Sigma parameter only allowed for ECM")),
+        _ => {}
     }
-    None
-}
-
-/// Stage 2 over the primes in (B1, B2]: `at(q)` is the value to test for
-/// the prime q.
-fn stage2(n: &Integer, b1: u64, b2: u64, at: &mut dyn FnMut(u64) -> Integer) -> Attempt {
-    let primes: Vec<u64> = primes_up_to(b2.min(1 << 32)).into_iter().filter(|&q| q > b1).collect();
-    for block in primes.chunks(64) {
-        let mut acc = Integer::one();
-        let vals: Vec<Integer> = block.iter().map(|&q| at(q)).collect();
-        for v in &vals {
-            acc = modp(&(&acc * v), n);
-        }
-        let g = acc.gcd(n);
-        if let Some(d) = proper(&g, n) {
-            return Attempt::Found(d);
-        }
-        if g == *n {
-            for v in &vals {
-                if let Some(d) = proper(&v.gcd(n), n) {
-                    return Attempt::Found(d);
-                }
-            }
-            return Attempt::Failed;
-        }
-    }
-    Attempt::Failed
-}
-
-fn p_minus_1(n: &Integer, b1: u64, b2: u64, x0: &Integer) -> Attempt {
-    let mut x = modp(x0, n);
-    let step = |x: &Integer, q: u64| x.powm(&Integer::from_u64(q), n).unwrap();
-    let test = |x: &Integer| x - &Integer::one();
-    if let Some(r) = stage1(n, b1, &mut x, &step, &test) {
-        return r;
-    }
-    stage2(n, b1, b2, &mut |q| &x.powm(&Integer::from_u64(q), n).unwrap() - &Integer::one())
-}
-
-/// V_k(v) of the Lucas sequence V_0 = 2, V_1 = v, V_(i+1) = v V_i - V_(i-1).
-fn lucas_v(v: &Integer, k: u64, n: &Integer) -> Integer {
-    if k == 0 {
-        return modp(&int(2), n);
-    }
-    let (mut a, mut b) = (v.clone(), modp(&(&(v * v) - &int(2)), n));
-    for i in (0..63 - k.leading_zeros()).rev() {
-        if (k >> i) & 1 == 1 {
-            a = modp(&(&(&a * &b) - v), n);
-            b = modp(&(&(&b * &b) - &int(2)), n);
-        } else {
-            b = modp(&(&(&a * &b) - v), n);
-            a = modp(&(&(&a * &a) - &int(2)), n);
-        }
-    }
-    a
-}
-
-fn p_plus_1(n: &Integer, b1: u64, b2: u64, x0: &Integer) -> Attempt {
-    let mut v = modp(x0, n);
-    let step = |v: &Integer, q: u64| lucas_v(v, q, n);
-    let test = |v: &Integer| v - &int(2);
-    if let Some(r) = stage1(n, b1, &mut v, &step, &test) {
-        return r;
-    }
-    stage2(n, b1, b2, &mut |q| &lucas_v(&v, q, n) - &int(2))
-}
-
-fn pm1_args(it: &mut Interp, a: &CallArgs) -> RResult<(Integer, u64, u64, Integer)> {
     let n = a.int(0)?.clone();
     if n <= Integer::one() {
         return Err(RuntimeError::runtime("Argument 1 should be greater than 1"));
     }
-    let b1 = a.int(1)?.to_u64().unwrap_or(0);
-    // Without B2 only stage 1 is run.
-    let b2 = param_int(a, "B2").and_then(|b| b.to_u64()).unwrap_or(b1);
-    let x0 = match param_int(a, "x0") {
-        Some(x) => x,
-        None => &int(2) + &it.rng.below(&(&n.clone().max(int(5)) - &int(3))),
+    let b1 = a.int(1)?;
+    if *b1 <= Integer::one() {
+        return Err(RuntimeError::runtime("Argument 2 should be greater than 1"));
+    }
+    let b1 = b1.to_u64().map_or(MAX_B1, |b| b.min(MAX_B1));
+    let b2 = match b2 {
+        None => default_b2(b1, scale),
+        Some(b) if b.sign() <= 0 => 0,
+        Some(b) => b.to_u64().map_or(MAX_B2, |b| b.min(MAX_B2)),
     };
-    Ok((n, b1, b2, x0))
+    Ok(Stages2 { n, b1, b2, k, x0, sigma })
+}
+
+/// A random x0 or sigma, as Magma chooses them.
+fn random_start(it: &mut Interp) -> Integer {
+    Integer::from_u64(6 + it.rng.below_u64((1 << 32) - 6))
+}
+
+/// The factor a method finds on n > 1: it is not run on even n, which has
+/// the factor 2 but for n = 2.
+fn run_odd(n: &Integer, method: impl FnOnce() -> Option<Integer>) -> Option<Integer> {
+    match n.is_even() {
+        true => (n.bits() > 2).then(|| int(2)),
+        false => method(),
+    }
+}
+
+/// The x0 that the methods start from: as Magma passes it on, a negative
+/// x0 gains 2^64 once, as a machine word would.
+fn start_value(x0: &Integer) -> Integer {
+    match x0.sign() < 0 {
+        true => x0 + &Integer::one().mul_2exp(64),
+        false => x0.clone(),
+    }
+}
+
+/// The factor found and the x0 or sigma it came from, or 0 alone (the
+/// second value is left unassigned).
+fn found(d: Option<Integer>, start: Integer) -> RResult<Vals> {
+    match d {
+        Some(d) => Ok(vals![Value::Int(d), Value::Int(start)]),
+        None => Ok(vals![Value::Int(Integer::zero()), Value::Undef]),
+    }
 }
 
 fn p_minus_1_fn(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let (n, b1, b2, x0) = pm1_args(it, a)?;
-    match p_minus_1(&n, b1, b2, &x0) {
-        Attempt::Found(d) => Ok(vals![Value::Int(d), Value::Int(x0)]),
-        Attempt::Failed => intv(Integer::zero()),
-    }
+    let s = stage_args(a, PM1_B2, false)?;
+    let x0 = s.x0.unwrap_or_else(|| random_start(it));
+    found(run_odd(&s.n, || pm1::p_minus_1(&s.n, s.b1, s.b2, s.k, &start_value(&x0))), x0)
 }
 
 fn p_plus_1_fn(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let (n, b1, b2, x0) = pm1_args(it, a)?;
-    match p_plus_1(&n, b1, b2, &x0) {
-        Attempt::Found(d) => Ok(vals![Value::Int(d), Value::Int(x0)]),
-        Attempt::Failed => intv(Integer::zero()),
-    }
-}
-
-// ----- ECM ------------------------------------------------------------------------------------------
-
-/// Points (X : Z) on a Montgomery curve B y^2 = x^3 + A x^2 + x modulo n,
-/// with a24 = (A + 2)/4.
-#[derive(Clone)]
-struct MPoint {
-    x: Integer,
-    z: Integer,
-}
-
-fn xdbl(p: &MPoint, a24: &Integer, n: &Integer) -> MPoint {
-    let s = modp(&(&(&p.x + &p.z) * &(&p.x + &p.z)), n);
-    let d = modp(&(&(&p.x - &p.z) * &(&p.x - &p.z)), n);
-    let t = &s - &d;
-    MPoint { x: modp(&(&s * &d), n), z: modp(&(&t * &(&d + &(a24 * &t))), n) }
-}
-
-fn xadd(p: &MPoint, q: &MPoint, diff: &MPoint, n: &Integer) -> MPoint {
-    let u = &(&p.x - &p.z) * &(&q.x + &q.z);
-    let v = &(&p.x + &p.z) * &(&q.x - &q.z);
-    let s = &u + &v;
-    let d = &u - &v;
-    MPoint { x: modp(&(&diff.z * &modp(&(&s * &s), n)), n), z: modp(&(&diff.x * &modp(&(&d * &d), n)), n) }
-}
-
-/// [k]P by the Montgomery ladder.
-fn ladder(p: &MPoint, k: u64, a24: &Integer, n: &Integer) -> MPoint {
-    if k == 0 {
-        return MPoint { x: Integer::zero(), z: Integer::zero() };
-    }
-    let (mut r0, mut r1) = (p.clone(), xdbl(p, a24, n));
-    for i in (0..63 - k.leading_zeros()).rev() {
-        if (k >> i) & 1 == 1 {
-            r0 = xadd(&r1, &r0, p, n);
-            r1 = xdbl(&r1, a24, n);
-        } else {
-            r1 = xadd(&r1, &r0, p, n);
-            r0 = xdbl(&r0, a24, n);
-        }
-    }
-    r0
+    let s = stage_args(a, PP1_B2, false)?;
+    let x0 = s.x0.unwrap_or_else(|| random_start(it));
+    found(run_odd(&s.n, || pm1::p_plus_1(&s.n, s.b1, s.b2, s.k, &start_value(&x0))), x0)
 }
 
 /// Suyama's curve for sigma: u = sigma^2 - 5, v = 4 sigma,
@@ -784,73 +706,38 @@ fn suyama(sigma: &Integer) -> (Integer, Integer, Integer, Integer) {
     (num, den, &(&u * &u) * &u, &(&v * &v) * &v)
 }
 
-fn ecm_curve(n: &Integer, b1: u64, b2: u64, sigma: &Integer, x0: Option<&Integer>) -> Attempt {
-    let (num, den, xn, xd) = suyama(sigma);
-    let inv = match modp(&den, n).invmod(n) {
-        Some(i) => i,
-        None => {
-            return match proper(&den.gcd(n), n) {
-                Some(d) => Attempt::Found(d),
-                None => Attempt::Failed,
-            };
-        }
-    };
-    let a24 = modp(&(&num * &inv), n);
-    let mut p = match x0 {
-        Some(x) => MPoint { x: modp(x, n), z: Integer::one() },
-        None => MPoint { x: modp(&xn, n), z: modp(&xd, n) },
-    };
-    let step = |p: &MPoint, q: u64| ladder(p, q, &a24, n);
-    let test = |p: &MPoint| p.z.clone();
-    if let Some(r) = stage1(n, b1, &mut p, &step, &test) {
-        return r;
-    }
-    // Stage 2: odd multiples of the stage 1 point by differential addition.
-    let q2 = xdbl(&p, &a24, n);
-    let start = (b1 + 1) | 1;
-    let mut prev = ladder(&p, start.saturating_sub(2).max(1), &a24, n);
-    let mut cur = ladder(&p, start, &a24, n);
-    let mut at_m = start;
-    stage2(n, b1, b2, &mut |q| {
-        while at_m < q {
-            let next = if at_m == 1 { ladder(&p, 3, &a24, n) } else { xadd(&cur, &q2, &prev, n) };
-            prev = std::mem::replace(&mut cur, next);
-            at_m += 2;
-        }
-        cur.z.clone()
-    })
-}
-
 fn ecm_fn(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    let n = a.int(0)?.clone();
-    if n <= Integer::one() {
-        return Err(RuntimeError::runtime("Argument 1 should be greater than 1"));
-    }
-    let b1 = a.int(1)?.to_u64().unwrap_or(0);
-    let b2 = param_int(a, "B2").and_then(|b| b.to_u64()).unwrap_or(b1);
-    let sigma = param_int(a, "Sigma").unwrap_or_else(|| Integer::from_u64(6 + it.rng.below_u64((1 << 32) - 6)));
-    let x0 = param_int(a, "x0");
-    match ecm_curve(&n, b1, b2, &sigma, x0.as_ref()) {
-        Attempt::Found(d) => Ok(vals![Value::Int(d), Value::Int(sigma)]),
-        Attempt::Failed => intv(Integer::zero()),
-    }
+    let s = stage_args(a, ECM_B2, true)?;
+    let sigma = s.sigma.unwrap_or_else(|| random_start(it));
+    let x0 = s.x0.as_ref().map(start_value);
+    found(run_odd(&s.n, || ecm::run(&s.n, s.b1, s.b2, s.k, &sigma, x0.as_ref())), sigma)
 }
 
+/// Magma's package code runs ECM on a random curve for each B1 from L to U,
+/// B1 growing by its square root, and returns 0 and 0 when none succeeds.
 fn ecm_steps(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let n = a.int(0)?.clone();
-    if n <= Integer::one() {
-        return Err(RuntimeError::runtime("Argument 1 should be greater than 1"));
-    }
-    let mut b1 = a.int(1)?.to_u64().unwrap_or(0).max(1);
-    let hi = a.int(2)?.to_u64().unwrap_or(u64::MAX);
+    let (mut b1, hi) = (a.int(1)?.clone(), a.int(2)?.clone());
+    let inner = |msg: &str| {
+        let mut e = super::hidden_inner(RuntimeError::runtime(msg));
+        e.context = Some("ECM".into());
+        e
+    };
     while b1 <= hi {
-        let sigma = Integer::from_u64(6 + it.rng.below_u64((1 << 32) - 6));
-        if let Attempt::Found(d) = ecm_curve(&n, b1, 100 * b1, &sigma, None) {
+        if n <= Integer::one() {
+            return Err(inner("Argument 1 should be greater than 1"));
+        }
+        if b1 <= Integer::one() {
+            return Err(inner("Argument 2 should be greater than 1"));
+        }
+        let b = b1.to_u64().map_or(MAX_B1, |b| b.min(MAX_B1));
+        let sigma = random_start(it);
+        if let Some(d) = run_odd(&n, || ecm::run(&n, b, default_b2(b, ECM_B2), 2, &sigma, None)) {
             return Ok(vals![Value::Int(d), Value::Int(sigma)]);
         }
-        b1 += (b1 as f64).sqrt() as u64;
+        b1 = &b1 + &Integer::from_u64(b.isqrt());
     }
-    intv(Integer::zero())
+    Ok(vals![Value::int(0), Value::int(0)])
 }
 
 fn mpqs(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
@@ -1341,13 +1228,19 @@ pub fn register(it: &mut Interp) {
         "Factor n by Shanks's square form factorization with at most k iterations.",
         squfof_fn,
     );
-    let pm = [("x0", Value::Undef), ("B2", Value::Undef), ("k", Value::Undef)];
-    it.def_params("pMinus1", "n::RngIntElt, B1::RngIntElt -> RngIntElt", &pm, "A factor of n found by Pollard's p - 1 method, or 0.", p_minus_1_fn);
+    let pm = [("x0", Value::Undef), ("B2", Value::Undef), ("k", Value::Undef), ("Sigma", Value::Undef)];
+    it.def_params(
+        "pMinus1",
+        "n::RngIntElt, B1::RngIntElt -> RngIntElt, RngIntElt",
+        &pm,
+        "A factor of n found by Pollard's p - 1 method, and its x0; or 0.",
+        p_minus_1_fn,
+    );
     it.def_params("pPlus1", "n::RngIntElt, B1::RngIntElt -> RngIntElt", &pm, "A factor of n found by Williams's p + 1 method, or 0.", p_plus_1_fn);
     it.def_params(
         "ECM",
         "n::RngIntElt, B1::RngIntElt -> RngIntElt, RngIntElt",
-        &[("Sigma", Value::Undef), ("x0", Value::Undef), ("B2", Value::Undef), ("k", Value::int(2))],
+        &[("Sigma", Value::Undef), ("x0", Value::Undef), ("B2", Value::Undef), ("k", Value::Undef)],
         "A factor of n found by one elliptic curve (Suyama's parametrization), and its sigma; or 0.",
         ecm_fn,
     );
