@@ -190,8 +190,13 @@ impl Ring {
     /// The factorization of the modulus of a residue class ring (increasing
     /// primes; empty for `Z/1Z`).
     pub fn modulus_factors(&self) -> Option<Rc<[(Integer, u64)]>> {
+        self.modulus_factors_by(crate::intrinsics::factseq::factor)
+    }
+
+    /// `modulus_factors`, found by `factor` if not yet known.
+    pub fn modulus_factors_by(&self, factor: impl FnOnce(&Integer) -> Vec<(Integer, u64)>) -> Option<Rc<[(Integer, u64)]>> {
         let RingKind::Residue(m) = &self.kind else { return None };
-        Some(self.factored.get_or_init(|| crate::intrinsics::factseq::factor(m).into()).clone())
+        Some(self.factored.get_or_init(|| factor(m).into()).clone())
     }
 
     /// The coefficient ring of a polynomial ring (or of a quotient of one).

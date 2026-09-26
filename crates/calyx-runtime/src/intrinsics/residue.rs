@@ -97,19 +97,19 @@ pub fn residue_div(x: &Integer, y: &Integer, m: &Integer) -> Option<Integer> {
 
 /// The factorization of the modulus: the `Factorization` parameter when it
 /// stands for the modulus, and otherwise the ring's own.
-fn modulus_factors(a: &CallArgs, r: &Res) -> Rc<[(Integer, u64)]> {
+fn modulus_factors(it: &mut Interp, a: &CallArgs, r: &Res) -> Rc<[(Integer, u64)]> {
     if let Some(pairs) = a.param("Factorization").and_then(pairs_of) {
         let f: Vec<(Integer, u64)> = pairs.into_iter().filter_map(|(p, k)| Some((p, k.to_u64().filter(|&k| k > 0)?))).collect();
         if !f.is_empty() && fact_int(&f) == r.m {
             return f.into();
         }
     }
-    r.ring.modulus_factors().expect("a residue class ring")
+    r.ring.modulus_factors_by(|m| it.factor_int(m)).expect("a residue class ring")
 }
 
-fn is_square(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+fn is_square(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let r = res_arg(a, 0)?;
-    let f = modulus_factors(a, &r);
+    let f = modulus_factors(it, a, &r);
     if !is_square_mod_factored(&r.x, &f) {
         return Ok(vals![Value::Bool(false), Value::Undef]);
     }
@@ -119,18 +119,18 @@ fn is_square(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     }
 }
 
-fn sqrt(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+fn sqrt(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let r = res_arg(a, 0)?;
-    let f = modulus_factors(a, &r);
+    let f = modulus_factors(it, a, &r);
     match modsqrt_factored(&r.x, &f) {
         Some(s) => one(r.elt(&s)?),
         None => Err(RuntimeError::runtime("Argument has no square root")),
     }
 }
 
-fn all_square_roots(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+fn all_square_roots(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let r = res_arg(a, 0)?;
-    let f = modulus_factors(a, &r);
+    let f = modulus_factors(it, a, &r);
     let roots = all_sqrts_factored(&r.x, &f, 1 << 26).ok_or_else(|| RuntimeError::runtime("Too many square roots"))?;
     let elems = roots.iter().map(|x| r.elt(x)).collect::<RResult<Vec<_>>>()?;
     one(Value::seq(Some(Value::Struct(r.st.clone())), elems))
@@ -190,10 +190,10 @@ fn phi(f: &[(Integer, u64)]) -> Integer {
 }
 
 /// Whether `n` generates the unit group.
-fn is_primitive(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+fn is_primitive(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let r = res_arg(a, 0)?;
     let order = super::ints::modorder(&r.x, &r.m);
-    boolv(!order.is_zero() && order == phi(&r.ring.modulus_factors().unwrap()))
+    boolv(!order.is_zero() && order == phi(&r.ring.modulus_factors_by(|m| it.factor_int(m)).unwrap()))
 }
 
 /// The canonical associate `y = gcd(x, m)` (0 for x = 0) of `x`, and a
@@ -221,9 +221,9 @@ fn is_regular(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     boolv(r.x.gcd(&r.m).is_one())
 }
 
-fn factored_modulus(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+fn factored_modulus(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (_, ring) = ring_of(&a.args[0]).ok_or_else(bad)?;
-    let f = ring.modulus_factors().ok_or_else(bad)?;
+    let f = ring.modulus_factors_by(|m| it.factor_int(m)).ok_or_else(bad)?;
     one(fact_value(&f))
 }
 

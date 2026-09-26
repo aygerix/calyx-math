@@ -14,6 +14,7 @@ use crate::interp::{CallArgs, Interp};
 use crate::random::Rng;
 use crate::value::*;
 
+mod ecm;
 mod siqs;
 
 fn int(v: i64) -> Integer {
@@ -179,9 +180,13 @@ impl Stages {
         let proof = self.proof;
         let (f, rest) = split_with(&r, proof, &mut |x: &Integer| {
             let (d, by_ecm_or_mpqs) = self.split(x, rng, stored)?;
+            // As in Magma, the factor found is stored with the cofactor left
+            // once its powers are divided out, those of them that are prime
+            // or powers of a prime (which is stored).
             if by_ecm_or_mpqs {
-                for y in [d.clone(), x.divexact(&d)] {
-                    if !stored.contains(&y) && if proof { y.is_prime() } else { y.is_probable_prime() } {
+                for y in [d.clone(), x.remove(&d).1] {
+                    let y = y.perfect_power().map_or(y, |(b, _)| b);
+                    if !y.is_one() && !stored.contains(&y) && if proof { y.is_prime() } else { y.is_probable_prime() } {
                         stored.push(y);
                     }
                 }
@@ -216,30 +221,34 @@ impl Stages {
         let mpqs = digits > 25 && self.mpqs.is_none_or(|l| digits <= l);
         let complete = self.ecm.is_none() || self.mpqs.is_none();
         match self.ecm {
-            // Without a limit on the curves, B1 grows by its square root a
-            // curve and carries over to the cofactors, as in Magma: while
-            // the curves cost less than sieving when MPQS follows, else
-            // until a factor turns up.
-            None if digits > 25 => {
-                let bound = if mpqs { ecm_bound(digits) } else { u64::MAX };
+            // Without a limit on the curves when MPQS follows, B1 grows by its
+            // square root a curve and carries over to the cofactors, as in
+            // Magma, while the curves cost less than sieving.
+            None if mpqs => {
+                let bound = ecm_bound(digits);
                 let b1 = self.b1.get_or_insert((bound / 4).clamp(100, 2000));
                 while *b1 <= bound {
-                    if let Some(d) = m.ecm(1, *b1, b1.saturating_mul(100), rng.below_u64(u64::MAX)) {
+                    if let Some(d) = ecm::curve(m, *b1, b1.saturating_mul(100), 6 + rng.below_u64(1 << 62)) {
                         return Some((d, true));
                     }
                     *b1 += b1.isqrt();
                 }
             }
-            // B1 grows from 500 by 100 a curve, or to 600 over the 2 curves
-            // Magma gives numbers of up to 25 digits.
+            // Otherwise B1 grows from 500 by 100 a curve: over the curves
+            // given, without end when MPQS may not be used, or to 600 over
+            // the 2 curves Magma gives numbers of up to 25 digits.
             _ => {
-                let (curves, top) = self.ecm.map_or((2, Some(600)), |c| (c, None));
+                let (curves, top) = match self.ecm {
+                    Some(c) => (c, None),
+                    None if digits > 25 => (u64::MAX, None),
+                    None => (2, Some(600)),
+                };
                 for i in 0..curves {
                     let b1 = match top {
                         Some(t) => 500 + (t - 500) * i / (curves - 1).max(1),
                         None => 500u64.saturating_add(i.saturating_mul(100)),
                     };
-                    if let Some(d) = m.ecm(1, b1, b1.saturating_mul(100), rng.below_u64(u64::MAX)) {
+                    if let Some(d) = ecm::curve(m, b1, b1.saturating_mul(100), 6 + rng.below_u64(1 << 62)) {
                         return Some((d, true));
                     }
                 }
@@ -259,9 +268,9 @@ impl Stages {
 
 /// The largest B1 for ECM on a composite of the given size before MPQS:
 /// past it, sieving costs less than more curves. It grows tenfold every 15
-/// digits, from 5000 at 60 digits.
+/// digits, from 8000 at 60 digits.
 fn ecm_bound(digits: u64) -> u64 {
-    (5000.0 * 10f64.powf((digits as f64 - 60.0) / 15.0)).min(1e18) as u64
+    (8000.0 * 10f64.powf((digits as f64 - 60.0) / 15.0)).min(1e18) as u64
 }
 
 fn store_factor(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {

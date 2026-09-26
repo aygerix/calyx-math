@@ -223,9 +223,9 @@ impl NativeMap for UnitMap {
 /// turn, -1 and 5 for 2^k (only -1 for 4, none for 2), and for odd p^k the
 /// least primitive root g modulo p (g + p if g^(p-1) = 1 mod p^2), each
 /// lifted to 1 modulo the other prime powers.
-fn unit_group(ring: &Rc<Struct>, m: &Integer) -> RResult<(Rc<Struct>, Value)> {
+fn unit_group(it: &mut Interp, ring: &Rc<Struct>, m: &Integer) -> RResult<(Rc<Struct>, Value)> {
     let factors = match &ring.kind {
-        StructKind::Ring(r) => r.modulus_factors().unwrap_or_else(|| Rc::from(Vec::new())),
+        StructKind::Ring(r) => r.modulus_factors_by(|m| it.factor_int(m)).unwrap_or_else(|| Rc::from(Vec::new())),
         _ => unreachable!(),
     };
     let mut gens = Vec::new();
@@ -306,9 +306,9 @@ pub(super) fn with_map(a: &CallArgs, group: Rc<Struct>, map: Value) -> RResult<V
     if a.nresults < 2 { one(Value::Struct(group)) } else { Ok(vals![Value::Struct(group), map]) }
 }
 
-fn unit_group_res(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
+fn unit_group_res(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let (st, m) = residue_ring(a)?;
-    let (group, map) = unit_group(&st, &m)?;
+    let (group, map) = unit_group(it, &st, &m)?;
     with_map(a, group, map)
 }
 
