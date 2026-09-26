@@ -141,7 +141,7 @@ impl Interp {
                 _ => {}
             }
         }
-        // Fast path for residues and prime field elements.
+        // Fast path for residues and small finite field elements.
         if matches!(a, Value::Small(..)) || matches!(b, Value::Small(..)) {
             if let Some(v) = crate::rings::small_binop(op, &a, &b) {
                 return Ok(v);
@@ -436,7 +436,7 @@ impl Interp {
             Value::Real(r) => Ok(Value::Real(Rc::new(RealV { x: r.x.neg(), fixed: r.fixed }))),
             Value::Complex(c) => Ok(crate::intrinsics::complex::negate(&c)),
             Value::Elt(e) => self.ring_negate(&e),
-            Value::Small(r, x) => Ok(Value::Small(r, r.modulus().neg(x))),
+            Value::Small(r, x) => Ok(Value::Small(r, r.neg(x))),
             Value::AbElt(x) => Ok(x.neg()),
             Value::Nfd(x) => crate::intrinsics::nearfields::negate(&x),
             other => self.unary_intrinsic("-", other),
@@ -732,7 +732,7 @@ impl Interp {
                 let ring = x.ring_rc();
                 return self.ring_elt_cmp(&ring, &x.x, &y.x);
             }
-            (Small(r, x), Small(s, y)) if r == s => x.cmp(y),
+            (Small(r, x), Small(s, y)) if r == s => r.cmp_words(*x, *y),
             (Seq(x), Seq(y)) => {
                 for (p, q) in x.elems.iter().zip(&y.elems) {
                     match self.compare_ord(p, q)? {

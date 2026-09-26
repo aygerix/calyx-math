@@ -210,8 +210,10 @@ impl Interp {
                     if rep.is_divisible_by(d) { Ok(Ok(v)) } else { Ok(Err(Some("Element is not in the ideal".into()))) }
                 }
                 StructKind::Integers | StructKind::Rationals | StructKind::Reals(_) if matches!(x, Value::Elt(_) | Value::Small(..)) => {
-                    if let (StructKind::Integers, Value::Small(_, v)) = (&st.kind, x) {
-                        return Ok(Ok(Value::Int(calyx_flint::Integer::from_u64(*v))));
+                    if let (StructKind::Integers, Value::Small(s, v)) = (&st.kind, x) {
+                        if s.zech().is_none() {
+                            return Ok(Ok(Value::Int(calyx_flint::Integer::from_u64(*v))));
+                        }
                     }
                     let e = crate::rings::small::elt_of(x).unwrap();
                     match self.coerce_ring_elt_down(&st.kind, &e) {
@@ -581,7 +583,7 @@ impl Interp {
         if k != 0 && vals.iter().all(|v| kind(v) == k) {
             return Ok(Some(self.parent_of(&vals[0])?));
         }
-        // So do elements of one residue class ring or prime field.
+        // So do the inline elements of one ring.
         if let Value::Small(r, _) = vals[0] {
             if vals.iter().all(|v| matches!(v, Value::Small(s, _) if *s == r)) {
                 return Ok(Some(r.parent_value()));

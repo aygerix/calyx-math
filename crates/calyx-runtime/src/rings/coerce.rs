@@ -196,7 +196,7 @@ impl Interp {
         }
         if let Value::Small(s, v) = x {
             if r.small == Some(*s) {
-                return Ok(Some(Elem::from_word(&r.ctx, *v)));
+                return Ok(Some(small::elem_of(*s, &r.ctx, *v)));
             }
         }
         let expanded;
@@ -416,7 +416,7 @@ impl Interp {
             }
             if let Some(s) = r.small {
                 match x {
-                    Value::Int(i) => return Ok(Ok(Value::Small(s, s.modulus().reduce_integer(i)))),
+                    Value::Int(i) => return Ok(Ok(Value::Small(s, s.word_of_integer(i)))),
                     Value::Small(t, _) if *t == s => return Ok(Ok(x.clone())),
                     _ => {}
                 }

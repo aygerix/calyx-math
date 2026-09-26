@@ -274,6 +274,131 @@ impl Elem {
     }
 }
 
+/// Arithmetic on the words of a field with Zech logarithms: an element is
+/// its logarithm to the base of the field's generator g, in [0, q - 1), or
+/// q - 1 for zero, as in FLINT. The handle reads the tables of the field's
+/// context, which it keeps alive for good, so that it can be copied freely.
+#[derive(Clone, Copy)]
+pub struct Zech {
+    /// q - 1, also the word of zero.
+    qm1: u64,
+    /// The logarithm of -1: (q - 1)/2, or 0 in characteristic 2.
+    minus_one: u64,
+    p: crate::Nmod,
+    /// Z(n) with 1 + g^n = g^Z(n) (q - 1 where that is zero).
+    zech: &'static [sys::ulong],
+    /// The logarithms of 0, 1, ..., p - 1.
+    prime: &'static [sys::ulong],
+    /// The coordinates of g^n as the digits of an integer in base p.
+    eval: &'static [sys::ulong],
+}
+
+impl PartialEq for Zech {
+    fn eq(&self, o: &Zech) -> bool {
+        std::ptr::eq(self.zech, o.zech)
+    }
+}
+
+impl Eq for Zech {}
+
+impl std::fmt::Debug for Zech {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Zech(q = {})", self.qm1 + 1)
+    }
+}
+
+/// A table of a context that is never freed.
+unsafe fn table(t: *const sys::ulong, n: usize) -> &'static [sys::ulong] {
+    unsafe { std::slice::from_raw_parts(t, n) }
+}
+
+impl Zech {
+    /// The tables of `ctx`, a field with Zech logarithms.
+    pub fn of(ctx: &Rc<Ctx>) -> Option<Zech> {
+        let CtxKind::FqZech { .. } = ctx.kind() else { return None };
+        std::mem::forget(ctx.clone());
+        let z = unsafe { &*fq_ctx_ptr::<sys::fq_zech_ctx_struct>(ctx) };
+        let (q, p) = (z.qm1 as usize + 1, z.p as usize);
+        Some(Zech {
+            qm1: z.qm1 as u64,
+            minus_one: z.qm1o2 as u64,
+            p: crate::Nmod::new(z.p as u64),
+            zech: unsafe { table(z.zech_log_table, q) },
+            prime: unsafe { table(z.prime_field_table, p) },
+            eval: unsafe { table(z.eval_table, q) },
+        })
+    }
+
+    /// The word of zero, q - 1.
+    #[inline]
+    pub fn zero(self) -> u64 {
+        self.qm1
+    }
+
+    #[inline]
+    pub fn mul(self, x: u64, y: u64) -> u64 {
+        if x == self.qm1 || y == self.qm1 {
+            return self.qm1;
+        }
+        let s = x + y;
+        if s >= self.qm1 { s - self.qm1 } else { s }
+    }
+
+    #[inline]
+    pub fn add(self, x: u64, y: u64) -> u64 {
+        if x == self.qm1 {
+            return y;
+        }
+        if y == self.qm1 {
+            return x;
+        }
+        // g^x + g^y = g^y (1 + g^(x - y)).
+        let c = self.zech[if x >= y { x - y } else { x + self.qm1 - y } as usize] as u64;
+        self.mul(c, y)
+    }
+
+    #[inline]
+    pub fn neg(self, x: u64) -> u64 {
+        if x == self.qm1 { x } else { self.mul(x, self.minus_one) }
+    }
+
+    #[inline]
+    pub fn sub(self, x: u64, y: u64) -> u64 {
+        self.add(x, self.neg(y))
+    }
+
+    /// 1/x, unless x is zero.
+    #[inline]
+    pub fn inv(self, x: u64) -> Option<u64> {
+        (x != self.qm1).then(|| if x == 0 { 0 } else { self.qm1 - x })
+    }
+
+    /// x/y, unless y is zero.
+    #[inline]
+    pub fn div(self, x: u64, y: u64) -> Option<u64> {
+        Some(self.mul(x, self.inv(y)?))
+    }
+
+    /// x^e, unless x is zero and e negative.
+    pub fn pow(self, x: u64, e: &Integer) -> Option<u64> {
+        if x == self.qm1 {
+            return (e.sign() >= 0).then_some(if e.is_zero() { 0 } else { self.qm1 });
+        }
+        Some((x as u128 * e.mod_u64(self.qm1) as u128 % self.qm1 as u128) as u64)
+    }
+
+    /// The word of the integer n.
+    pub fn from_integer(self, n: &Integer) -> u64 {
+        self.prime[self.p.reduce_integer(n) as usize] as u64
+    }
+
+    /// The value in [0, p) of x if it lies in the prime field.
+    pub fn prime_value(self, x: u64) -> Option<u64> {
+        let v = self.eval[x as usize] as u64;
+        (v < self.p.modulus()).then_some(v)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,6 +471,40 @@ mod tests {
         let f = Ctx::finite_field(&int(3), &[int(1), int(2), int(0), int(1)], true).unwrap();
         assert_eq!(Elem::zech_order(&f), Some(26));
         assert!(Ctx::finite_field(&int(3), &[int(1), int(0), int(1)], true).is_err());
+    }
+
+    #[test]
+    fn zech_words_agree_with_flint() {
+        for (p, d, cs) in [(2u64, 1u64, None), (2, 8, None), (3, 5, None), (7, 4, None), (13, 2, None), (7, 2, Some(vec![3, 1, 1]))] {
+            let c: Vec<Integer> = cs.map_or_else(|| conway_polynomial(p, d).unwrap(), |cs| cs.into_iter().map(Integer::from_u64).collect());
+            let f = Ctx::finite_field(&Integer::from_u64(p), &c, true).unwrap();
+            let z = Zech::of(&f).unwrap();
+            let q1 = z.zero();
+            let elt = |w: u64| Elem::fq_from_zech_log(&f, w).unwrap();
+            let word = |e: Elem| e.zech_log().unwrap_or(q1);
+            let mut ws: Vec<u64> = (0..q1).step_by((q1 as usize / 30).max(1)).collect();
+            ws.extend([q1, q1 / 2, q1 - 1]);
+            for &x in &ws {
+                let ex = elt(x);
+                assert_eq!(z.neg(x), word(ex.neg().unwrap()));
+                assert_eq!(z.inv(x), ex.inv().ok().map(word));
+                assert_eq!(z.prime_value(x), ex.fq_prime_value().map(|v| v.to_u64().unwrap()));
+                for e in [-7i64, -1, 0, 1, 2, 12345] {
+                    assert_eq!(z.pow(x, &int(e)), ex.pow_i64(e).ok().map(word), "{p}^{d}: ({x})^{e}");
+                }
+                for &y in &ws {
+                    let ey = elt(y);
+                    assert_eq!(z.add(x, y), word(ex.add(&ey).unwrap()), "{p}^{d}: {x} + {y}");
+                    assert_eq!(z.sub(x, y), word(ex.sub(&ey).unwrap()));
+                    assert_eq!(z.mul(x, y), word(ex.mul(&ey).unwrap()));
+                    assert_eq!(z.div(x, y), ex.div(&ey).ok().map(word));
+                }
+            }
+            for n in [-5i64, -1, 0, 1, 2, 100, 1 << 40] {
+                assert_eq!(z.from_integer(&int(n)), word(Elem::from_i64(&f, n).unwrap()));
+            }
+            assert_eq!(z, Zech::of(&f).unwrap());
+        }
     }
 
     #[test]
