@@ -114,6 +114,22 @@ static FQ_ZECH: FqFns = FqFns {
     irreducible: fq_zech_poly_is_irreducible,
 };
 
+/// Packed fields convert to and from fq_nmod (see `packed`).
+static FQ_PACKED: FqFns = FqFns {
+    gcd: crate::packed::poly_gcd,
+    xgcd: crate::packed::poly_xgcd,
+    divrem: crate::packed::poly_divrem,
+    powmod: crate::packed::poly_powmod,
+    fac_init: crate::packed::fac_init,
+    fac_clear: crate::packed::fac_clear,
+    factor: crate::packed::poly_factor,
+    sqfree: crate::packed::poly_factor_squarefree,
+    ddf: crate::packed::poly_factor_distinct_deg,
+    edf: crate::packed::poly_factor_equal_deg,
+    roots: crate::packed::poly_roots_factored,
+    irreducible: crate::packed::poly_is_irreducible,
+};
+
 static FQ: FqFns = FqFns {
     gcd: fq_poly_gcd,
     xgcd: fq_poly_xgcd,
@@ -215,6 +231,8 @@ fn rep(base: &Ctx) -> Rep {
             CtxKind::FqZech { .. } => Rep::Fq(&FQ_ZECH, *(data as *const C)),
             CtxKind::FqNmod { .. } => Rep::Fq(&FQ_NMOD, *(data as *const C)),
             CtxKind::Fq { .. } => Rep::Fq(&FQ, *(data as *const C)),
+            // With the gr context itself.
+            CtxKind::FqPacked { .. } => Rep::Fq(&FQ_PACKED, base.ptr() as C),
             _ => Rep::Generic,
         }
     }

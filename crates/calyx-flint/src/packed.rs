@@ -629,7 +629,7 @@ impl Ctx {
             return Err(GrError::Unable);
         }
         let ints: Vec<Integer> = modulus.iter().map(|&c| Integer::from_u64(c % p)).collect();
-        let companion = Ctx::finite_field(&Integer::from_u64(p), &ints, false)?;
+        let companion = Ctx::flint_field(&Integer::from_u64(p), &ints, false)?;
         let mut g = [0u64; 8];
         for (i, &c) in modulus[..n].iter().enumerate() {
             g[i / 64] |= (c & 1) << (i % 64);
@@ -668,6 +668,309 @@ pub(crate) fn from_coords(ctx: &Rc<Ctx>, c: &[u64]) -> Elem {
     e
 }
 
+// ----- polynomials, through the companion ---------------------------------
+
+type P = *mut c_void;
+type C = *const c_void;
+
+// FLINT's factorizations over fq_nmod, which flint3-sys does not declare
+// (declared as upoly declares them).
+unsafe extern "C" {
+    fn fq_nmod_poly_factor_init(f: P, ctx: C);
+    fn fq_nmod_poly_factor_clear(f: P, ctx: C);
+    fn fq_nmod_poly_factor(f: P, lc: P, a: C, ctx: C);
+    fn fq_nmod_poly_factor_squarefree(f: P, a: C, ctx: C);
+    fn fq_nmod_poly_factor_distinct_deg(f: P, a: C, degs: *const *mut sys::slong, ctx: C);
+    fn fq_nmod_poly_factor_equal_deg(f: P, a: C, d: sys::slong, ctx: C);
+    fn fq_nmod_poly_roots(f: P, a: C, mult: c_int, ctx: C);
+    fn fq_nmod_poly_is_irreducible(a: C, ctx: C) -> c_int;
+}
+
+impl Head {
+    /// The companion's fq_nmod context.
+    fn nctx(&self) -> *const sys::fq_nmod_ctx_struct {
+        unsafe { std::ptr::read_unaligned((*self.companion.ptr()).data.as_ptr() as *const *const sys::fq_nmod_ctx_struct) }
+    }
+
+    /// Set the fq_nmod element t (of the companion) to the element at x.
+    unsafe fn to_fq_nmod(&self, x: *const c_void, t: *mut sys::nmod_poly_struct) {
+        let c = unsafe { (self.coords)(self, x) };
+        let len = c.iter().rposition(|&v| v != 0).map_or(0, |i| i + 1);
+        unsafe {
+            sys::nmod_poly_fit_length(t, len as sys::slong);
+            for (i, &v) in c[..len].iter().enumerate() {
+                *(*t).coeffs.add(i) = v as sys::ulong;
+            }
+            (*t).length = len as sys::slong;
+        }
+    }
+}
+
+/// An fq_nmod_poly over the companion of a packed field, cleared when
+/// dropped.
+struct FPoly {
+    p: sys::fq_nmod_poly_struct,
+    nctx: *const sys::fq_nmod_ctx_struct,
+}
+
+impl FPoly {
+    fn new(h: &Head) -> FPoly {
+        let mut p = sys::fq_nmod_poly_struct::default();
+        unsafe { sys::fq_nmod_poly_init(&mut p, h.nctx()) };
+        FPoly { p, nctx: h.nctx() }
+    }
+
+    /// The gr_poly at a over the packed field ctx.
+    unsafe fn of(h: &Head, a: *const c_void, ctx: GrCtx) -> FPoly {
+        let mut f = FPoly::new(h);
+        unsafe {
+            let a = &*(a as *const sys::gr_poly_struct);
+            let size = (*ctx).sizeof_elem as usize;
+            sys::fq_nmod_poly_fit_length(&mut f.p, a.length, f.nctx);
+            for i in 0..a.length as usize {
+                h.to_fq_nmod(a.coeffs.cast::<u8>().add(i * size).cast(), f.p.coeffs.add(i));
+            }
+            f.p.length = a.length;
+        }
+        f
+    }
+}
+
+impl FPoly {
+    fn raw(&self) -> C {
+        (&self.p as *const sys::fq_nmod_poly_struct).cast()
+    }
+}
+
+impl Drop for FPoly {
+    fn drop(&mut self) {
+        unsafe { sys::fq_nmod_poly_clear(&mut self.p, self.nctx) };
+    }
+}
+
+/// Set the gr_poly at r over the packed field ctx to the fq_nmod_poly p.
+unsafe fn put_poly(h: &Head, p: &sys::fq_nmod_poly_struct, r: *mut c_void, ctx: GrCtx) {
+    unsafe {
+        let r = r as *mut sys::gr_poly_struct;
+        let size = (*ctx).sizeof_elem as usize;
+        sys::gr_poly_fit_length(r, p.length, ctx);
+        for i in 0..p.length as usize {
+            h.from_fq_nmod(p.coeffs.add(i).cast(), (*r).coeffs.cast::<u8>().add(i * size).cast());
+        }
+        sys::_gr_poly_set_length(r, p.length, ctx);
+    }
+}
+
+/// A factorization over a packed field, laid out as FLINT's (and upoly's
+/// `RawFac`) but with gr_polys over the packed field.
+#[repr(C)]
+struct PFac {
+    poly: *mut sys::gr_poly_struct,
+    exp: *mut sys::slong,
+    num: sys::slong,
+    alloc: sys::slong,
+}
+
+/// A factorization over the companion, cleared when dropped.
+struct FFac {
+    f: sys::fq_nmod_poly_factor_struct,
+    nctx: *const sys::fq_nmod_ctx_struct,
+}
+
+impl FFac {
+    fn new(h: &Head) -> FFac {
+        let mut f = sys::fq_nmod_poly_factor_struct::default();
+        unsafe { fq_nmod_poly_factor_init((&mut f as *mut sys::fq_nmod_poly_factor_struct).cast(), h.nctx().cast()) };
+        FFac { f, nctx: h.nctx() }
+    }
+
+    fn raw(&mut self) -> P {
+        (&mut self.f as *mut sys::fq_nmod_poly_factor_struct).cast()
+    }
+
+    /// Append the factors to the factorization at f over the packed field
+    /// ctx.
+    unsafe fn push_to(&self, h: &Head, f: *mut c_void, ctx: GrCtx) {
+        unsafe {
+            let f = &mut *(f as *mut PFac);
+            for i in 0..self.f.num as usize {
+                if f.num == f.alloc {
+                    f.alloc = (2 * f.alloc).max(4);
+                    f.poly = sys::flint_realloc(f.poly.cast(), f.alloc as usize * std::mem::size_of::<sys::gr_poly_struct>()).cast();
+                    f.exp = sys::flint_realloc(f.exp.cast(), f.alloc as usize * std::mem::size_of::<sys::slong>()).cast();
+                }
+                let p = f.poly.add(f.num as usize);
+                sys::gr_poly_init(p, ctx);
+                put_poly(h, &*self.f.poly.add(i), p.cast(), ctx);
+                *f.exp.add(f.num as usize) = *self.f.exp.add(i);
+                f.num += 1;
+            }
+        }
+    }
+}
+
+impl Drop for FFac {
+    fn drop(&mut self) {
+        unsafe { fq_nmod_poly_factor_clear(self.raw(), self.nctx.cast()) };
+    }
+}
+
+/// The head and gr context of a packed field passed as upoly's context.
+unsafe fn parts<'a>(ctx: C) -> (&'a Head, GrCtx) {
+    (unsafe { head(ctx as GrCtx) }, ctx as GrCtx)
+}
+
+// The polynomial functions of upoly's `FqFns` for packed fields: FLINT's
+// fq_nmod ones on copies over the companion, so that results are those of
+// an fq_nmod field.
+
+pub(crate) unsafe extern "C" fn poly_gcd(r: P, a: C, b: C, ctx: C) {
+    unsafe {
+        let (h, g) = parts(ctx);
+        let (x, y, mut t) = (FPoly::of(h, a, g), FPoly::of(h, b, g), FPoly::new(h));
+        sys::fq_nmod_poly_gcd(&mut t.p, &x.p, &y.p, t.nctx);
+        put_poly(h, &t.p, r, g);
+    }
+}
+
+pub(crate) unsafe extern "C" fn poly_xgcd(d: P, s: P, t: P, a: C, b: C, ctx: C) {
+    unsafe {
+        let (h, g) = parts(ctx);
+        let (x, y) = (FPoly::of(h, a, g), FPoly::of(h, b, g));
+        let (mut u, mut v, mut w) = (FPoly::new(h), FPoly::new(h), FPoly::new(h));
+        sys::fq_nmod_poly_xgcd(&mut u.p, &mut v.p, &mut w.p, &x.p, &y.p, u.nctx);
+        put_poly(h, &u.p, d, g);
+        put_poly(h, &v.p, s, g);
+        put_poly(h, &w.p, t, g);
+    }
+}
+
+pub(crate) unsafe extern "C" fn poly_divrem(q: P, r: P, a: C, b: C, ctx: C) {
+    unsafe {
+        let (h, g) = parts(ctx);
+        let (x, y) = (FPoly::of(h, a, g), FPoly::of(h, b, g));
+        let (mut u, mut v) = (FPoly::new(h), FPoly::new(h));
+        sys::fq_nmod_poly_divrem(&mut u.p, &mut v.p, &x.p, &y.p, u.nctx);
+        put_poly(h, &u.p, q, g);
+        put_poly(h, &v.p, r, g);
+    }
+}
+
+pub(crate) unsafe extern "C" fn poly_powmod(r: P, a: C, e: *const sys::fmpz, f: C, ctx: C) {
+    unsafe {
+        let (h, g) = parts(ctx);
+        let (x, m, mut t) = (FPoly::of(h, a, g), FPoly::of(h, f, g), FPoly::new(h));
+        sys::fq_nmod_poly_powmod_fmpz_binexp(&mut t.p, &x.p, e, &m.p, t.nctx);
+        put_poly(h, &t.p, r, g);
+    }
+}
+
+pub(crate) unsafe extern "C" fn fac_init(f: P, _ctx: C) {
+    unsafe { *(f as *mut PFac) = PFac { poly: std::ptr::null_mut(), exp: std::ptr::null_mut(), num: 0, alloc: 0 } };
+}
+
+pub(crate) unsafe extern "C" fn fac_clear(f: P, ctx: C) {
+    unsafe {
+        let f = &mut *(f as *mut PFac);
+        for i in 0..f.num as usize {
+            sys::gr_poly_clear(f.poly.add(i), ctx as GrCtx);
+        }
+        sys::flint_free(f.poly.cast());
+        sys::flint_free(f.exp.cast());
+    }
+}
+
+pub(crate) unsafe extern "C" fn poly_factor(f: P, lc: P, a: C, ctx: C) {
+    unsafe {
+        let (h, g) = parts(ctx);
+        let (x, mut t) = (FPoly::of(h, a, g), FFac::new(h));
+        let mut c = sys::nmod_poly_struct::default();
+        sys::fq_nmod_init(&mut c, t.nctx);
+        fq_nmod_poly_factor(t.raw(), (&mut c as *mut sys::nmod_poly_struct).cast(), x.raw(), t.nctx.cast());
+        h.from_fq_nmod((&c as *const sys::nmod_poly_struct).cast(), lc);
+        sys::fq_nmod_clear(&mut c, t.nctx);
+        t.push_to(h, f, g);
+    }
+}
+
+pub(crate) unsafe extern "C" fn poly_factor_squarefree(f: P, a: C, ctx: C) {
+    unsafe {
+        let (h, g) = parts(ctx);
+        let (x, mut t) = (FPoly::of(h, a, g), FFac::new(h));
+        fq_nmod_poly_factor_squarefree(t.raw(), x.raw(), t.nctx.cast());
+        t.push_to(h, f, g);
+    }
+}
+
+pub(crate) unsafe extern "C" fn poly_factor_distinct_deg(f: P, a: C, degs: *const *mut sys::slong, ctx: C) {
+    unsafe {
+        let (h, g) = parts(ctx);
+        let (x, mut t) = (FPoly::of(h, a, g), FFac::new(h));
+        fq_nmod_poly_factor_distinct_deg(t.raw(), x.raw(), degs, t.nctx.cast());
+        t.push_to(h, f, g);
+    }
+}
+
+pub(crate) unsafe extern "C" fn poly_factor_equal_deg(f: P, a: C, d: sys::slong, ctx: C) {
+    unsafe {
+        let (h, g) = parts(ctx);
+        let (x, mut t) = (FPoly::of(h, a, g), FFac::new(h));
+        fq_nmod_poly_factor_equal_deg(t.raw(), x.raw(), d, t.nctx.cast());
+        t.push_to(h, f, g);
+    }
+}
+
+pub(crate) unsafe extern "C" fn poly_roots_factored(f: P, a: C, mult: c_int, ctx: C) {
+    unsafe {
+        let (h, g) = parts(ctx);
+        let (x, mut t) = (FPoly::of(h, a, g), FFac::new(h));
+        fq_nmod_poly_roots(t.raw(), x.raw(), mult, t.nctx.cast());
+        t.push_to(h, f, g);
+    }
+}
+
+pub(crate) unsafe extern "C" fn poly_is_irreducible(a: C, ctx: C) -> c_int {
+    unsafe {
+        let (h, g) = parts(ctx);
+        fq_nmod_poly_is_irreducible(FPoly::of(h, a, g).raw(), h.nctx().cast())
+    }
+}
+
+// Coefficients of multivariate polynomials (mpoly), as fq_nmod_mpoly keeps
+// them: d words, the coordinates.
+
+/// Write the coordinates of the element at x of the packed field ctx at
+/// out.
+pub(crate) unsafe fn get_n_fq(out: *mut sys::ulong, x: *const c_void, ctx: GrCtx) {
+    unsafe {
+        let h = head(ctx);
+        for (i, v) in (h.coords)(h, x).into_iter().enumerate() {
+            *out.add(i) = v as sys::ulong;
+        }
+    }
+}
+
+/// Write at r the element of the packed field ctx with the coordinates at
+/// a.
+pub(crate) unsafe fn set_n_fq(r: *mut c_void, a: *const sys::ulong, ctx: GrCtx) {
+    unsafe {
+        let h = head(ctx);
+        let c: Vec<u64> = (0..h.n as usize).map(|i| *a.add(i) as u64).collect();
+        (h.from_coords)(h, &c, r);
+    }
+}
+
+/// Write at r the element of the packed field ctx with the coordinates of
+/// the fq_nmod element at a.
+pub(crate) unsafe fn set_fq_nmod(r: *mut c_void, a: *const c_void, ctx: GrCtx) {
+    unsafe { head(ctx).from_fq_nmod(a, r) }
+}
+
+/// The companion's fq_nmod context of a packed field.
+pub(crate) fn fq_nmod_ctx(ctx: &Ctx) -> *const sys::fq_nmod_ctx_struct {
+    head_of(ctx).expect("a packed field").nctx()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -691,7 +994,7 @@ mod tests {
         let n = cs.len() - 1;
         let ints: Vec<Integer> = cs.iter().map(|&c| Integer::from_u64(c)).collect();
         let pk = Ctx::packed_field(p, cs).unwrap();
-        let fq = Ctx::finite_field(&Integer::from_u64(p), &ints, false).unwrap();
+        let fq = Ctx::flint_field(&Integer::from_u64(p), &ints, false).unwrap();
         assert!(matches!(pk.kind(), CtxKind::FqPacked { .. }) && pk.elem_size() == 8 * n.div_ceil(64));
         let rand = |rng: &mut Lcg| -> Vec<u64> { (0..n).map(|_| rng.next() % p).collect() };
         let q = Integer::from_u64(p).pow(n as u64);
@@ -801,5 +1104,79 @@ mod tests {
         }
         assert_eq!(Ctx::packed_field(3, &[1, 0, 1]).err(), Some(GrError::Unable));
         assert_eq!(Ctx::packed_field(2, &[1; 514]).err(), Some(GrError::Unable));
+    }
+
+    /// The coordinates of the coefficients of a univariate polynomial.
+    fn coeffs(f: &Elem) -> Vec<Vec<u64>> {
+        (0..f.poly_len()).map(|i| f.poly_coeff(i).fq_coords_u64()).collect()
+    }
+
+    /// The terms of a multivariate polynomial, coefficients as coordinates.
+    fn terms(f: &Elem) -> Vec<(Vec<u64>, Vec<u64>)> {
+        (0..f.mpoly_len()).map(|i| f.mpoly_term(i)).map(|(c, e)| (c.fq_coords_u64(), e)).collect()
+    }
+
+    /// Polynomial arithmetic over `k` with the elements `r`, as coordinates,
+    /// to compare between representations of the same field.
+    fn poly_summary(k: &Rc<Ctx>, r: &[Vec<u64>], e: &Integer) -> Vec<String> {
+        use crate::{mpoly, upoly};
+        let (el, one) = (|i: usize| Elem::fq_from_coords_u64(k, &r[i]), Elem::one(k).unwrap());
+        let px = Ctx::poly(k);
+        let up = |c: &[Elem]| Elem::poly_from_coeffs(&px, c).unwrap();
+        let prod = |v: &[&Elem]| v.iter().fold(Elem::one(&px).unwrap(), |f, g| f.mul(g).unwrap());
+        let facs = |v: &[(Elem, u64)]| v.iter().map(|(h, e)| (coeffs(h), *e)).collect::<Vec<_>>();
+        let sorted = |mut v: Vec<Vec<Vec<u64>>>| {
+            v.sort();
+            v
+        };
+        // f = (x + r0)(x + r1)^2 (x^2 + r2 x + r3)(x^3 + r4 x + r5), g = (x + r1)(x^3 + r4 x + r5).
+        let (l0, l1, l2) = (up(&[el(0), one.clone()]), up(&[el(1), one.clone()]), up(&[el(2), one.clone()]));
+        let (q, c) = (up(&[el(3), el(2), one.clone()]), up(&[el(5), el(4), Elem::zero(k), one.clone()]));
+        let (f, g) = (prod(&[&l0, &l1, &l1, &q, &c]), prod(&[&l1, &c]));
+        let (d, s, t) = upoly::xgcd(&f, &g.add(&Elem::one(&px).unwrap()).unwrap()).unwrap();
+        let (quo, rem) = upoly::divrem(&f, &g).unwrap();
+        let a = f.mul(&up(&[k.generator().unwrap()])).unwrap();
+        let (fa, sq) = (upoly::factor(&a).unwrap(), upoly::factor_squarefree(&f).unwrap());
+        let roots = upoly::roots(&f).unwrap().iter().map(|(x, m)| vec![x.fq_coords_u64(), vec![*m]]).collect();
+        let ddf: Vec<_> = upoly::distinct_degree(&q.mul(&c).unwrap()).unwrap().iter().map(|(d, h)| (*d, coeffs(h))).collect();
+        let edf = upoly::equal_degree(&prod(&[&l0, &l1, &l2]), 1).unwrap().iter().map(coeffs).collect();
+        let irr: Vec<bool> = [&f, &q, &c].iter().map(|h| upoly::is_irreducible(h).unwrap()).collect();
+        let mut out = vec![
+            format!("{:?} {:?}", coeffs(&f), coeffs(&upoly::gcd(&f, &g).unwrap())),
+            format!("{:?} {:?} {:?} {:?} {:?}", coeffs(&d), coeffs(&s), coeffs(&t), coeffs(&quo), coeffs(&rem)),
+            format!("{:?}", coeffs(&upoly::powmod(&px.generator().unwrap(), e, &f).unwrap())),
+            format!("{:?} {:?} {:?}", fa.unit.fq_coords_u64(), facs(&fa.factors), facs(&sq.factors)),
+            format!("{:?} {ddf:?} {:?} {irr:?}", sorted(roots), sorted(edf)),
+        ];
+        // u + r0 v, u v + r1 and u + v in GF(q)[u, v].
+        let pm = Ctx::mpoly(k, 2, crate::gr::MonomialOrder::Lex);
+        let mp = |t: &[(Elem, [u64; 2])]| Elem::mpoly_from_terms(&pm, &t.iter().map(|(c, e)| (c.clone(), e.to_vec())).collect::<Vec<_>>()).unwrap();
+        let (a, b) = (mp(&[(one.clone(), [1, 0]), (el(0), [0, 1])]), mp(&[(one.clone(), [1, 1]), (el(1), [0, 0])]));
+        let c = mp(&[(one.clone(), [1, 0]), (one.clone(), [0, 1])]);
+        let (x, y) = (a.sqr().unwrap().mul(&b).unwrap(), a.mul(&c).unwrap());
+        let (u, mf) = mpoly::factor(&x.mul(&c).unwrap(), false).unwrap();
+        let mut mf: Vec<_> = mf.iter().map(|(h, e)| (terms(h), *e)).collect();
+        mf.sort();
+        out.push(format!("{:?} {:?} {mf:?}", terms(&mpoly::gcd(&x, &y).unwrap()), u.fq_coords_u64()));
+        out.push(format!("{:?} {:?}", mpoly::divides(&x, &a).unwrap().map(|h| terms(&h)), terms(&mpoly::resultant(&x, &y, 0).unwrap())));
+        out
+    }
+
+    #[test]
+    fn polynomials_through_the_companion() {
+        let mut rng = Lcg(0x2545_f491_4f6c_dd1d);
+        for n in [21u64, 70, 200] {
+            let cs: Vec<u64> = conway_polynomial(2, n).map(|c| c.iter().map(|x| x.to_u64().unwrap()).collect()).unwrap_or_else(|| {
+                let g = crate::gf2x::least_low_term(n as usize).unwrap();
+                (0..=n).map(|i| if i == n { 1 } else if i < 64 { g >> i & 1 } else { 0 }).collect()
+            });
+            let ints: Vec<Integer> = cs.iter().map(|&c| Integer::from_u64(c)).collect();
+            let pk = Ctx::finite_field(&Integer::from_u64(2), &ints, false).unwrap();
+            let fq = Ctx::flint_field(&Integer::from_u64(2), &ints, false).unwrap();
+            assert!(matches!(pk.kind(), CtxKind::FqPacked { .. }) && matches!(fq.kind(), CtxKind::FqNmod { .. }));
+            let r: Vec<Vec<u64>> = (0..6).map(|_| (0..n).map(|_| rng.next() & 1).collect()).collect();
+            let e = Integer::from_i64(2).pow(n + 7);
+            assert_eq!(poly_summary(&pk, &r, &e), poly_summary(&fq, &r, &e));
+        }
     }
 }

@@ -238,7 +238,7 @@ impl Elt {
             CtxKind::Nmod(_) | CtxKind::FmpzMod(_) => {
                 self.x.to_integer().ok().hash(&mut h);
             }
-            CtxKind::FqZech { .. } | CtxKind::FqNmod { .. } | CtxKind::Fq { .. } => self.x.fq_coords().hash(&mut h),
+            CtxKind::FqZech { .. } | CtxKind::FqNmod { .. } | CtxKind::FqPacked { .. } | CtxKind::Fq { .. } => self.x.fq_coords().hash(&mut h),
             _ => self.x.to_flint_string().hash(&mut h),
         }
         h.finish()
@@ -254,7 +254,7 @@ impl Elt {
             // Powers of the primitive element in order, zero last.
             CtxKind::FqZech { .. } => Some(self.x.zech_log().unwrap_or(u64::MAX).cmp(&o.x.zech_log().unwrap_or(u64::MAX))),
             // By coordinates, most significant first.
-            CtxKind::FqNmod { .. } | CtxKind::Fq { .. } => {
+            CtxKind::FqNmod { .. } | CtxKind::FqPacked { .. } | CtxKind::Fq { .. } => {
                 let (a, b) = (self.x.fq_coords(), o.x.fq_coords());
                 Some(a.iter().rev().cmp(b.iter().rev()))
             }
@@ -267,7 +267,7 @@ impl Elt {
     pub fn residue(&self) -> Option<Integer> {
         match self.x.ctx().kind() {
             CtxKind::Nmod(_) | CtxKind::FmpzMod(_) => self.x.to_integer().ok(),
-            CtxKind::FqZech { .. } | CtxKind::FqNmod { .. } | CtxKind::Fq { .. } => self.x.fq_prime_value(),
+            CtxKind::FqZech { .. } | CtxKind::FqNmod { .. } | CtxKind::FqPacked { .. } | CtxKind::Fq { .. } => self.x.fq_prime_value(),
             _ => None,
         }
     }
