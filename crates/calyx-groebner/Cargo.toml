@@ -1,0 +1,10 @@
+[package]
+name = "calyx-groebner"
+description = "Gröbner bases for calyx: monomial orders and the basis algorithms"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+calyx-flint = { workspace = true }

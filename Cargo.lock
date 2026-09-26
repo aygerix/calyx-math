@@ -51,6 +51,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "calyx-groebner"
+version = "0.1.0"
+dependencies = [
+ "calyx-flint",
+]
+
+[[package]]
 name = "calyx-runtime"
 version = "0.1.0"
 dependencies = [
