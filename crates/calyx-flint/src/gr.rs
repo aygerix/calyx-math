@@ -84,7 +84,6 @@ unsafe fn real_from_arf(a: *const sys::arf_struct, prec: u64) -> Real {
 
 // Constructors that FLINT exports but does not declare in its headers.
 unsafe extern "C" {
-    fn gr_ctx_init_fq_zech_modulus_nmod_poly(ctx: *mut sys::gr_ctx_struct, modulus: *const sys::nmod_poly_struct, var: *const c_char) -> c_int;
     fn gr_ctx_init_fq_nmod_modulus_nmod_poly(ctx: *mut sys::gr_ctx_struct, modulus: *const sys::nmod_poly_struct, var: *const c_char) -> c_int;
     fn gr_ctx_init_fq_modulus_fmpz_mod_poly(
         ctx: *mut sys::gr_ctx_struct,
@@ -204,7 +203,7 @@ impl Ctx {
                 }
             }
             let result = if zech {
-                Ctx::try_build(CtxKind::FqZech { p: pw, degree }, None, |c| unsafe { gr_ctx_init_fq_zech_modulus_nmod_poly(c, &poly, var.as_ptr()) })
+                Ctx::try_build(CtxKind::FqZech { p: pw, degree }, None, |c| unsafe { crate::fq::init_fq_zech(c, &poly, var.as_ptr()) })
             } else {
                 Ctx::try_build(CtxKind::FqNmod { p: pw, degree }, None, |c| unsafe { gr_ctx_init_fq_nmod_modulus_nmod_poly(c, &poly, var.as_ptr()) })
             };
