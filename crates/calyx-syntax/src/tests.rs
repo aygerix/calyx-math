@@ -127,6 +127,24 @@ fn statements() {
 }
 
 #[test]
+fn generator_names_in_assignments() {
+    let src = "Q<q>, h := quo<P | f>; a, R<t> := f(); T<[u]>, _ := g(); E<x, y> := F; a, b := g(); a lt b; f := func< | 1, 2>;";
+    let prog = parse_program(src, FileId(0)).unwrap_or_else(|e| panic!("{}", e.message));
+    let named = |k: &StmtKind| match k {
+        StmtKind::GenAssign(ts, _, _) => ts.iter().map(|t| t.1.is_some()).collect(),
+        _ => Vec::new(),
+    };
+    assert_eq!(named(&prog[0].kind), [true, false]);
+    assert_eq!(named(&prog[1].kind), [false, true]);
+    assert!(matches!(&prog[2].kind, StmtKind::GenAssign(ts, _, _) if matches!(ts[0].1, Some(GenNames::Seq(..))) && matches!(ts[1].0, LValue::Underscore(_))));
+    assert_eq!(named(&prog[3].kind), [true]);
+    assert!(matches!(prog[4].kind, StmtKind::Assign(ref l, _, _) if l.len() == 2));
+    assert!(matches!(prog[5].kind, StmtKind::Expr(..)));
+    let StmtKind::Assign(_, ref f, _) = prog[6].kind else { panic!() };
+    assert!(matches!(&f.kind, ExprKind::Function(d) if matches!(&d.body, FuncBody::Block(b) if matches!(&b[0].kind, StmtKind::Return(es) if es.len() == 2))));
+}
+
+#[test]
 fn intrinsic_definitions() {
     let src = r#"
 intrinsic myGCD(x::RngIntElt, y::[RngIntElt], ~Q::SeqEnum, z::. : Al := "x") -> RngIntElt, .

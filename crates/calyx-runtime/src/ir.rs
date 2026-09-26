@@ -246,7 +246,8 @@ pub enum St {
     /// The targets, the value, and the span of `:=`.
     Assign(Vec<LV>, E, Span),
     OpAssign(LV, BinOp, E, Span),
-    GenAssign(LV, GenNamesEx, E),
+    /// Targets with or without generator names, the value, and the span of `:=`.
+    GenAssign(Vec<(LV, Option<GenNamesEx>)>, E, Span),
     If(Vec<(E, Vec<S>)>, Option<Vec<S>>),
     Case(E, Vec<(Vec<E>, Vec<S>)>, Option<Vec<S>>),
     ForRange { var: Place, from: E, to: E, by: Option<E>, body: Vec<S> },

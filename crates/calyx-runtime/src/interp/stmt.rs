@@ -119,9 +119,24 @@ impl Interp {
                 let rhs = self.eval(value, f)?;
                 self.op_assign(target, *op, rhs, f, *at)?;
             }
-            St::GenAssign(target, names, value) => {
-                let v = self.eval(value, f)?;
-                self.gen_assign(target, names, v, f)?;
+            St::GenAssign(targets, value, at) => {
+                if let [(target, Some(names))] = &targets[..] {
+                    let v = self.eval(value, f)?;
+                    self.gen_assign(target, names, v, f)?;
+                } else {
+                    let vals = self.eval_multi(value, f, targets.len())?;
+                    if vals.len() < targets.len() {
+                        let msg = format!("Expected to assign {} value(s) but only computed {} value(s)", targets.len(), vals.len());
+                        return Err(RuntimeError::statement(":=", msg).at(*at));
+                    }
+                    for ((t, names), v) in targets.iter().zip(vals) {
+                        match names {
+                            _ if v.is_undef() => self.unassign(t, f)?,
+                            Some(names) => self.gen_assign(t, names, v, f)?,
+                            None => self.assign(t, v, f)?,
+                        }
+                    }
+                }
             }
             St::If(branches, else_) => {
                 for (c, body) in branches {

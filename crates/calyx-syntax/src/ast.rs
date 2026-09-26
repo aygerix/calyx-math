@@ -412,7 +412,9 @@ pub enum StmtKind {
     Assign(Vec<LValue>, Expr, Span),
     /// `lv o:= e`, with the position of the operator.
     OpAssign(LValue, BinOp, Expr, Span),
-    GenAssign(LValue, GenNames, Expr),
+    /// Targets of which some have generator names (`E<x, y> := e`,
+    /// `a, R<t> := e`), the value, and the span of `:=`.
+    GenAssign(Vec<(LValue, Option<GenNames>)>, Expr, Span),
     If(Vec<(Expr, Vec<Stmt>)>, Option<Vec<Stmt>>),
     Case(Expr, Vec<(Vec<Expr>, Vec<Stmt>)>, Option<Vec<Stmt>>),
     For { index: Option<(Name, Span)>, var: (Name, Span), kind: ForKind, body: Vec<Stmt> },

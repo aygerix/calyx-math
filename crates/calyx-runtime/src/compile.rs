@@ -283,20 +283,24 @@ impl<'a> Compiler<'a> {
                 let v = self.expr(value)?;
                 St::OpAssign(self.lvalue(lv)?, *op, v, *at)
             }
-            StmtKind::GenAssign(lv, names, value) => {
+            StmtKind::GenAssign(lvs, value, at) => {
                 let v = self.expr(value)?;
-                let target = self.lvalue(lv)?;
-                let names = match names {
-                    ast::GenNames::List(ns) => {
-                        let mut out = Vec::new();
-                        for (n, sp) in ns {
-                            out.push((self.place(Sym::new(n), *sp)?, *sp));
+                let mut targets = Vec::new();
+                for (lv, names) in lvs {
+                    let names = match names {
+                        None => None,
+                        Some(ast::GenNames::List(ns)) => {
+                            let mut out = Vec::new();
+                            for (n, sp) in ns {
+                                out.push((self.place(Sym::new(n), *sp)?, *sp));
+                            }
+                            Some(GenNamesEx::List(out))
                         }
-                        GenNamesEx::List(out)
-                    }
-                    ast::GenNames::Seq(n, sp) => GenNamesEx::Seq(self.place(Sym::new(n), *sp)?, *sp),
-                };
-                St::GenAssign(target, names, v)
+                        Some(ast::GenNames::Seq(n, sp)) => Some(GenNamesEx::Seq(self.place(Sym::new(n), *sp)?, *sp)),
+                    };
+                    targets.push((self.lvalue(lv)?, names));
+                }
+                St::GenAssign(targets, v, *at)
             }
             StmtKind::If(branches, else_) => {
                 let mut bs = Vec::new();
@@ -998,12 +1002,15 @@ fn scan_stmt(s: &Stmt, out: &mut Vec<String>) {
             scan_expr(v, out);
             scan_lvalue(lv, out);
         }
-        StmtKind::GenAssign(lv, names, v) => {
+        StmtKind::GenAssign(lvs, v, _) => {
             scan_expr(v, out);
-            scan_lvalue(lv, out);
-            match names {
-                ast::GenNames::List(ns) => ns.iter().for_each(|n| push_unique(out, &n.0)),
-                ast::GenNames::Seq(n, _) => push_unique(out, n),
+            for (lv, names) in lvs {
+                scan_lvalue(lv, out);
+                match names {
+                    Some(ast::GenNames::List(ns)) => ns.iter().for_each(|n| push_unique(out, &n.0)),
+                    Some(ast::GenNames::Seq(n, _)) => push_unique(out, n),
+                    None => {}
+                }
             }
         }
         StmtKind::If(bs, e) => {

@@ -658,38 +658,20 @@ impl<'a> Parser<'a> {
     /// Statements that start with an expression: assignments, procedure
     /// calls and auto-printed expression lists.
     fn expr_or_assign(&mut self) -> PResult<StmtKind> {
-        // Generator assignment `E<x, y> := ...` or `E<[x]> := ...`.
-        if self.at_ident() && matches!(self.peek_at(1), Tok::Lt) && self.looks_like_gen_assign() {
-            let (name, sp) = self.ident()?;
-            self.expect(&Tok::Lt)?;
-            let names = if self.eat(&Tok::LBrack) {
-                let (n, s) = self.ident()?;
-                self.expect(&Tok::RBrack)?;
-                GenNames::Seq(n, s)
-            } else {
-                let mut v = Vec::new();
-                if !self.at(&Tok::Gt) {
-                    v = self.ident_list()?;
-                }
-                GenNames::List(v)
-            };
-            self.expect(&Tok::Gt)?;
-            self.expect(&Tok::Assign)?;
-            let value = self.expr()?;
-            self.semi()?;
-            return Ok(StmtKind::GenAssign(LValue::Ident(name, sp), names, value));
-        }
-
-        // Try an l-value list followed by := or o:=.
+        // Try a list of l-values (each identifier maybe with generator
+        // names, `E<x, y>` or `E<[x]>`) followed by := or o:=.
         let save = self.pos;
-        if let Some(lvs) = self.try_lvalue_list() {
+        if let Some(mut targets) = self.try_target_list() {
             let at = self.span();
             if self.eat(&Tok::Assign) {
                 let value = self.expr()?;
                 self.semi()?;
-                return Ok(StmtKind::Assign(lvs, value, at));
+                if targets.iter().any(|t| t.1.is_some()) {
+                    return Ok(StmtKind::GenAssign(targets, value, at));
+                }
+                return Ok(StmtKind::Assign(targets.into_iter().map(|t| t.0).collect(), value, at));
             }
-            if lvs.len() == 1 {
+            if let [(_, None)] = targets[..] {
                 if let Tok::OpAssign(op) = self.peek().clone() {
                     self.bump();
                     let Some(op) = BinOp::from_name(&op) else {
@@ -697,7 +679,7 @@ impl<'a> Parser<'a> {
                     };
                     let value = self.expr()?;
                     self.semi()?;
-                    return Ok(StmtKind::OpAssign(lvs.into_iter().next().unwrap(), op, value, at));
+                    return Ok(StmtKind::OpAssign(targets.pop().unwrap().0, op, value, at));
                 }
             }
         }
@@ -709,35 +691,40 @@ impl<'a> Parser<'a> {
         Ok(StmtKind::Expr(es, level))
     }
 
-    fn looks_like_gen_assign(&mut self) -> bool {
-        // tokens: Ident < ... > :=
-        let mut k = 2;
-        let mut depth = 1;
-        loop {
-            match self.peek_at(k) {
-                Tok::Lt => depth += 1,
-                Tok::Gt => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return matches!(self.peek_at(k + 1), Tok::Assign);
-                    }
-                }
-                Tok::Semi | Tok::Eof | Tok::Pipe | Tok::Assign => return false,
-                _ => {}
-            }
-            k += 1;
-        }
-    }
-
-    fn try_lvalue_list(&mut self) -> Option<Vec<LValue>> {
+    fn try_target_list(&mut self) -> Option<Vec<(LValue, Option<GenNames>)>> {
         let mut v = Vec::new();
         loop {
-            let lv = self.lvalue().ok()?;
-            v.push(lv);
+            let save = self.pos;
+            match self.gen_target() {
+                Some(t) => v.push(t),
+                None => {
+                    self.pos = save;
+                    v.push((self.lvalue().ok()?, None));
+                }
+            }
             if !self.eat(&Tok::Comma) {
                 return Some(v);
             }
         }
+    }
+
+    /// An identifier with generator names: `E<x, y>`, `E<[x]>` or `E<>`.
+    fn gen_target(&mut self) -> Option<(LValue, Option<GenNames>)> {
+        let (name, sp) = self.ident().ok()?;
+        if !self.eat(&Tok::Lt) {
+            return None;
+        }
+        let names = if self.eat(&Tok::LBrack) {
+            let (n, s) = self.ident().ok()?;
+            self.eat(&Tok::RBrack).then_some(())?;
+            GenNames::Seq(n, s)
+        } else if self.at(&Tok::Gt) {
+            GenNames::List(Vec::new())
+        } else {
+            GenNames::List(self.ident_list().ok()?)
+        };
+        self.eat(&Tok::Gt).then_some(())?;
+        Some((LValue::Ident(name, sp), Some(names)))
     }
 
     /// The indices inside `s[...]`. `s[i..j]` (and `s[i..j by k]`) indexes
@@ -1373,10 +1360,20 @@ impl<'a> Parser<'a> {
                 let is_procedure = name == "proc";
                 let (params, variadic, opt_params) = self.param_list(&Tok::Pipe)?;
                 self.expect(&Tok::Pipe)?;
-                let body = self.expr()?;
+                let mut es = vec![self.expr()?];
+                // func< x | a, b >: a function with several return values.
+                while !is_procedure && self.eat(&Tok::Comma) {
+                    es.push(self.expr()?);
+                }
+                let body = if es.len() == 1 {
+                    FuncBody::Expr(Box::new(es.pop().unwrap()))
+                } else {
+                    let sp = es[0].span.to(es[es.len() - 1].span);
+                    FuncBody::Block(vec![Stmt { kind: StmtKind::Return(es), span: sp }])
+                };
                 let end = self.expect(&Tok::Gt)?;
                 let span = start.to(end);
-                let def = FuncDef { name: None, params, variadic, opt_params, body: FuncBody::Expr(Box::new(body)), is_procedure, span };
+                let def = FuncDef { name: None, params, variadic, opt_params, body, is_procedure, span };
                 return Ok(Self::mk(ExprKind::Function(Rc::new(def)), span));
             }
             "map" | "pmap" | "hom" | "iso" => {
