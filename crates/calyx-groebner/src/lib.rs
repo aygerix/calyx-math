@@ -689,6 +689,42 @@ mod tests {
     }
 
     #[test]
+    fn lex_bases_through_rational_univariate_representations() {
+        // A lex basis in shape position is lifted through its rational
+        // univariate representation; one not in shape position, or with f
+        // not squarefree, is lifted as it is. In the last four, points have
+        // y-coordinates congruent modulo the first prime or the second (p):
+        // there f has a square, or the basis is not in shape position, and
+        // in the last, f alone has one and p is passed over.
+        let q = Ctx::rationals();
+        let rational = Strategy { rational: true };
+        let systems: [&[&str]; 8] = [
+            &["x - y^2 + 1/3", "y^3 - 2*y + 5/7"],
+            &["2*x - 1", "3*y - 2"],
+            &["x", "y^2 - 2"],
+            &["x^2 - 1", "y^2 - 1"],
+            &["x - y", "y^2"],
+            &["x - y", "y^2 - 2147483647*y"],
+            &["x^3 - 3*x^2 + 2*x", "4294967257*x^2 - 8589934515*x + 2*y"],
+            &["x - y", "y^2 - 2147483629*y"],
+        ];
+        for gens in systems {
+            let gens: Vec<Terms> = gens.iter().map(|g| parse(&q, "xy", g)).collect();
+            let g = groebner(&q, 2, &Order::Lex, &gens).unwrap();
+            assert_eq!(shows("xy", &g), shows("xy", &groebner_with(&q, 2, &Order::Lex, &gens, rational).unwrap()), "{gens:?}");
+        }
+        let gens: Vec<Terms> = ["x^3 - 3*x^2 + 2*x", "4294967257*x^2 - 8589934515*x + 2*y"].iter().map(|g| parse(&q, "xy", g)).collect();
+        let g = ["x + 4294967257/4611685934675526012*y^2 - 9223371873646019281/4611685934675526012*y", "y^3 - 2147483630*y^2 + 2147483629*y"];
+        assert_eq!(shows("xy", &groebner(&q, 2, &Order::Lex, &gens).unwrap()), g);
+        // With a variable that vanishes on the points, and katsura-4.
+        let gens: Vec<Terms> = ["y - z^2 + 3", "x", "z^4 - 2/3*z - 1"].iter().map(|g| parse(&q, "xyz", g)).collect();
+        assert_eq!(shows("xyz", &groebner(&q, 3, &Order::Lex, &gens).unwrap()), ["x", "y - z^2 + 3", "z^4 - 2/3*z - 1"]);
+        let k = katsura(&q, 4);
+        let g = groebner(&q, 5, &Order::Lex, &k).unwrap();
+        assert_eq!(shows("abcde", &g), shows("abcde", &groebner_with(&q, 5, &Order::Lex, &k, rational).unwrap()));
+    }
+
+    #[test]
     fn truncated_bases() {
         // The handbook's example of degree-d bases, as Magma 2.22 computes
         // it in the graded ring and then in the ungraded one.

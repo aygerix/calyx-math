@@ -52,6 +52,19 @@ GroebnerBasis([x*y - 2147483647, x^2 - 1]);
 Q<x,y> := PolynomialRing(RationalField(), 2);
 GroebnerBasis([x*y - 2147483647, x^2 - 1]);
 
+// Lex bases in shape position, x - g(y) and f(y) with f squarefree, and
+// others. Here some points have y-coordinates congruent modulo the first
+// prime below 2^31 or the second.
+P<x,y> := PolynomialRing(RationalField(), 2, "lex");
+for T in [[x - y^2 + 1/3, y^3 - 2*y + 5/7], [x^2 - 1, y^2 - 1], [x - y, y^2],
+          [x - y, y^2 - 2147483647*y], [x - y, y^2 - 2147483629*y],
+          [x^3 - 3*x^2 + 2*x, 4294967257*x^2 - 8589934515*x + 2*y]] do
+    G := GroebnerBasis(T);
+    G, G eq GroebnerBasis(T : GlobalModular := false);
+end for;
+P<x,y,z> := PolynomialRing(RationalField(), 3, "lex");
+GroebnerBasis([x*z - 1, y - z^2 + 3, z^4 - 2/3*z - 1]);
+
 // Katsura-4, whose basis in lex takes some hundred primes.
 P<u0,u1,u2,u3,u4> := PolynomialRing(RationalField(), 5, "lex");
 K := [u0 + 2*u1 + 2*u2 + 2*u3 + 2*u4 - 1,
