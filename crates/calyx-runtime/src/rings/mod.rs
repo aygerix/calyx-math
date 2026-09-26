@@ -299,7 +299,7 @@ pub fn ring_of(v: &Value) -> Option<(&Rc<Struct>, &Ring)> {
 pub fn make_elt(parent: &Rc<Struct>, x: Elem) -> Value {
     if let StructKind::Ring(r) = &parent.kind {
         if let Some(s) = r.small {
-            return Value::Small(s, x.to_word().expect("a word-sized ring with a non-word element"));
+            return Value::Small(s, small::word_of(s, &x));
         }
         // Complex numbers have their own values.
         if let RingKind::Complex(_) = r.kind {
@@ -347,7 +347,7 @@ pub struct RingCache {
 
 impl Interp {
     fn new_ring(&mut self, kind: RingKind, ctx: Rc<Ctx>) -> Value {
-        let info = small::small_info(&kind, ctx.kind());
+        let info = small::small_info(&kind, &ctx);
         let idx = info.map(|_| small::next_index());
         let ring = Ring { kind, ctx, names: RefCell::default(), id: next_ring_id(), small: idx, factored: OnceCell::new() };
         let st = Struct::new(StructKind::Ring(Rc::new(ring)));
@@ -485,31 +485,27 @@ impl Interp {
         let ctx = r.ctx.clone();
         match &r.kind {
             RingKind::Finite(f) if f.degree > 1 => {
-                out.push(make_elt(st, Elem::zero(&ctx)));
-                if matches!(ctx.kind(), CtxKind::FqZech { .. }) {
+                if let Some(s) = r.small {
                     // Zero, then the powers of the primitive element.
-                    let g = ctx.generator().map_err(|e| gr_error(e, "No generator"))?;
-                    let mut x = Elem::one(&ctx).map_err(|e| gr_error(e, "No one"))?;
-                    for _ in 1..n {
-                        out.push(make_elt(st, x.clone()));
-                        x = x.mul(&g).map_err(|e| gr_error(e, "Arithmetic error"))?;
-                    }
-                } else {
-                    let p = f.p.to_u64().unwrap();
-                    let d = f.degree as usize;
-                    let mut coords = vec![0u64; d];
-                    for _ in 1..n {
-                        // Next coordinate vector (counting in base p).
-                        for c in coords.iter_mut() {
-                            *c += 1;
-                            if *c < p {
-                                break;
-                            }
-                            *c = 0;
+                    out.push(Value::Small(s, n - 1));
+                    out.extend((0..n - 1).map(|k| Value::Small(s, k)));
+                    return Ok(out);
+                }
+                out.push(make_elt(st, Elem::zero(&ctx)));
+                let p = f.p.to_u64().unwrap();
+                let d = f.degree as usize;
+                let mut coords = vec![0u64; d];
+                for _ in 1..n {
+                    // Next coordinate vector (counting in base p).
+                    for c in coords.iter_mut() {
+                        *c += 1;
+                        if *c < p {
+                            break;
                         }
-                        let cs: Vec<Integer> = coords.iter().map(|&c| Integer::from_u64(c)).collect();
-                        out.push(make_elt(st, Elem::fq_from_coords(&ctx, &cs).map_err(|e| gr_error(e, "Arithmetic error"))?));
+                        *c = 0;
                     }
+                    let cs: Vec<Integer> = coords.iter().map(|&c| Integer::from_u64(c)).collect();
+                    out.push(make_elt(st, Elem::fq_from_coords(&ctx, &cs).map_err(|e| gr_error(e, "Arithmetic error"))?));
                 }
             }
             _ => match r.small {

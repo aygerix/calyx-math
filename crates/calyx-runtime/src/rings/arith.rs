@@ -4,6 +4,7 @@ use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::rc::Rc;
 
+use calyx_flint::fq::Zech;
 use calyx_flint::gr::{CtxKind, Elem, GrError, Truth};
 use calyx_syntax::ast::BinOp;
 
@@ -24,11 +25,15 @@ pub fn small_binop(op: BinOp, a: &Value, b: &Value) -> Option<Value> {
     let (r, x, y) = match (a, b) {
         (Value::Small(r, x), Value::Small(s, y)) if r == s => (*r, *x, *y),
         (Value::Small(r, x), Value::Int(k)) if op == Pow => return small_pow(*r, *x, k),
-        (Value::Small(r, x), Value::Int(i)) => (*r, *x, r.modulus().reduce_integer(i)),
-        (Value::Int(i), Value::Small(r, y)) if op != Pow => (*r, r.modulus().reduce_integer(i), *y),
+        (Value::Small(r, x), Value::Int(i)) => (*r, *x, r.word_of_integer(i)),
+        (Value::Int(i), Value::Small(r, y)) if op != Pow => (*r, r.word_of_integer(i), *y),
         _ => return None,
     };
-    let m = r.modulus();
+    let info = r.info();
+    if let small::SmallKind::Zech(z) = info.kind {
+        return zech_binop(op, r, z, x, y);
+    }
+    let m = info.m;
     Some(match op {
         Add => Value::Small(r, m.add(x, y)),
         Sub => Value::Small(r, m.sub(x, y)),
@@ -41,6 +46,22 @@ pub fn small_binop(op: BinOp, a: &Value, b: &Value) -> Option<Value> {
         Le => Value::Bool(x <= y),
         Gt => Value::Bool(x > y),
         Ge => Value::Bool(x >= y),
+        _ => return None,
+    })
+}
+
+/// `small_binop` in a field with Zech logarithms, whose elements have no
+/// order.
+#[inline]
+fn zech_binop(op: BinOp, r: SmallRing, z: Zech, x: u64, y: u64) -> Option<Value> {
+    use BinOp::*;
+    Some(match op {
+        Add => Value::Small(r, z.add(x, y)),
+        Sub => Value::Small(r, z.sub(x, y)),
+        Mul => Value::Small(r, z.mul(x, y)),
+        Div => Value::Small(r, z.div(x, y)?),
+        Eq | Cmpeq => Value::Bool(x == y),
+        Ne | Cmpne => Value::Bool(x != y),
         _ => return None,
     })
 }
@@ -62,7 +83,11 @@ fn residue_div(m: calyx_flint::Nmod, x: u64, y: u64) -> u64 {
 
 /// `x^k` for an inline element (`None` for a non-invertible `x` and `k < 0`).
 fn small_pow(r: SmallRing, x: u64, k: &calyx_flint::Integer) -> Option<Value> {
-    let m = r.modulus();
+    let info = r.info();
+    if let small::SmallKind::Zech(z) = info.kind {
+        return Some(Value::Small(r, z.pow(x, k)?));
+    }
+    let m = info.m;
     if k.sign() >= 0 {
         return Some(Value::Small(r, m.pow_integer(x, k)));
     }

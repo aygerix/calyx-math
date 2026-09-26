@@ -637,6 +637,11 @@ impl Interp {
                 self.fmt(p, &u, indent)?;
             }
             Value::Io(io) => p.write(&format!("File \"{}\" (mode \"{}\")", io.name, io.mode)),
+            // A Zech logarithm prints as the power of the generator it stands for.
+            Value::Small(r, x) if r.zech().is_some() => {
+                let e = crate::rings::small::to_elt(*r, *x);
+                p.write(&crate::rings::format_ring_elt(self, &e, p.level)?);
+            }
             Value::Small(_, x) => p.write(&x.to_string()),
             Value::AbElt(x) => p.write(&x.format()),
             // Magma prints nearfield elements as text: unlike field elements,
