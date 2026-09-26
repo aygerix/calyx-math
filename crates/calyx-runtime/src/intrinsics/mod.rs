@@ -11,6 +11,7 @@ pub mod env;
 pub mod factoring;
 pub mod factseq;
 pub mod finite_fields;
+pub mod groebner;
 pub mod ideals;
 pub mod ints;
 pub mod io;
@@ -490,6 +491,7 @@ pub fn register_all(it: &mut Interp) {
     nearfields::register(it);
     upoly::register(it);
     mpoly::register(it);
+    groebner::register(it);
     complex::register(it);
     io::register(it);
     env::register(it);
