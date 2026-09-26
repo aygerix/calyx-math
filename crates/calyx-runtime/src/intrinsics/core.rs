@@ -214,14 +214,14 @@ fn element_type(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
 }
 
 fn covering_structure(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    match it.common_universe(&a.args[0], &a.args[1]) {
+    match it.covering_universe(&a.args[0], &a.args[1])? {
         Some(c) => one(c),
         None => Err(RuntimeError::runtime("No covering structure exists")),
     }
 }
 
 fn exists_covering_structure(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
-    match it.common_universe(&a.args[0], &a.args[1]) {
+    match it.covering_universe(&a.args[0], &a.args[1])? {
         Some(c) => Ok(vals![Value::Bool(true), c]),
         None => Ok(vals![Value::Bool(false), Value::Undef]),
     }

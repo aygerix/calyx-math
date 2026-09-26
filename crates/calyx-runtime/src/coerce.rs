@@ -489,6 +489,19 @@ impl Interp {
 
     // ----- common universes ----------------------------------------------
 
+    /// `common_universe`, or else the polynomial ring over a real or complex
+    /// field that such a field and a polynomial ring meet in, made when
+    /// needed (`real_poly_cover`), as aggregates and CoveringStructure find it.
+    pub fn covering_universe(&mut self, a: &Value, b: &Value) -> RResult<Option<Value>> {
+        if let Some(u) = self.common_universe(a, b) {
+            return Ok(Some(u));
+        }
+        match (a, b) {
+            (Value::Struct(_), Value::Struct(_)) => self.real_poly_cover(a, b),
+            _ => Ok(None),
+        }
+    }
+
     /// A structure containing both `a` and `b` (automatic coercion only).
     pub fn common_universe(&self, a: &Value, b: &Value) -> Option<Value> {
         if a == b {
@@ -632,7 +645,7 @@ impl Interp {
                     if cur == p && !crate::intrinsics::nearfields::distinct_nearfields(&cur, &p) {
                         cur
                     } else {
-                        match self.common_universe(&cur, &p) {
+                        match self.covering_universe(&cur, &p)? {
                             Some(c) => c,
                             None => return Err(RuntimeError::runtime(format!("Cannot coerce argument {} into the universe", i + 1))),
                         }
