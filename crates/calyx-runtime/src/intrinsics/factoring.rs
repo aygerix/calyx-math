@@ -104,15 +104,7 @@ fn factorization(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     }
     let sign = Value::int(n.sign() as i64);
     let mut m = n.abs();
-    // Stored factors are tried first.
     let mut fact = Fact::new();
-    for p in &it.stored_factors {
-        let (k, r) = m.remove(p);
-        if k > 0 {
-            fact.push((p.clone(), k));
-            m = r;
-        }
-    }
     // Negative limits count as not given, as in Magma.
     let given = |name: &str| param_int(a, name).filter(|b| b.sign() >= 0).map(|b| b.to_u64().unwrap_or(u64::MAX));
     let stages = Stages {
@@ -131,7 +123,7 @@ fn factorization(it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
     let proof = proof(a);
     let (rng, stored) = (&mut it.rng, &mut it.stored_factors);
     let (f, rest) = split_with(&r, proof, &mut |x: &Integer| {
-        let (d, by_ecm_or_mpqs) = stages.split(x, rng)?;
+        let (d, by_ecm_or_mpqs) = stages.split(x, rng, stored)?;
         // The primes that ECM and MPQS split off are stored for later calls.
         if by_ecm_or_mpqs {
             for y in [d.clone(), x.divexact(&d)] {
@@ -165,11 +157,12 @@ struct Stages {
 
 impl Stages {
     /// A proper divisor of the composite m (prime to 6 and not a perfect
-    /// power) from the first stage that finds one: SQUFOF, Pollard rho, ECM
-    /// and MPQS. Unless both ECM and MPQS are bounded, whatever it takes
-    /// follows: ECM without end when MPQS may not be used, or else FLINT's
-    /// factorization. With the divisor comes whether ECM or MPQS found it.
-    fn split(&self, m: &Integer, rng: &mut crate::random::Rng) -> Option<(Integer, bool)> {
+    /// power) from the first stage that finds one: SQUFOF, Pollard rho, the
+    /// stored factors, ECM and MPQS. Unless both ECM and MPQS are bounded,
+    /// whatever it takes follows: ECM without end when MPQS may not be used,
+    /// or else FLINT's factorization. With the divisor comes whether ECM or
+    /// MPQS found it.
+    fn split(&self, m: &Integer, rng: &mut crate::random::Rng, stored: &[Integer]) -> Option<(Integer, bool)> {
         let digits = m.to_string().len() as u64;
         if digits <= self.squfof && m.bits() <= 125 {
             if let Some(d) = squfof(m, 200_000) {
@@ -178,6 +171,10 @@ impl Stages {
         }
         if let Some(d) = pollard_rho(m, &int(1), &int(1), self.rho) {
             return Some((d, false));
+        }
+        // The stored factors are tried before ECM and MPQS.
+        if let Some(p) = stored.iter().find(|p| p.bits() <= m.bits() && m.is_divisible_by(p)) {
+            return Some((p.clone(), false));
         }
         // MPQS is not used below 26 digits.
         let mpqs = digits > 25 && self.mpqs.is_none_or(|l| digits <= l);
@@ -1348,18 +1345,21 @@ mod tests {
         let mut rng = crate::random::Rng::new(1);
         // Both ECM and MPQS bounded: nothing splits a 29-digit semiprime.
         let bounded = Stages { squfof: 24, rho: 8191, ecm: Some(0), mpqs: Some(0) };
-        assert_eq!(split_with(&n, true, &mut |x: &Integer| bounded.split(x, &mut rng).map(|r| r.0)), (Fact::new(), vec![n.clone()]));
-        assert_eq!(split_with(&n.pow(2), true, &mut |x: &Integer| bounded.split(x, &mut rng).map(|r| r.0)).1, vec![n.clone(), n.clone()]);
+        assert_eq!(split_with(&n, true, &mut |x: &Integer| bounded.split(x, &mut rng, &[]).map(|r| r.0)), (Fact::new(), vec![n.clone()]));
+        assert_eq!(split_with(&n.pow(2), true, &mut |x: &Integer| bounded.split(x, &mut rng, &[]).map(|r| r.0)).1, vec![n.clone(), n.clone()]);
+        // A stored factor splits it all the same.
+        let stored = [int(1000003), q.clone()];
+        assert_eq!(split_with(&n, true, &mut |x: &Integer| bounded.split(x, &mut rng, &stored).map(|r| r.0)), (vec![(p.clone(), 1), (q.clone(), 1)], vec![]));
         // Either one unbounded: the factorization is complete.
         for (ecm, mpqs) in [(None, Some(0)), (Some(0), None), (None, None)] {
             let stages = Stages { squfof: 24, rho: 8191, ecm, mpqs };
-            let (f, rest) = split_with(&n, true, &mut |x: &Integer| stages.split(x, &mut rng).map(|r| r.0));
+            let (f, rest) = split_with(&n, true, &mut |x: &Integer| stages.split(x, &mut rng, &[]).map(|r| r.0));
             assert_eq!(f, vec![(p.clone(), 1), (q.clone(), 1)]);
             assert!(rest.is_empty());
         }
         // SQUFOF alone splits 24 digits.
         let m = &int(300000000077) * &int(700000000009);
         let squfof_only = Stages { squfof: 24, rho: 0, ecm: Some(0), mpqs: Some(0) };
-        assert!(split_with(&m, true, &mut |x: &Integer| squfof_only.split(x, &mut rng).map(|r| r.0)).1.is_empty());
+        assert!(split_with(&m, true, &mut |x: &Integer| squfof_only.split(x, &mut rng, &[]).map(|r| r.0)).1.is_empty());
     }
 }

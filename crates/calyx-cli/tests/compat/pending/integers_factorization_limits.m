@@ -11,7 +11,8 @@ f, s, u := Factorization(p^2*q : ECMLimit := 0, MPQSLimit := 0); f; s; u;
 f, s, u := Factorization(p*q*1000003*1000033 : ECMLimit := 0, MPQSLimit := 0, PollardRhoLimit := 10); f; s; u;
 f, s, u := Factorization(p*q : MPQSLimit := 0); f; s; assigned u;
 f, s, u := Factorization(p*q : ECMLimit := 0); f; s; assigned u;
-// The primes split off by ECM and MPQS are stored, and tried first later.
+// The primes split off by ECM and MPQS are stored, and later calls try them
+// before ECM.
 Sort(GetStoredFactors());
 f, s, u := Factorization(p*q : ECMLimit := 0, MPQSLimit := 28); f; s; assigned u;
 ClearStoredFactors();
