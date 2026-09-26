@@ -29,7 +29,7 @@ TrialDivision(360, 3); TrialDivision(360, 2); TrialDivision(2^3*7^2*11, 7);
 PollardRho(1000003*1000033); PollardRho(360); PollardRho(97); PollardRho(1000003*1000033, 1, 1, 10);
 PollardRho(1);
 PollardRho(0);
-pMinus1(1000003*2^89, 1000) gt 1;
+pMinus1(1000003*2^89, 1000: x0 := 3) gt 1;
 pMinus1(1000003*1000033, 100, 1000);
 pMinus1(1000003*1000033, 100: x0 := 3);
 pMinus1(15, 10: x0 := 2);
