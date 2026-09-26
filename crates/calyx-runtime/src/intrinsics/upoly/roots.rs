@@ -72,7 +72,7 @@ fn coefficient_field(f: &Elt) -> Option<&crate::rings::FiniteField> {
 
 /// The order and the characteristic of the coefficient ring of `f` if it
 /// is a finite field or the integers modulo a prime.
-fn finite_field_order(f: &Elt) -> Option<(Integer, Integer)> {
+pub(super) fn finite_field_order(f: &Elt) -> Option<(Integer, Integer)> {
     if let Some(fld) = coefficient_field(f) {
         return Some((fld.order(), fld.p.clone()));
     }

@@ -1,7 +1,7 @@
 //! Multivariate polynomial rings (the handbook chapter of that name):
 //! creating rings and polynomials, structure operations, the functions of
-//! polynomials, greatest common divisors, factorization, resultants and
-//! the functions for integer polynomials.
+//! polynomials and their matrices (`matrices`), greatest common divisors,
+//! factorization, resultants and the functions for integer polynomials.
 //!
 //! Polynomials are `gr_mpoly`s, whose generic arithmetic is fast enough
 //! (it beats Magma on Fateman's benchmark). The algorithms beyond it run
@@ -25,6 +25,10 @@ use crate::ops::div_by_zero;
 use crate::rings::props::ring_props;
 use crate::rings::{Elt, Ring, RingKind, make_elt, ring_of};
 use crate::value::*;
+
+mod matrices;
+
+use matrices::*;
 
 // ----- helpers ---------------------------------------------------------------
 
@@ -790,8 +794,13 @@ fn derivative(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
         return Err(arg_ge(2, &k, 0));
     }
     let Some(k) = k.to_u64() else { return one(like(&f, Elem::zero(f.x.ctx()))) };
+    one(like(&f, partial(&f.x, i, k)?))
+}
+
+/// The k-th derivative of `x` with respect to variable i (from 0).
+fn partial(x: &Elem, i: usize, k: u64) -> RResult<Elem> {
     let mut out = Vec::new();
-    for (c, mut e) in terms(&f.x) {
+    for (c, mut e) in terms(x) {
         if e[i] < k {
             continue;
         }
@@ -803,7 +812,7 @@ fn derivative(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
         e[i] -= k;
         out.push((c.mul_integer(&m)?, e));
     }
-    one(build(&f, &out)?)
+    Ok(Elem::mpoly_from_terms(x.ctx(), &out)?)
 }
 
 /// The integral with respect to a variable. Magma integrates over any
@@ -1695,6 +1704,9 @@ pub fn register(it: &mut Interp) {
         it.def("Interpolation", &format!("I::[RngElt], V::[RngMPolElt], {v} -> RngMPolElt"), "The polynomial of least degree in the variable taking the values V at the points I.", interpolation);
         it.def("Reductum", &format!("f::RngMPolElt, {v} -> RngMPolElt"), "f without its term in the largest power of the variable.", reductum);
     }
+    it.def("JacobianMatrix", "S::[RngMPolElt] -> Mtrx", "The matrix of the partial derivatives of the polynomials of S (rows) by the variables (columns).", jacobian_matrix);
+    let doc = "The symmetric matrix B with f = v B v^T for f of total degree 2, v the variables (and 1 after them unless f is homogeneous).";
+    it.def("SymmetricBilinearForm", "f::RngMPolElt -> ModMatRngElt", doc, symmetric_bilinear_form);
     // Elements of affine algebras are their normal forms, whose terms these
     // functions see.
     it.def("Coefficients", "f::RngMPolResElt -> [RngElt]", "The coefficients of the terms of the normal form of f, largest first.", coefficients);

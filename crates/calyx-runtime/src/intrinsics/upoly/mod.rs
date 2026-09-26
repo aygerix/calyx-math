@@ -2,7 +2,8 @@
 //! creating polynomials, changing coefficient rings, the functions of
 //! polynomials, greatest common divisors and content, the functions for
 //! integer polynomials, factorization, resultants and Hensel lifting, small
-//! roots modulo an integer (`small_roots`) and functional decomposition.
+//! roots modulo an integer (`small_roots`), functional decomposition and
+//! the matrices of polynomials.
 //!
 //! Polynomials are `gr_poly`s. The algorithms beyond generic arithmetic run
 //! on FLINT's specialised types through `calyx_flint::upoly`, over the
@@ -21,6 +22,7 @@ mod finite_fields;
 mod gcd;
 mod ideals;
 mod integers;
+mod matrices;
 mod roots;
 mod small_roots;
 mod special;
@@ -47,11 +49,13 @@ use finite_fields::*;
 use gcd::*;
 use ideals::*;
 use integers::*;
+use matrices::*;
 use roots::*;
 use small_roots::*;
 use special::*;
 
 pub use division::quotrem;
+pub(crate) use matrices::put_entry;
 pub(crate) use gcd::norm_unit;
 pub(crate) use tower::{Tower, over_ground, poly_divides, poly_gcd};
 pub use ideals::{enumerate_res, format_ideal, ideal_binop, ideal_constructor, ideal_member, quo_constructor};
@@ -348,5 +352,8 @@ pub fn register(it: &mut Interp) {
     // Resultants, discriminants and Hensel lifting.
     it.def("Resultant", "f::RngUPolElt, g::RngUPolElt -> RngElt", "The resultant of f and g.", resultant);
     it.def("Discriminant", "f::RngUPolElt -> RngElt", "The discriminant of f.", discriminant);
+    it.def("SylvesterMatrix", "f::RngUPolElt, g::RngUPolElt -> AlgMatElt", "The Sylvester matrix of f and g, whose determinant is their resultant.", sylvester_matrix);
+    it.def("CompanionMatrix", "f::RngUPolElt -> AlgMatElt", "The companion matrix of the monic polynomial f.", companion_matrix);
+    it.def("QMatrix", "f::RngUPolElt -> AlgMatElt", "The Berlekamp Q-matrix of f over a finite field: the rows are x^(q i) mod f.", q_matrix);
     it.def("HenselLift", "f::RngUPolElt, s::[RngUPolElt], P::RngUPol -> [RngUPolElt]", "Lift the factors s of f modulo p to factors modulo p^k in P over Z/p^kZ.", hensel_lift);
 }
