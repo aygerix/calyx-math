@@ -359,7 +359,23 @@ fn cf_intr(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
         Value::Int(n) => Rational::from_integer(n),
         _ => rat(a, 0).clone(),
     };
-    one(Value::int_seq(continued_fraction(&q)))
+    // Bound limits the quotients to at least one; as Magma takes it, a
+    // negative small integer (below 2^30) is refused and a larger one
+    // leaves them unlimited.
+    let most = match a.param("Bound") {
+        None | Some(Value::Undef) => None,
+        Some(Value::Int(b)) => match b.to_i64().filter(|b| b.unsigned_abs() < 1 << 30) {
+            Some(b) if b < 0 => return Err(RuntimeError::runtime("Bad value for parameter 'Bound'")),
+            b => b.map(|b| b.max(1) as usize),
+        },
+        Some(_) => return Err(RuntimeError::runtime("Bad type for parameter 'Bound'\nArgument types given: FldRatElt")),
+    };
+    if !matches!(a.param("Numerators"), None | Some(Value::Undef)) {
+        return Err(RuntimeError::runtime("The optional argument 'Numerators' is not supported"));
+    }
+    let mut cf = continued_fraction(&q);
+    cf.truncate(most.unwrap_or(usize::MAX));
+    one(Value::int_seq(cf))
 }
 
 fn cf_value_intr(_it: &mut Interp, a: &mut CallArgs) -> RResult<Vals> {
@@ -502,7 +518,13 @@ pub fn register(it: &mut Interp) {
         "An approximation of q with denominator at most M (a convergent of the continued fraction of q with ContFrac).",
         qround,
     );
-    it.def("ContinuedFraction", "q::FldRatElt -> [RngIntElt]", "The partial quotients of the continued fraction of q.", cf_intr);
+    it.def_params(
+        "ContinuedFraction",
+        "q::FldRatElt -> [RngIntElt]",
+        &[("Bound", Value::Undef), ("Numerators", Value::Undef)],
+        "The partial quotients of the continued fraction of q, at most Bound of them.",
+        cf_intr,
+    );
     it.def("ContinuedFraction", "n::RngIntElt -> [RngIntElt]", "The continued fraction [ n ] of n.", cf_intr);
     it.def("ContinuedFractionValue", "C::[RngIntElt] -> FldRatElt", "The rational with continued fraction C.", cf_value_intr);
     for name in ["HirzebruchJungContinuedFraction", "HJContinuedFraction"] {
