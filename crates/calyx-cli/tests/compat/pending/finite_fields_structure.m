@@ -17,6 +17,9 @@ U, m := MultiplicativeGroup(F49); U; m(U.1), m(2*U.1), m(U!0), m(-U.1);
 U, m := UnitGroup(F7); U; m(U.1), m(3*U.1);
 U, m := UnitGroup(G); #U, IsPrimitive(m(U.1)), m(U.1) eq PrimitiveElement(G);
 U, m := MultiplicativeGroup(K); #U eq 2^100 - 1, m(U.1) eq k;
+A, m := AdditiveGroup(F49); Image(m), Inverse(m), w @@ m;
+U, m := MultiplicativeGroup(F49); Image(m), w @@ m;
+(F49!0) @@ m;
 Set(GF(4)); #Set(F49), #Set(G), Set(GF(5)), Set(F49) eq { w^i : i in [1..48] } join { F49!0 };
 
 // Numerical invariants
